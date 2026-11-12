@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#14161c" />
+  <title>Explosive Racing</title>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- 比賽中的抬頭顯示 -->
+  <div id="hud" class="hidden">
+    <div id="hud-pos"><span id="pos">8</span><small>/8</small></div>
+    <div id="hud-top">
+      <div id="hud-lap">LAP <b id="lap">1</b>/<span id="laps">3</span></div>
+      <div id="hud-time">0:00.00</div>
+    </div>
+    <canvas id="minimap"></canvas>
+    <button id="btn-pause" aria-label="暫停">II</button>
+    <div id="feed"></div>
+    <div id="center-msg"></div>
+    <div id="sub-msg"></div>
+    <div id="reticle"></div>
+
+    <div id="hud-left">
+      <div class="weapon" id="w1"><span class="wname"></span><div class="bar"><i></i></div></div>
+      <div class="weapon" id="w2"><span class="wname"></span><div class="bar"><i></i></div></div>
+      <div id="hp"><span>HP</span><div class="bar"><i></i></div></div>
+    </div>
+
+    <div id="hud-right">
+      <div id="speed"><b>0</b><small>km/h</small></div>
+      <div id="n2o"><i></i><i></i></div>
+      <div id="gauge" class="bar"><i></i></div>
+    </div>
+  </div>
+
+  <!-- 觸控按鈕 -->
+  <div id="touch" class="hidden">
+    <div id="t-fire">
+      <div class="tbtn fire" data-btn="fire1">主武器</div>
+      <div class="tbtn fire alt" data-btn="fire2">副武器</div>
+    </div>
+    <div id="t-steer" data-steer>
+      <div class="tbtn steer-l">◀</div>
+      <div class="tbtn steer-r">▶</div>
+    </div>
+    <div class="tbtn small" id="t-look" data-btn="look">後視</div>
+    <div class="tbtn small" id="t-brake" data-btn="brake">煞車</div>
+    <div class="tbtn" id="t-boost" data-btn="boost">N2O</div>
+    <div class="tbtn big" id="t-drift" data-btn="drift">甩尾</div>
+  </div>
+
+  <div id="screens"></div>
+  <div id="rotate"><div>請將手機橫放<br /><small>Rotate your device</small></div></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
