@@ -22,9 +22,31 @@ export interface BoostPad {
   lat: number;
 }
 
+export type ThemeId = 'meadow' | 'desert' | 'city';
+
+/** 沿賽道的一段範圍（公尺）；side：1 = 行進方向左側，-1 = 右側，0 = 兩側 */
+export interface SceneRange {
+  from: number;
+  to: number;
+  side: number;
+}
+
+/** 賽道旁要擺哪些大型景物 */
+export interface Scenery {
+  stands: SceneRange[];
+  pits: SceneRange[];
+  tents: SceneRange[];
+  /** 橫跨路面的拱門位置 */
+  arches: number[];
+}
+
 export interface TrackDef {
   id: string;
   name: string;
+  /** 選單上的一句話介紹 */
+  desc: string;
+  theme: ThemeId;
+  scenery: Scenery;
   laps: number;
   halfWidth: number;
   /** 控制點 [x, z, 高度] */
@@ -43,6 +65,14 @@ export const TRACKS: TrackDef[] = [
   {
     id: 'skyline-loop',
     name: '雲頂山道',
+    desc: '長直線、山頂髮夾彎與連續 S 彎',
+    theme: 'meadow',
+    scenery: {
+      stands: [{ from: -70, to: 170, side: 1 }, { from: 700, to: 830, side: 1 }, { from: 1395, to: 1440, side: 0 }],
+      pits: [{ from: 12, to: 140, side: -1 }],
+      tents: [{ from: 640, to: 690, side: -1 }, { from: 1300, to: 1560, side: 0 }, { from: 1880, to: 2000, side: 0 }],
+      arches: [1010, 1720, 2290],
+    },
     laps: 2,
     halfWidth: 12,
     points: [
@@ -78,6 +108,70 @@ export const TRACKS: TrackDef[] = [
       { dist: 1766, lat: -9.2 }, { dist: 1980, lat: -9.2 }, { dist: 2120, lat: 9.2 }, { dist: 2126, lat: -9.2 },
       { dist: 2300, lat: 9.2 },
     ],
+  },
+  {
+    id: 'red-canyon',
+    name: '赤岩峽谷',
+    desc: '大落差長下坡、峽谷 S 彎與谷底髮夾彎',
+    theme: 'desert',
+    scenery: {
+      stands: [{ from: -70, to: 170, side: 1 }, { from: 1300, to: 1380, side: 1 }, { from: 730, to: 820, side: 1 }, { from: 480, to: 560, side: 1 }],
+      pits: [{ from: 12, to: 140, side: -1 }],
+      tents: [{ from: 600, to: 700, side: 0 }, { from: 1500, to: 1600, side: 0 }, { from: 1850, to: 1990, side: 0 }],
+      arches: [880, 1180, 1800],
+    },
+    laps: 2,
+    halfWidth: 12,
+    // 控制點由賽道設計腳本產生：起跑直線 → 爬坡右彎 → 峽谷 S 彎 → 岩台右彎 → 長下坡 → 谷底髮夾彎 → 左彎爬坡 → 斜向下坡 → 長右彎回到起點
+    points: [[0, 0, 3], [0, 95, 3], [0, 190, 3.4], [-19, 268, 6], [-89, 308, 9], [-173, 308, 12.5], [-250, 345, 16], [-327, 308, 19.5], [-411, 308, 22.5], [-481, 268, 24.3], [-503, 191, 24.5], [-503, 69, 20.5], [-503, -53, 15.5], [-503, -175, 10.5], [-499, -241, 6], [-462, -279, 3], [-424, -241, 1.2], [-421, -175, 1.5], [-405, -115, 4], [-354, -80, 7], [-292, -87, 9], [-236, -135, 7.5], [-179, -182, 5.5], [-121, -213, 4.2], [-56, -204, 3.4], [-11, -155, 3], [0, -90, 3]],
+    pads: [
+      { dist: 150, lat: 0 }, { dist: 400, lat: -3 }, { dist: 645, lat: 3 }, { dist: 860, lat: -3 },
+      { dist: 1100, lat: 4 }, { dist: 1460, lat: -3 }, { dist: 1700, lat: 0 }, { dist: 2090, lat: 0 },
+    ],
+    ramps: [950, 1720],
+    barrels: [{ dist: 120, lat: 9.2 }, { dist: 200, lat: -9.2 }, { dist: 300, lat: 9.2 }, { dist: 380, lat: -9.2 }, { dist: 470, lat: 9.2 }, { dist: 560, lat: -9.2 }, { dist: 650, lat: 9.2 }, { dist: 740, lat: -9.2 }, { dist: 830, lat: 9.2 }, { dist: 1040, lat: -9.2 }, { dist: 1150, lat: 9.2 }, { dist: 1240, lat: -9.2 }, { dist: 1380, lat: 9.2 }, { dist: 1470, lat: -9.2 }, { dist: 1580, lat: 9.2 }, { dist: 1800, lat: -9.2 }, { dist: 1900, lat: 9.2 }, { dist: 2000, lat: -9.2 }],
+  },
+  {
+    id: 'neon-bay',
+    name: '霓虹灣岸',
+    desc: '夜間街道賽：直角彎、減速彎、髮夾彎與跨海大橋',
+    theme: 'city',
+    scenery: {
+      stands: [{ from: -70, to: 170, side: -1 }, { from: 1070, to: 1150, side: -1 }, { from: 1590, to: 1690, side: 1 }, { from: 470, to: 540, side: -1 }],
+      pits: [{ from: 12, to: 140, side: 1 }],
+      tents: [{ from: 600, to: 760, side: 0 }, { from: 1400, to: 1500, side: 0 }],
+      arches: [1000, 1280, 1758],
+    },
+    laps: 2,
+    halfWidth: 12,
+    points: [
+      // 起跑直線
+      [0, 0, 0.6], [0, 72, 0.6], [0, 147, 0.6], [0, 205, 0.6],
+      // 第一個直角彎，接港邊直線（第一座跳台）
+      [25, 230, 0.6], [83, 230, 0.6], [190, 230, 0.6],
+      // 減速彎
+      [250, 230, 0.6], [285, 260, 0.6], [345, 260, 0.6],
+      // 直角右彎往南
+      [405, 260, 0.6], [433, 232, 0.6], [433, 175.5, 0.6],
+      // 直角左彎往東
+      [433, 119, 0.6], [459, 93, 0.6], [519, 93, 0.6],
+      // 第二座跳台直線，接髮夾彎
+      [625, 93, 0.6], [690, 93, 0.6], [728, 55, 0.6], [690, 17, 0.6], [633, 17, 0.6], [576, 17, 0.6],
+      // 直角右彎往南
+      [516, 17, 0.6], [490, -9, 0.6], [490, -65.5, 0.6],
+      // 直角右彎往西
+      [490, -122, 0.6], [462, -150, 0.8],
+      // 跨海大橋
+      [402, -150, 2.4], [323.25, -150, 6.3], [244.5, -150, 9.3], [165.75, -150, 6.3], [87, -150, 2.4],
+      // 最後一個直角彎回到起跑直線
+      [27, -150, 0.8], [0, -123, 0.6], [0, -63, 0.6],
+    ],
+    pads: [
+      { dist: 120, lat: 0 }, { dist: 420, lat: -4 }, { dist: 980, lat: 4 }, { dist: 1250, lat: 0 },
+      { dist: 1440, lat: 3 }, { dist: 1600, lat: -3 }, { dist: 1880, lat: 3 }, { dist: 2090, lat: 0 },
+    ],
+    ramps: [320, 900],
+    barrels: [{ dist: 150, lat: 9.2 }, { dist: 230, lat: -9.2 }, { dist: 400, lat: 9.2 }, { dist: 520, lat: -9.2 }, { dist: 600, lat: 9.2 }, { dist: 700, lat: -9.2 }, { dist: 760, lat: 9.2 }, { dist: 970, lat: -9.2 }, { dist: 1040, lat: 9.2 }, { dist: 1160, lat: -9.2 }, { dist: 1270, lat: 9.2 }, { dist: 1360, lat: -9.2 }, { dist: 1450, lat: 9.2 }, { dist: 1520, lat: -9.2 }, { dist: 1650, lat: 9.2 }, { dist: 1800, lat: -9.2 }, { dist: 1950, lat: 9.2 }, { dist: 2030, lat: -9.2 }],
   },
 ];
 

@@ -12,6 +12,9 @@ export interface Profile {
   kart: CarId;
   karts: Partial<Record<CarId, boolean>>;
   bestLap: number;
+  /** 目前選的地圖與各地圖的最快單圈 */
+  track: string;
+  bestLaps: Record<string, number>;
   races: number;
   wins: number;
 }
@@ -29,6 +32,8 @@ export function defaultProfile(): Profile {
     kart: 'kart-oobi',
     karts: { 'kart-oobi': true },
     bestLap: 0,
+    track: 'skyline-loop',
+    bestLaps: {},
     races: 0,
     wins: 0,
   };
@@ -51,6 +56,7 @@ export function loadProfile(): Profile {
       lvl: { ...d.lvl, ...p.lvl },
       car: { ...d.car, ...p.car },
       karts: { ...d.karts, ...p.karts },
+      bestLaps: { ...(p.bestLap > 0 ? { 'skyline-loop': p.bestLap } : {}), ...p.bestLaps },
     };
   } catch {
     return d;

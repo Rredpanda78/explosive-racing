@@ -9,10 +9,11 @@ import { defaultProfile } from '../src/game/save';
 import { makeTerrain } from '../src/game/terrain';
 import { Track, TRACKS } from '../src/game/track';
 
-const track = new Track(TRACKS[0]);
+for (const def of TRACKS) {
+const track = new Track(def);
 let kmax = 0;
 for (const s of track.samples) kmax = Math.max(kmax, Math.abs(s.curv));
-console.log(`track length ${track.length.toFixed(0)} m, samples ${track.n}, min radius ${(1 / kmax).toFixed(1)} m`);
+console.log(`=== ${def.id}: length ${track.length.toFixed(0)} m, samples ${track.n}, min radius ${(1 / kmax).toFixed(1)} m ===`);
 
 // ---- 1. 地形檢查 ----
 {
@@ -64,6 +65,7 @@ function runAll(mode: 'race' | 'elim', seed: number): void {
 }
 runAll('race', 12345);
 runAll('elim', 777);
+}
 
 // ---- 3. 玩家甩尾測試：在超寬賽道上（不會撞牆）量測各種操作下甩尾能維持多久 ----
 {

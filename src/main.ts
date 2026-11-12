@@ -14,9 +14,12 @@ const canvas = document.getElementById('game') as HTMLCanvasElement;
 const touchRoot = document.getElementById('touch')!;
 const coarse = window.matchMedia('(pointer: coarse)').matches;
 
-const track = new Track(TRACKS[0]);
-const view = new GameView(canvas, coarse);
 const profile = loadProfile();
+let trackIndex = Math.max(0, TRACKS.findIndex((t) => t.id === profile.track));
+let track = new Track(TRACKS[trackIndex]);
+/** 選單上顯示的地圖清單（長度要先把賽道算出來才知道） */
+const trackList = TRACKS.map((def) => ({ name: def.name, desc: def.desc, laps: def.laps, length: Math.round(new Track(def).length) }));
+const view = new GameView(canvas, coarse);
 const input = new Input();
 const hud = new Hud(track);
 const audio = new GameAudio();
@@ -63,6 +66,18 @@ function startRace(m?: RaceMode): void {
   setTouchUI(input.touchMode);
 }
 
+/** 在主選單切換地圖：重建場景，背景會開始預覽新地圖 */
+function selectTrack(i: number): void {
+  if (race || !ready || i === trackIndex || !TRACKS[i]) return;
+  trackIndex = i;
+  track = new Track(TRACKS[i]);
+  profile.track = TRACKS[i].id;
+  saveProfile(profile);
+  view.setTrack(track);
+  hud.setTrack(track);
+  screens.menu();
+}
+
 function toMenu(): void {
   race = null;
   paused = false;
@@ -85,8 +100,9 @@ function setPaused(p: boolean): void {
   }
 }
 
-const screens = new Screens(profile, {
+const screens = new Screens(profile, trackList, () => trackIndex, {
   start: startRace,
+  selectTrack,
   resume: () => setPaused(false),
   restart: () => startRace(),
   toMenu,
@@ -128,7 +144,8 @@ function finishRace(r: Race): void {
   profile.cash += summary.total;
   profile.races++;
   if (rank === 1) profile.wins++;
-  if (best > 0 && (profile.bestLap <= 0 || best < profile.bestLap)) profile.bestLap = best;
+  const id = r.track.def.id;
+  if (best > 0 && (!profile.bestLaps[id] || best < profile.bestLaps[id])) profile.bestLaps[id] = best;
   saveProfile(profile);
   resultsShown = true;
   input.capture = false;
@@ -199,4 +216,4 @@ void loadModels([...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS]).then(() => {
 });
 
 // 方便除錯與之後的自動化測試
-(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, track };
+(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, get track() { return track; } };

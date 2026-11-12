@@ -1,18 +1,15 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CFG } from '../game/config';
 import { makeTerrain } from '../game/terrain';
-import { PAD_HALF_WIDTH, PAD_LENGTH, type Sample, type Track } from '../game/track';
+import { PAD_HALF_WIDTH, PAD_LENGTH, type Sample, type SceneRange, type Track } from '../game/track';
 import { mulberry32 } from '../game/util';
 import { makeInstanced, makeProp } from './assets';
-
-// 黃金時段的光線：太陽偏低、暖色，陰影拉長，畫面比較有層次
-export const SKY_TOP = 0x4a90e8;
-export const SKY_HORIZON = 0xffead4;
-export const SUN_DIR = new THREE.Vector3(0.62, 0.5, 0.36).normalize();
+import type { Theme } from './themes';
 
 export interface World {
   group: THREE.Group;
-  /** 任意位置的地形高度（賽道外的草地） */
+  /** 任意位置的地形高度（賽道外的地面） */
   terrainH(x: number, z: number): number;
   update(dt: number, time: number, camera: THREE.Camera): void;
 }
@@ -49,7 +46,7 @@ interface StripOpt {
   when?: (s: Sample, i: number) => boolean;
   /** 自訂沿賽道方向的貼圖座標 */
   along?: (s: Sample, i: number) => number;
-  /** 兩條邊額外加上的高度（跳台斜面用）；只加在 A/B 其中指定的邊 */
+  /** 額外加上的高度（跳台斜面用）；liftA / liftB 設為 false 可以只抬其中一邊 */
   lift?: (s: Sample, i: number) => number;
   liftB?: boolean;
   liftA?: boolean;
@@ -87,14 +84,19 @@ function strip(track: Track, o: StripOpt): THREE.BufferGeometry {
   return g;
 }
 
-/** 建立賽道、護欄、地形與周邊景物 */
-export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): World {
+/** 比 1 亮的顏色：在泛光下會發亮 */
+const glow = (hex: number, k: number) => new THREE.Color(hex).multiplyScalar(k);
+
+/** 依賽道與主題建立整個場景：路面、護欄、地形、景物、天空 */
+export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDetail: boolean): World {
   const root = new THREE.Group();
   const hw = track.halfWidth;
   const S = track.samples;
   const n = track.n;
   const L = track.length;
-  const rng = mulberry32(42);
+  const rng = mulberry32(42 + track.def.id.length * 7);
+  const night = theme.night;
+  const updaters: ((dt: number, time: number) => void)[] = [];
   const addMesh = (geo: THREE.BufferGeometry, mat: THREE.Material, receive = true): THREE.Mesh => {
     const m = new THREE.Mesh(geo, mat);
     m.receiveShadow = shadows && receive;
@@ -107,15 +109,18 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     else if (d < -L / 2) d += L;
     return d;
   };
+  const wrapD = (d: number) => ((d % L) + L) % L;
+  const sampleAt = (dist: number): Sample => S[track.wrap(Math.round(wrapD(dist) / track.spacing))];
 
   // ---------- 地形 ----------
   const terrain = makeTerrain(track);
   const { minX, maxX, minZ, maxZ, baseY } = terrain;
   const trackDist = terrain.trackDist;
+  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
 
   // 內野找一塊離賽道夠遠、地勢最低的地方挖一座湖
   let lake: { x: number; z: number; r: number; y: number } | null = null;
-  {
+  if (theme.lake) {
     let best = Infinity;
     for (let x = minX + 40; x < maxX - 40; x += 14) for (let z = minZ + 40; z < maxZ - 40; z += 14) {
       const d = trackDist(x, z);
@@ -132,43 +137,45 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     if (!lake) return h;
     const d = Math.hypot(x - lake.x, z - lake.z);
     if (d > lake.r + 22) return h;
-    // 湖底往下挖，岸邊平滑接回原本的地形
-    const bed = lake.y - 2.2 * Math.max(0, 1 - (d / lake.r) * (d / lake.r));
+    // 湖底往下挖，岸邊平滑接回原本的地形（只會比原本低，不會把地面墊高）
+    const bed = Math.min(h, lake.y - 2.2 * Math.max(0, 1 - (d / lake.r) * (d / lake.r)));
     const t = Math.min(1, Math.max(0, (d - lake.r) / 22));
     return bed + (h - bed) * t * t * (3 - 2 * t);
   };
+  const inLake = (x: number, z: number, margin: number) => !!lake && Math.hypot(x - lake.x, z - lake.z) < lake.r + margin;
 
   const grassTex = canvasTex(128, 128, (c) => {
-    c.fillStyle = '#6dbb4c';
+    c.fillStyle = theme.ground[0];
     c.fillRect(0, 0, 128, 128);
     const r = mulberry32(7);
     for (let i = 0; i < 1400; i++) {
-      c.fillStyle = r() > 0.5 ? 'rgba(140,215,95,0.45)' : 'rgba(60,140,58,0.45)';
+      c.fillStyle = r() > 0.5 ? theme.ground[1] : theme.ground[2];
       c.fillRect(r() * 128, r() * 128, 1 + r() * 3, 1 + r() * 3);
     }
   });
   const M = 270, STEP = lowDetail ? 12 : 8;
   const gx0 = minX - M, gz0 = minZ - M;
-  const nx = Math.ceil((maxX - minX + 2 * M) / STEP), nz = Math.ceil((maxZ - minZ + 2 * M) / STEP);
+  const gnx = Math.ceil((maxX - minX + 2 * M) / STEP), gnz = Math.ceil((maxZ - minZ + 2 * M) / STEP);
   {
-    const pos = new Float32Array((nx + 1) * (nz + 1) * 3);
-    const uv = new Float32Array((nx + 1) * (nz + 1) * 2);
-    const col = new Float32Array((nx + 1) * (nz + 1) * 3);
+    const pos = new Float32Array((gnx + 1) * (gnz + 1) * 3);
+    const uv = new Float32Array((gnx + 1) * (gnz + 1) * 2);
+    const col = new Float32Array((gnx + 1) * (gnz + 1) * 3);
     const idx: number[] = [];
+    const lo = theme.groundLow, hi = theme.groundHigh;
     let p = 0;
-    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
+    for (let j = 0; j <= gnz; j++) for (let i = 0; i <= gnx; i++) {
       const x = gx0 + i * STEP, z = gz0 + j * STEP;
       const y = terrainH(x, z);
       pos.set([x, y, z], p * 3);
       uv.set([x / 7, z / 7], p * 2);
-      // 高處偏亮偏黃、低處偏深綠，再加一點隨機斑駁
-      const hN = Math.min(1, Math.max(0, (y - baseY) / 24));
-      const v = 0.78 + rng() * 0.2 + hN * 0.18;
-      col.set([v * (0.96 + hN * 0.12), v, v * (0.9 - hN * 0.1)], p * 3);
+      // 依高度在兩種色調之間漸變，再加一點隨機斑駁
+      const hN = Math.min(1, Math.max(0, (y - baseY) / 26));
+      const v = 0.9 + rng() * 0.2;
+      col.set([v * (lo[0] + (hi[0] - lo[0]) * hN), v * (lo[1] + (hi[1] - lo[1]) * hN), v * (lo[2] + (hi[2] - lo[2]) * hN)], p * 3);
       p++;
     }
-    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-      const a = j * (nx + 1) + i, b = a + 1, d = a + nx + 1, e = d + 1;
+    for (let j = 0; j < gnz; j++) for (let i = 0; i < gnx; i++) {
+      const a = j * (gnx + 1) + i, b = a + 1, d = a + gnx + 1, e = d + 1;
       idx.push(a, d, b, b, d, e);
     }
     const g = new THREE.BufferGeometry();
@@ -181,17 +188,15 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     // 遠方的平地：高度是 baseY，一定低於賽道最低點
     const farTex = grassTex.clone();
     farTex.repeat.set(500, 500);
-    const farPlane = new THREE.Mesh(new THREE.PlaneGeometry(4400, 4400).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: farTex, color: 0xd9e4cf }));
-    farPlane.position.set((minX + maxX) / 2, baseY - 0.2, (minZ + maxZ) / 2);
+    const farPlane = new THREE.Mesh(new THREE.PlaneGeometry(4400, 4400).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: farTex, color: theme.farGround }));
+    farPlane.position.set(cx, baseY - 0.2, cz);
     root.add(farPlane);
   }
 
-  // 湖面
-  let water: THREE.Mesh | null = null;
   if (lake) {
-    water = new THREE.Mesh(
+    const water = new THREE.Mesh(
       new THREE.CircleGeometry(lake.r + 6, 40).rotateX(-Math.PI / 2),
-      new THREE.MeshPhongMaterial({ color: 0x3fa9e6, transparent: true, opacity: 0.82, shininess: 120, specular: 0xfff0d0 }),
+      new THREE.MeshPhongMaterial({ color: theme.lakeColor, transparent: true, opacity: night ? 0.92 : 0.82, shininess: 120, specular: night ? 0x8fb0ff : 0xfff0d0 }),
     );
     water.position.set(lake.x, lake.y, lake.z);
     root.add(water);
@@ -199,11 +204,11 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
 
   // ---------- 路面 ----------
   const roadTex = canvasTex(512, 512, (c) => {
-    c.fillStyle = '#5a5f6c';
+    c.fillStyle = theme.road;
     c.fillRect(0, 0, 512, 512);
     const r = mulberry32(3);
     for (let i = 0; i < 9000; i++) {
-      const v = 66 + r() * 50;
+      const v = theme.roadSpeck + r() * 50;
       c.fillStyle = `rgba(${v},${v},${v + 8},0.3)`;
       c.fillRect(r() * 512, r() * 512, 2, 2);
     }
@@ -216,7 +221,7 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
       c.fillStyle = g;
       c.fillRect(x - 46, 0, 92, 512);
     }
-    // 裂縫與補丁，讓路面不那麼單調
+    // 裂縫，讓路面不那麼單調
     c.strokeStyle = 'rgba(15,15,18,0.35)';
     c.lineWidth = 2;
     for (let i = 0; i < 5; i++) {
@@ -249,10 +254,17 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
   addMesh(strip(track, { latA: hw, yA: 0.05, latB: hw - 1.5, yB: 0.035, scale: 5, when: inCorner }), curbMat);
   addMesh(strip(track, { latA: -(hw - 1.5), yA: 0.035, latB: -hw, yB: 0.05, scale: 5, when: inCorner }), curbMat);
 
+  // 夜晚：路面兩側的霓虹燈條
+  if (night) {
+    const neonL = new THREE.MeshBasicMaterial({ color: glow(0x22e6ff, 1.9) });
+    const neonR = new THREE.MeshBasicMaterial({ color: glow(0xff3d9a, 1.9) });
+    addMesh(strip(track, { latA: hw - 0.1, yA: 0.06, latB: hw - 0.45, yB: 0.06, scale: 10 }), neonL, false);
+    addMesh(strip(track, { latA: -(hw - 0.45), yA: 0.06, latB: -(hw - 0.1), yB: 0.06, scale: 10 }), neonR, false);
+  }
+
   // ---------- 護欄（彩色積木風） ----------
   const wallTex = canvasTex(256, 64, (c) => {
-    const cols = ['#ff5d8f', '#ffd23f', '#3bceac', '#4d9de0'];
-    cols.forEach((col, i) => {
+    theme.walls.forEach((col, i) => {
       c.fillStyle = col;
       c.fillRect(i * 64, 0, 64, 64);
       c.fillStyle = 'rgba(0,0,0,0.14)';
@@ -265,18 +277,21 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     c.fillStyle = '#ffffff';
     c.fillRect(0, 0, 256, 5);
   });
-  const wallMat = new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
-  const capMat = new THREE.MeshLambertMaterial({ color: 0xf4f4f4 });
+  // 夜晚的護欄自己會發光（不受光照影響），白天用一般材質
+  const wallMat: THREE.Material = night
+    ? new THREE.MeshBasicMaterial({ map: wallTex, side: THREE.DoubleSide, color: glow(0xffffff, 0.8) })
+    : new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
+  const capMat: THREE.Material = night ? new THREE.MeshBasicMaterial({ color: glow(0xffffff, 0.9) }) : new THREE.MeshLambertMaterial({ color: 0xf4f4f4 });
   const WH = 1.5;
   for (const sg of [1, -1]) {
     const inner = sg * (hw + 0.35), outer = sg * (hw + 0.95);
     const wIn = addMesh(strip(track, { latA: inner, yA: WH, latB: inner, yB: -0.4, scale: 12, uAlong: true }), wallMat);
     const wOut = addMesh(strip(track, { latA: outer, yA: WH, latB: outer, yB: -0.6, scale: 12, uAlong: true }), wallMat);
     wIn.castShadow = wOut.castShadow = shadows;
-    addMesh(strip(track, sg > 0 ? { latA: outer, yA: WH, latB: inner, yB: WH, scale: 10 } : { latA: inner, yA: WH, latB: outer, yB: WH, scale: 10 }), capMat);
+    addMesh(strip(track, sg > 0 ? { latA: outer, yA: WH, latB: inner, yB: WH, scale: 10 } : { latA: inner, yA: WH, latB: outer, yB: WH, scale: 10 }), capMat, !night);
   }
 
-  // 急彎外側的方向指示牌（顏色調亮一點，在泛光下會微微發亮）
+  // 急彎外側的方向指示牌
   const arrowTex = canvasTex(128, 64, (c) => {
     c.fillStyle = '#ffd400';
     c.fillRect(0, 0, 128, 64);
@@ -288,7 +303,7 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
       c.fill();
     }
   });
-  const arrowMat = new THREE.MeshBasicMaterial({ map: arrowTex, side: THREE.DoubleSide, color: new THREE.Color(1.25, 1.25, 1.25) });
+  const arrowMat = new THREE.MeshBasicMaterial({ map: arrowTex, side: THREE.DoubleSide, color: glow(0xffffff, night ? 1.7 : 1.25) });
   for (const sg of [1, -1]) {
     // 左彎（curv > 0）的外側在右邊（lat < 0），反之亦然
     const when = (s: Sample, i: number) => {
@@ -299,8 +314,8 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     addMesh(strip(track, { latA: lat, yA: WH + 2.1, latB: lat, yB: WH + 0.15, scale: 4, uAlong: true, when }), arrowMat, false);
   }
 
-  // ---------- 路肩（從護欄外側往下接到草地） ----------
-  const shoulderMat = new THREE.MeshLambertMaterial({ map: grassTex, color: 0xcfe6bd });
+  // ---------- 路肩（從護欄外側往下接到地面） ----------
+  const shoulderMat = new THREE.MeshLambertMaterial({ map: grassTex, color: theme.shoulder });
   addMesh(strip(track, { latA: hw + 9, yA: -3.2, latB: hw + 0.95, yB: -0.02, scale: 7 }), shoulderMat);
   addMesh(strip(track, { latA: -(hw + 0.95), yA: -0.02, latB: -(hw + 9), yB: -3.2, scale: 7 }), shoulderMat);
 
@@ -320,8 +335,7 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     }
   };
   const padTex = canvasTex(64, 64, chevrons('#1b1d25'));
-  // 顏色乘上大於 1 的值：在泛光下會發亮
-  const padMat = new THREE.MeshBasicMaterial({ map: padTex, color: new THREE.Color(1.7, 1.7, 1.7) });
+  const padMat = new THREE.MeshBasicMaterial({ map: padTex, color: glow(0xffffff, night ? 2.2 : 1.7) });
   for (const p of track.pads) {
     const geo = strip(track, {
       latA: p.lat + PAD_HALF_WIDTH, yA: 0.045, latB: p.lat - PAD_HALF_WIDTH, yB: 0.045, scale: 1,
@@ -330,10 +344,11 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     });
     addMesh(geo, padMat, false);
   }
+  updaters.push((_dt, time) => { padTex.offset.y = -(time * 1.6) % 1; });
 
   // ---------- 跳台：整條路寬的斜坡 ----------
   const rampTex = canvasTex(64, 64, chevrons('#2a2f3c'));
-  const rampMat = new THREE.MeshLambertMaterial({ map: rampTex });
+  const rampMat: THREE.Material = night ? new THREE.MeshBasicMaterial({ map: rampTex, color: glow(0xffffff, 1.4) }) : new THREE.MeshLambertMaterial({ map: rampTex });
   const rampSide = new THREE.MeshLambertMaterial({ color: 0xff7a1a, side: THREE.DoubleSide });
   const RL = CFG.rampLength, RH = CFG.rampHeight;
   for (const r of track.ramps) {
@@ -345,8 +360,7 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     for (const sg of [1, -1]) {
       addMesh(strip(track, { latA: sg * w, yA: 0.03, latB: sg * w, yB: 0, scale: 4, uAlong: true, when: on, lift, liftB: false }), rampSide);
     }
-    // 斜坡頂端的背面
-    const s = S[track.wrap(Math.round(r / track.spacing))];
+    const s = sampleAt(r);
     const back = new THREE.Mesh(new THREE.PlaneGeometry(w * 2, RH), rampSide);
     back.position.set(s.x + s.tx * 0.6, s.y + RH / 2, s.z + s.tz * 0.6);
     back.rotation.y = Math.atan2(s.tx, s.tz);
@@ -402,7 +416,7 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     c.fillStyle = '#fff';
     c.fillText('EXPLOSIVE RACING', 512, 64);
   }, false);
-  const bannerMat = new THREE.MeshLambertMaterial({ map: banner });
+  const bannerMat: THREE.Material = night ? new THREE.MeshBasicMaterial({ map: banner, color: glow(0xffffff, 1.6) }) : new THREE.MeshLambertMaterial({ map: banner });
   const beam = new THREE.Mesh(new THREE.BoxGeometry(hw * 2 + 4.5, 3, 0.9), [postMat, postMat, postMat, postMat, bannerMat, bannerMat]);
   beam.position.y = 9.5;
   beam.castShadow = shadows;
@@ -413,14 +427,14 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
   const props = new THREE.Group();
   root.add(props);
   const stands: THREE.Group[] = [];
-  const sampleAt = (dist: number): Sample => S[track.wrap(Math.round(dist / track.spacing))];
+  const lamps: { s: Sample; sg: number }[] = [];
   interface PlaceOpt { yaw?: number; recolor?: Record<string, number>; sink?: number; onRoadLevel?: boolean }
   /** 在距起點 dist 公尺、橫向 lat 處放一個模型，預設正面朝向賽道 */
   const place = (name: string, dist: number, lat: number, width: number, o: PlaceOpt = {}): THREE.Group | null => {
     const s = sampleAt(dist);
     const x = s.x + s.nx * lat, z = s.z + s.nz * lat;
     if (Math.abs(lat) > hw + 2 && trackDist(x, z) < Math.min(Math.abs(lat) - 1.5, hw + 5)) return null; // 會壓到別段賽道
-    if (lake && Math.hypot(x - lake.x, z - lake.z) < lake.r + 12) return null;
+    if (inLake(x, z, 12)) return null;
     const g = makeProp(name, width, o.recolor);
     if (!g) return null;
     const y = o.onRoadLevel ? s.y : terrainH(x, z);
@@ -433,59 +447,99 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     return g;
   };
   const far = hw + 15;
-  const TENT_COLS = [0xe8545a, 0x3f8fe8, 0xffc93c, 0x39c48a, 0xb469ff];
+  const ACC = theme.accents;
+  const sides = (r: SceneRange) => (r.side === 0 ? [1, -1] : [r.side]);
+  const scn = track.def.scenery;
 
-  // 起跑直線：左側看台、右側維修站
-  for (let d = -70; d <= 170; d += 17) place(d % 34 === 0 ? 'grandStandCovered' : 'grandStand', (d + L) % L, far + 2, 16, { sink: 0.3 });
-  for (let d = 12; d <= 118; d += 15) place('pitsGarage', d, -(far + 1), 14, { sink: 0.3 });
-  place('pitsOffice', 136, -(far + 1), 14, { sink: 0.3 });
-  place('pitsOffice', L - 6, -(far + 1), 14, { sink: 0.3 });
-  for (const d of [L - 30, L - 55, 190]) place('tentLong', (d + L) % L, -(far + 1), 20, { recolor: { red: TENT_COLS[1] }, sink: 0.2 });
+  // 看台
+  for (const r of scn.stands) {
+    let i = 0;
+    for (let d = r.from; d <= r.to; d += 17, i++) {
+      for (const sg of sides(r)) place(i % 2 === 0 ? 'grandStandCovered' : i % 4 === 1 ? 'grandStandAwning' : 'grandStand', d, sg * (far + 2.5), 16, { sink: 0.35 });
+    }
+  }
+  // 維修站
+  for (const r of scn.pits) {
+    for (const sg of sides(r)) {
+      for (let d = r.from; d <= r.to - 16; d += 15) place('pitsGarage', d, sg * (far + 1), 14, { sink: 0.3 });
+      place('pitsOffice', r.to, sg * (far + 1), 14, { sink: 0.3 });
+      place('pitsOffice', r.from - 16, sg * (far + 1), 14, { sink: 0.3 });
+      for (const d of [r.from - 40, r.from - 64, r.to + 26]) place('tentLong', d, sg * (far + 1), 20, { recolor: { red: ACC[1] }, sink: 0.2 });
+    }
+  }
+  // 帳篷市集
+  for (const r of scn.tents) {
+    let i = 0;
+    for (let d = r.from; d <= r.to; d += 24, i++) {
+      const sg = r.side === 0 ? (i % 2 ? 1 : -1) : r.side;
+      const long = i % 3 === 0;
+      place(long ? 'tentLong' : i % 3 === 1 ? 'tent' : 'tentClosed', d, sg * (far + 2), long ? 20 : 11, { recolor: { red: ACC[i % ACC.length], grass: ACC[(i + 2) % ACC.length] }, sink: 0.2 });
+    }
+  }
+  // 起跑線旗子
   for (const lat of [hw + 3.2, -(hw + 3.2)]) {
     place('flagCheckers', 6, lat, 1.6, { onRoadLevel: true });
     place('flagCheckers', L - 6, lat, 1.6, { onRoadLevel: true });
-    for (let d = 40; d <= 180; d += 35) place(d % 70 === 40 ? 'flagGreen' : 'flagRed', d, lat, 1.4, { onRoadLevel: true });
+    for (let d = 40; d <= 160; d += 40) place(d % 80 === 40 ? 'flagGreen' : 'flagRed', d, lat, 1.4, { onRoadLevel: true });
   }
-
-  // 整條賽道：路燈、旗塔、看板依路段輪流出現
-  for (let d = 215; d < L - 90; d += 42) {
+  // 整條賽道：直線放路燈，彎道外側放旗塔，隔一段放看板
+  const lampStep = night ? 30 : 42;
+  for (let d = 200; d < L - 80; d += lampStep) {
     const s = sampleAt(d);
     const out = s.curv > 0 ? -1 : 1; // 彎道外側
     const zone = Math.floor(d / 300) % 4;
     if (Math.abs(s.curv) < 0.01) {
-      place('lightPostLarge', d, hw + 3.4, 5.5, { onRoadLevel: true, sink: 0.3 });
-      place('lightPostLarge', d + 21, -(hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 });
+      for (const [dd, sg] of [[0, 1], [lampStep / 2, -1]] as [number, number][]) {
+        if (place('lightPostLarge', d + dd, sg * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 })) lamps.push({ s: sampleAt(d + dd), sg });
+      }
     } else {
       place(zone % 2 ? 'bannerTowerRed' : 'bannerTowerGreen', d, out * (hw + 5), 5, { sink: 0.6 });
+      if (night && place('lightPostLarge', d, out * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 })) lamps.push({ s, sg: out });
     }
-    if (d % 126 < 42) place(zone % 2 ? 'billboard' : 'billboardLow', d + 10, out * (far - 2), 13, { sink: 0.3 });
+    if (Math.floor(d / lampStep) % 3 === 0) place(zone % 2 ? 'billboard' : 'billboardLow', d + 10, out * (far - 2), 13, { sink: 0.3 });
   }
-
-  // 山頂髮夾彎：外側看台與帳篷，內側雷達站
-  for (let d = 700; d <= 830; d += 18) place(d % 36 === 0 ? 'grandStandAwning' : 'grandStand', d, far + 3, 16, { sink: 0.4 });
-  place('radarEquipment', 760, -(far + 6), 12, { sink: 0.3 });
-  for (let i = 0; i < 4; i++) place(i % 2 ? 'tent' : 'tentClosed', 640 + i * 16, -(far + 1), 11, { recolor: { red: TENT_COLS[i], grass: TENT_COLS[(i + 2) % 5] }, sink: 0.2 });
-
-  // 跳台旁：兩側看台，讓飛越的瞬間有觀眾
+  // 跳台旁：兩側看台與旗子
   for (const r of track.ramps) {
     for (const sg of [1, -1]) for (const dd of [-4, 14]) place('grandStand', r + dd, sg * (far + 3), 16, { sink: 0.4 });
     for (const sg of [1, -1]) place('flagCheckers', r, sg * (hw + 3.2), 1.6, { onRoadLevel: true });
   }
-
-  // 連續 S 彎：兩側彩色帳篷市集
-  for (let d = 1300; d <= 1560; d += 26) {
-    const i = Math.round(d / 26);
-    place(i % 3 === 0 ? 'tentLong' : 'tent', d, (i % 2 ? 1 : -1) * (far + 2), i % 3 === 0 ? 20 : 11, { recolor: { red: TENT_COLS[i % 5] }, sink: 0.2 });
-  }
-  place('grandStandCovered', 1430, far + 4, 16, { sink: 0.4 });
-  place('grandStandCovered', 1395, -(far + 4), 16, { sink: 0.4 });
-
-  // 山脊與終點前：拱形門架
-  for (const d of [1010, 1720, 2290]) {
-    const g = place('overheadRoundColored', d, 0, hw * 2 + 9, { onRoadLevel: true, sink: 0.2 });
+  // 橫跨路面的拱門
+  for (const d of scn.arches) {
+    const g = place('overheadRoundColored', d, 0, hw * 2 + 9, { onRoadLevel: true, sink: 0.2, recolor: { red: ACC[Math.round(d) % ACC.length] } });
     if (g) g.rotation.y = Math.atan2(sampleAt(d).tx, sampleAt(d).tz);
   }
-  for (let d = 1880; d <= 2000; d += 20) place('tent', d, (d % 40 ? 1 : -1) * (far + 1), 11, { recolor: { red: TENT_COLS[(d / 20) % 5] }, sink: 0.2 });
+
+  // ---------- 夜晚：路燈的燈泡與照在路面上的光暈 ----------
+  if (night && lamps.length) {
+    const bulb = new THREE.InstancedMesh(new THREE.SphereGeometry(0.7, 8, 6), new THREE.MeshBasicMaterial({ color: glow(0xffe2a8, 3) }), lamps.length);
+    const poolTex = canvasTex(64, 64, (c) => {
+      const g = c.createRadialGradient(32, 32, 2, 32, 32, 32);
+      g.addColorStop(0, 'rgba(255,226,170,0.55)');
+      g.addColorStop(1, 'rgba(255,226,170,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, 64, 64);
+    }, false);
+    const pool = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(26, 26).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: poolTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+      lamps.length,
+    );
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+    const upv = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3();
+    lamps.forEach((l, i) => {
+      const s = l.s;
+      m.makeTranslation(s.x + s.nx * l.sg * (hw + 2.1), s.y + 10.3, s.z + s.nz * l.sg * (hw + 2.1));
+      bulb.setMatrixAt(i, m);
+      // 光暈貼著路面的坡度
+      nrm.set(-s.tx * s.slope, 1, -s.tz * s.slope).normalize();
+      q.setFromUnitVectors(upv, nrm);
+      m.compose(p.set(s.x + s.nx * l.sg * (hw - 5), s.y + 0.07, s.z + s.nz * l.sg * (hw - 5)), q, one);
+      pool.setMatrixAt(i, m);
+    });
+    bulb.frustumCulled = pool.frustumCulled = false;
+    pool.renderOrder = 4;
+    root.add(bulb, pool);
+  }
 
   // ---------- 看台上的觀眾（會上下跳動加油） ----------
   // 座位排的位置是從看台模型量出來的（模型座標：寬 1、前緣 z=0、往後往上）
@@ -494,7 +548,7 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
   const crowdC: number[] = [];
   const fanCols = [0xff5d8f, 0xffd23f, 0x3bceac, 0x4d9de0, 0xff7a1a, 0xffffff, 0xb05cff, 0x2f3542, 0xe8545a];
   const tmpC = new THREE.Color();
-  const pm = new THREE.Matrix4(), lm = new THREE.Matrix4(), q0 = new THREE.Quaternion(), v0 = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+  const pm = new THREE.Matrix4(), lm = new THREE.Matrix4(), q0 = new THREE.Quaternion(), v0 = new THREE.Vector3(), one0 = new THREE.Vector3(1, 1, 1);
   const occupancy = lowDetail ? 0.3 : 0.62;
   for (const st of stands) {
     st.updateMatrixWorld(true);
@@ -503,16 +557,15 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
       for (let x = 0.08; x <= 0.92; x += 0.042) {
         if (rng() > occupancy) continue;
         const s = 0.85 + rng() * 0.35;
-        lm.compose(v0.set((x - 0.5) * 16, ry * 16 + 0.55 * s, (rz + 0.5) * 16), q0, one.set(s, s, s));
+        lm.compose(v0.set((x - 0.5) * 16, ry * 16 + 0.55 * s, (rz + 0.5) * 16), q0, one0.set(s, s, s));
         crowdM.push(new THREE.Matrix4().multiplyMatrices(pm, lm));
         tmpC.setHex(fanCols[Math.floor(rng() * fanCols.length)]);
         crowdC.push(tmpC.r, tmpC.g, tmpC.b);
       }
     }
   }
-  const crowdTime = { value: 0 };
   if (crowdM.length) {
-    const body = new THREE.BoxGeometry(0.55, 1.1, 0.45);
+    const crowdTime = { value: 0 };
     const mat = new THREE.MeshLambertMaterial();
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = crowdTime;
@@ -522,146 +575,238 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
         '#include <begin_vertex>\n#ifdef USE_INSTANCING\n float ph = instanceMatrix[3].x * 1.7 + instanceMatrix[3].z * 2.3;\n transformed.y += max(0.0, sin(uTime * 7.0 + ph)) * 0.32 * step(0.2, sin(uTime * 0.9 + ph * 0.13));\n#endif',
       );
     };
-    const crowd = new THREE.InstancedMesh(body, mat, crowdM.length);
+    const crowd = new THREE.InstancedMesh(new THREE.BoxGeometry(0.55, 1.1, 0.45), mat, crowdM.length);
     crowdM.forEach((m, i) => {
       crowd.setMatrixAt(i, m);
       crowd.setColorAt(i, tmpC.setRGB(crowdC[i * 3], crowdC[i * 3 + 1], crowdC[i * 3 + 2]));
     });
     crowd.frustumCulled = false;
     root.add(crowd);
+    updaters.push((_dt, time) => { crowdTime.value = time; });
   }
 
-  // ---------- 樹、灌木、岩石、花 ----------
-  const spots: { x: number; z: number; y: number; d: number }[] = [];
-  const wantSpots = lowDetail ? 380 : 760;
-  for (let tries = 0; tries < 12000 && spots.length < wantSpots; tries++) {
-    const x = minX - 170 + rng() * (maxX - minX + 340);
-    const z = minZ - 170 + rng() * (maxZ - minZ + 340);
-    const d = trackDist(x, z);
-    if (d < hw + 11) continue;
-    // 離賽道越遠越稀疏，並避開看台、維修站與湖
-    if (d > 60 && rng() > 0.45) continue;
-    if (lake && Math.hypot(x - lake.x, z - lake.z) < lake.r + 9) continue;
-    let blocked = false;
-    for (const pr of props.children) {
-      const dx = pr.position.x - x, dz = pr.position.z - z;
-      if (dx * dx + dz * dz < 150) { blocked = true; break; }
-    }
-    if (!blocked) spots.push({ x, z, y: terrainH(x, z), d });
-  }
+  // ---------- 散布在賽道外的景物（依主題不同） ----------
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const v = new THREE.Vector3();
   const sc = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
-  const mats: THREE.Matrix4[][] = [[], [], [], []];
-  for (let i = 0; i < spots.length; i++) {
-    const sp = spots[i];
-    const kind = i % 10 < 5 ? 0 : i % 10 < 8 ? 1 : i % 10 < 9 ? 2 : 3;
-    const s = kind < 2 ? 0.75 + rng() * 0.6 : 0.6 + rng() * 0.9;
-    q.setFromAxisAngle(up, rng() * Math.PI * 2);
-    m4.compose(v.set(sp.x, sp.y - 0.15, sp.z), q, sc.set(s, s * (0.85 + rng() * 0.3), s));
-    mats[kind].push(m4.clone());
-  }
   const addInst = (g: THREE.Object3D | null, cast = true) => {
     if (!g) return;
     if (shadows && cast) g.traverse((m) => { m.castShadow = true; });
     root.add(g);
   };
-  const treeL = makeInstanced('treeLarge', 13, mats[0]);
-  const treeS = makeInstanced('treeSmall', 9, mats[1]);
-  if (treeL && treeS) {
-    addInst(treeL);
-    addInst(treeS);
+  const instanced = (geo: THREE.BufferGeometry, mat: THREE.Material, list: THREE.Matrix4[], cast = true): THREE.InstancedMesh | null => {
+    if (!list.length) return null;
+    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((m, i) => im.setMatrixAt(i, m));
+    im.frustumCulled = false;
+    addInst(im, cast);
+    return im;
+  };
+  /** 在賽道周圍隨機找位置：minD / maxD 是離賽道中心線的距離範圍，gap 是彼此的最小間距 */
+  const scatter = (want: number, minD: number, maxD: number, gap: number, spread = 170): { x: number; z: number; y: number; d: number }[] => {
+    const out: { x: number; z: number; y: number; d: number }[] = [];
+    for (let tries = 0; tries < want * 30 && out.length < want; tries++) {
+      const x = minX - spread + rng() * (maxX - minX + spread * 2);
+      const z = minZ - spread + rng() * (maxZ - minZ + spread * 2);
+      const d = trackDist(x, z);
+      if (d < minD || d > maxD) continue;
+      if (inLake(x, z, 9)) continue;
+      let blocked = false;
+      for (const pr of props.children) {
+        const dx = pr.position.x - x, dz = pr.position.z - z;
+        if (dx * dx + dz * dz < 170) { blocked = true; break; }
+      }
+      if (!blocked && gap > 0) for (const o of out) {
+        const dx = o.x - x, dz = o.z - z;
+        if (dx * dx + dz * dz < gap * gap) { blocked = true; break; }
+      }
+      if (!blocked) out.push({ x, z, y: terrainH(x, z), d });
+    }
+    return out;
+  };
+  const matAt = (sp: { x: number; z: number; y: number }, s: number, sy = s, sink = 0.15): THREE.Matrix4 => {
+    q.setFromAxisAngle(up, rng() * Math.PI * 2);
+    return new THREE.Matrix4().compose(v.set(sp.x, sp.y - sink, sp.z), q, sc.set(s, sy, s));
+  };
+
+  if (theme.vegetation === 'forest') {
+    const spots = scatter(lowDetail ? 380 : 760, hw + 11, 9999, 0).filter((s) => s.d < 60 || rng() < 0.45);
+    const lists: THREE.Matrix4[][] = [[], [], [], []];
+    spots.forEach((sp, i) => {
+      const kind = i % 10 < 5 ? 0 : i % 10 < 8 ? 1 : i % 10 < 9 ? 2 : 3;
+      const s = kind < 2 ? 0.75 + rng() * 0.6 : 0.6 + rng() * 0.9;
+      lists[kind].push(matAt(sp, s, s * (0.85 + rng() * 0.3)));
+    });
+    const treeL = makeInstanced('treeLarge', 13, lists[0]);
+    const treeS = makeInstanced('treeSmall', 9, lists[1]);
+    if (treeL && treeS) {
+      addInst(treeL);
+      addInst(treeS);
+    } else {
+      // 模型沒載入時的備用樹
+      const all = [...lists[0], ...lists[1]];
+      instanced(new THREE.ConeGeometry(2.4, 6.5, 7).translate(0, 5.2, 0), new THREE.MeshLambertMaterial({ color: 0x2f9e58 }), all);
+      instanced(new THREE.CylinderGeometry(0.4, 0.5, 2.2, 6).translate(0, 1.1, 0), new THREE.MeshLambertMaterial({ color: 0x8a5a3c }), all);
+    }
+    instanced(new THREE.IcosahedronGeometry(1.5, 1).scale(1, 0.75, 1).translate(0, 0.8, 0), new THREE.MeshLambertMaterial({ color: 0x3fa35a, flatShading: true }), lists[2]);
+    instanced(new THREE.DodecahedronGeometry(1.6, 0).scale(1.2, 0.8, 1).translate(0, 0.7, 0), new THREE.MeshLambertMaterial({ color: 0x9aa0a8, flatShading: true }), lists[3]);
+  } else if (theme.vegetation === 'desert') {
+    // 仙人掌：主幹加兩隻手臂
+    const cactusGeo = mergeGeometries([
+      new THREE.CylinderGeometry(0.5, 0.55, 5, 7).translate(0, 2.5, 0),
+      new THREE.SphereGeometry(0.5, 7, 5).translate(0, 5, 0),
+      new THREE.CylinderGeometry(0.3, 0.3, 1.3, 6).rotateZ(Math.PI / 2).translate(0.9, 2.4, 0),
+      new THREE.CylinderGeometry(0.3, 0.32, 1.9, 6).translate(1.5, 3.2, 0),
+      new THREE.CylinderGeometry(0.28, 0.28, 1.1, 6).rotateZ(Math.PI / 2).translate(-0.8, 3.1, 0),
+      new THREE.CylinderGeometry(0.28, 0.3, 1.4, 6).translate(-1.3, 3.7, 0),
+    ]);
+    const cacti = scatter(lowDetail ? 110 : 230, hw + 11, 230, 5).map((sp) => matAt(sp, 0.8 + rng() * 0.9));
+    instanced(cactusGeo, new THREE.MeshLambertMaterial({ color: 0x4f9d58, flatShading: true }), cacti);
+    const shrubs = scatter(lowDetail ? 120 : 280, hw + 10, 260, 0).map((sp) => matAt(sp, 0.6 + rng() * 0.9, 0.5 + rng() * 0.4));
+    instanced(new THREE.IcosahedronGeometry(1.3, 0).scale(1, 0.6, 1).translate(0, 0.5, 0), new THREE.MeshLambertMaterial({ color: 0xa3a04f, flatShading: true }), shrubs, false);
+    const stones = scatter(lowDetail ? 90 : 200, hw + 10, 260, 0).map((sp) => matAt(sp, 0.6 + rng() * 1.6, 0.5 + rng()));
+    instanced(new THREE.DodecahedronGeometry(1.7, 0).scale(1.2, 0.8, 1).translate(0, 0.7, 0), new THREE.MeshLambertMaterial({ color: 0xb4683f, flatShading: true }), stones);
+    // 岩柱與平頂岩台：紅色岩層，頂端一層較亮
+    const pillars = scatter(lowDetail ? 26 : 54, hw + 26, 210, 30);
+    const rockMat = new THREE.MeshLambertMaterial({ color: theme.mountain, flatShading: true });
+    const capRock = new THREE.MeshLambertMaterial({ color: theme.mountainCap ?? theme.mountain, flatShading: true });
+    const bodyL: THREE.Matrix4[] = [], capL: THREE.Matrix4[] = [];
+    for (const sp of pillars) {
+      const r = 6 + rng() * 13, h = 14 + rng() * 34;
+      q.setFromAxisAngle(up, rng() * 6);
+      bodyL.push(new THREE.Matrix4().compose(v.set(sp.x, sp.y - 2, sp.z), q, sc.set(r, h, r)));
+      capL.push(new THREE.Matrix4().compose(v.set(sp.x, sp.y - 2 + h, sp.z), q, sc.set(r * 0.86, 2.2 + rng() * 2, r * 0.86)));
+    }
+    instanced(new THREE.CylinderGeometry(0.72, 1, 1, 7).translate(0, 0.5, 0), rockMat, bodyL);
+    instanced(new THREE.CylinderGeometry(1, 0.9, 1, 7).translate(0, 0.5, 0), capRock, capL);
   } else {
-    // 模型沒載入時的備用樹
-    const all = [...mats[0], ...mats[1]];
-    const leaves = new THREE.InstancedMesh(new THREE.ConeGeometry(2.4, 6.5, 7).translate(0, 5.2, 0), new THREE.MeshLambertMaterial({ color: 0x2f9e58 }), all.length);
-    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.4, 0.5, 2.2, 6).translate(0, 1.1, 0), new THREE.MeshLambertMaterial({ color: 0x8a5a3c }), all.length);
-    all.forEach((m, i) => { leaves.setMatrixAt(i, m); trunks.setMatrixAt(i, m); });
-    leaves.frustumCulled = trunks.frustumCulled = false;
-    addInst(leaves);
-    addInst(trunks);
+    // 城市：周圍的大樓，窗戶會發亮
+    const winTex = canvasTex(64, 96, (c) => {
+      c.fillStyle = '#0d111c';
+      c.fillRect(0, 0, 64, 96);
+      const r = mulberry32(11);
+      for (let y = 0; y < 6; y++) for (let x = 0; x < 4; x++) {
+        const k = r();
+        c.fillStyle = k < 0.42 ? '#161c2b' : k < 0.78 ? '#ffd98a' : k < 0.92 ? '#8fe9ff' : '#ff9ad5';
+        c.fillRect(x * 16 + 3, y * 16 + 4, 10, 9);
+      }
+    });
+    const winMat = new THREE.MeshBasicMaterial({ map: winTex, color: glow(0xffffff, 1.45) });
+    const roofMat = new THREE.MeshBasicMaterial({ color: 0x0b0e17 });
+    /** 一種尺寸的大樓：貼圖依牆面大小重複，屋頂是另一個材質 */
+    const tower = (w: number, h: number, d: number): THREE.BufferGeometry => {
+      const g = new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0);
+      const uv = g.attributes.uv as THREE.BufferAttribute;
+      // BoxGeometry 的面順序：+x, -x, +y, -y, +z, -z，每面 4 個頂點
+      for (let f = 0; f < 6; f++) {
+        const side = f < 2 ? d : w;
+        for (let k = 0; k < 4; k++) {
+          const i = f * 4 + k;
+          if (f === 2 || f === 3) uv.setXY(i, 0.02, 0.02);
+          else uv.setXY(i, uv.getX(i) * (side / 9), uv.getY(i) * (h / 18));
+        }
+      }
+      g.clearGroups();
+      g.addGroup(0, 12, 0);
+      g.addGroup(12, 12, 1);
+      g.addGroup(24, 12, 0);
+      return g;
+    };
+    const classes: [number, number, number][] = [[18, 30, 18], [24, 58, 22], [30, 92, 26]];
+    const spots = scatter(lowDetail ? 70 : 150, 40, 250, 30, 230);
+    const lists: THREE.Matrix4[][] = [[], [], []];
+    for (const sp of spots) {
+      const kind = sp.d < 75 ? 0 : rng() < 0.6 ? 1 : 2;
+      q.setFromAxisAngle(up, Math.floor(rng() * 4) * (Math.PI / 2) + (rng() - 0.5) * 0.3);
+      const s = 0.85 + rng() * 0.4;
+      lists[kind].push(new THREE.Matrix4().compose(v.set(sp.x, sp.y - 2, sp.z), q, sc.set(s, 0.8 + rng() * 0.5, s)));
+    }
+    classes.forEach(([w, h, d], i) => {
+      if (!lists[i].length) return;
+      const im = new THREE.InstancedMesh(tower(w, h, d), [winMat, roofMat], lists[i].length);
+      lists[i].forEach((m, k) => im.setMatrixAt(k, m));
+      im.frustumCulled = false;
+      root.add(im);
+    });
+    // 街道旁的行道樹（少量）
+    const trees = scatter(lowDetail ? 40 : 90, hw + 11, 60, 9).map((sp) => matAt(sp, 0.7 + rng() * 0.4));
+    addInst(makeInstanced('treeSmall', 9, trees));
   }
-  const bush = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.5, 1).scale(1, 0.75, 1).translate(0, 0.8, 0), new THREE.MeshLambertMaterial({ color: 0x3fa35a, flatShading: true }), mats[2].length);
-  mats[2].forEach((m, i) => bush.setMatrixAt(i, m));
-  const rock = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1.6, 0).scale(1.2, 0.8, 1).translate(0, 0.7, 0), new THREE.MeshLambertMaterial({ color: 0x9aa0a8, flatShading: true }), mats[3].length);
-  mats[3].forEach((m, i) => rock.setMatrixAt(i, m));
-  bush.frustumCulled = rock.frustumCulled = false;
-  addInst(bush);
-  addInst(rock);
 
   // 路肩上的花叢
-  const flowerCount = lowDetail ? 500 : 1400;
-  const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.32, 0), new THREE.MeshLambertMaterial(), flowerCount);
-  const flowerCols = [0xff8fb3, 0xffe066, 0xffffff, 0xff9d5c, 0xc79bff];
-  for (let i = 0; i < flowerCount; i++) {
-    const s = S[Math.floor(rng() * n)];
-    const sg = rng() > 0.5 ? 1 : -1;
-    const lat = hw + 1.6 + rng() * 6.6;
-    const cl = latClamp(s, sg * lat);
-    const drop = -0.02 - 3.18 * ((Math.abs(cl) - (hw + 0.95)) / (9 - 0.95));
-    const k = 0.7 + rng() * 0.9;
-    m4.compose(v.set(s.x + s.nx * cl, s.y + drop + 0.18, s.z + s.nz * cl), q.identity(), sc.set(k, k * 0.8, k));
-    flowers.setMatrixAt(i, m4);
-    flowers.setColorAt(i, tmpC.setHex(flowerCols[Math.floor(rng() * flowerCols.length)]));
-  }
-  flowers.frustumCulled = false;
-  addInst(flowers, false);
-
-  // ---------- 風力發電機（遠處會轉的地標） ----------
-  const rotors: THREE.Object3D[] = [];
-  const towerMat = new THREE.MeshLambertMaterial({ color: 0xf2f4f7 });
-  const bladeGeo = new THREE.BoxGeometry(1.5, 20, 0.35).translate(0, 10.5, 0);
-  let turbines = 0;
-  for (let tries = 0; tries < 400 && turbines < (lowDetail ? 4 : 8); tries++) {
-    const x = minX - 150 + rng() * (maxX - minX + 300);
-    const z = minZ - 150 + rng() * (maxZ - minZ + 300);
-    const d = trackDist(x, z);
-    if (d < 70 || d > 190) continue;
-    if (lake && Math.hypot(x - lake.x, z - lake.z) < lake.r + 20) continue;
-    const g = new THREE.Group();
-    const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.7, 44, 8).translate(0, 22, 0), towerMat);
-    const hub = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.4, 5).translate(0, 44, 0.8), towerMat);
-    const rotor = new THREE.Group();
-    rotor.position.set(0, 44, 3.6);
-    for (let b = 0; b < 3; b++) {
-      const blade = new THREE.Mesh(bladeGeo, towerMat);
-      blade.rotation.z = (b / 3) * Math.PI * 2;
-      rotor.add(blade);
+  if (theme.flowers) {
+    const count = lowDetail ? 500 : 1400;
+    const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.32, 0), new THREE.MeshLambertMaterial(), count);
+    const cols = [0xff8fb3, 0xffe066, 0xffffff, 0xff9d5c, 0xc79bff];
+    for (let i = 0; i < count; i++) {
+      const s = S[Math.floor(rng() * n)];
+      const sg = rng() > 0.5 ? 1 : -1;
+      const cl = latClamp(s, sg * (hw + 1.6 + rng() * 6.6));
+      const drop = -0.02 - 3.18 * ((Math.abs(cl) - (hw + 0.95)) / (9 - 0.95));
+      const k = 0.7 + rng() * 0.9;
+      m4.compose(v.set(s.x + s.nx * cl, s.y + drop + 0.18, s.z + s.nz * cl), q.identity(), sc.set(k, k * 0.8, k));
+      flowers.setMatrixAt(i, m4);
+      flowers.setColorAt(i, tmpC.setHex(cols[Math.floor(rng() * cols.length)]));
     }
-    rotor.rotation.z = rng() * 6;
-    g.add(tower, hub, rotor);
-    g.position.set(x, terrainH(x, z) - 0.5, z);
-    g.rotation.y = 0.6 + rng() * 0.5;
-    if (shadows) g.traverse((m) => { m.castShadow = true; });
-    root.add(g);
-    rotors.push(rotor);
-    turbines++;
+    flowers.frustumCulled = false;
+    root.add(flowers);
   }
 
-  // ---------- 遠山 ----------
-  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
-  const mMat = new THREE.MeshLambertMaterial({ color: 0x8fa8c8, flatShading: true });
-  const snow = new THREE.MeshLambertMaterial({ color: 0xfff6ec, flatShading: true });
+  // 風力發電機（遠處會轉的地標）
+  if (theme.turbines) {
+    const rotors: THREE.Object3D[] = [];
+    const towerMat = new THREE.MeshLambertMaterial({ color: 0xf2f4f7 });
+    const bladeGeo = new THREE.BoxGeometry(1.5, 20, 0.35).translate(0, 10.5, 0);
+    for (const sp of scatter(lowDetail ? 4 : 8, 70, 190, 50)) {
+      const g = new THREE.Group();
+      const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.7, 44, 8).translate(0, 22, 0), towerMat);
+      const hub = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.4, 5).translate(0, 44, 0.8), towerMat);
+      const rotor = new THREE.Group();
+      rotor.position.set(0, 44, 3.6);
+      for (let b = 0; b < 3; b++) {
+        const blade = new THREE.Mesh(bladeGeo, towerMat);
+        blade.rotation.z = (b / 3) * Math.PI * 2;
+        rotor.add(blade);
+      }
+      rotor.rotation.z = rng() * 6;
+      g.add(tw, hub, rotor);
+      g.position.set(sp.x, sp.y - 0.5, sp.z);
+      g.rotation.y = 0.6 + rng() * 0.5;
+      if (shadows) g.traverse((m) => { m.castShadow = true; });
+      root.add(g);
+      rotors.push(rotor);
+    }
+    updaters.push((dt) => { for (const r of rotors) r.rotation.z += dt * 0.9; });
+  }
+
+  // ---------- 遠山（沙漠是平頂岩台） ----------
+  const mMat = new THREE.MeshLambertMaterial({ color: theme.mountain, flatShading: true });
+  const capMat2 = theme.mountainCap !== null ? new THREE.MeshLambertMaterial({ color: theme.mountainCap, flatShading: true }) : null;
+  const mesa = theme.vegetation === 'desert';
   for (let i = 0; i < 26; i++) {
     const a = (i / 26) * Math.PI * 2 + rng() * 0.2;
     const r = 760 + rng() * 260;
-    const h = 150 + rng() * 190;
+    const h = (mesa ? 90 : 150) + rng() * (mesa ? 120 : 190);
     const rad = 150 + rng() * 110;
-    const m = new THREE.Mesh(new THREE.ConeGeometry(rad, h, 7), mMat);
+    const geo = mesa ? new THREE.CylinderGeometry(rad * 0.62, rad, h, 8) : new THREE.ConeGeometry(rad, h, 7);
+    const m = new THREE.Mesh(geo, mMat);
     m.position.set(cx + Math.cos(a) * r, baseY + h / 2 - 6, cz + Math.sin(a) * r);
     m.rotation.y = rng() * 3;
     root.add(m);
-    if (h > 230) {
-      const cap = new THREE.Mesh(new THREE.ConeGeometry(rad * 0.3, h * 0.3, 7), snow);
-      cap.position.set(m.position.x, baseY + h * 0.85 - 5.5, m.position.z);
+    if (capMat2 && (mesa || h > 230)) {
+      const cap = mesa
+        ? new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.6, rad * 0.66, h * 0.12, 8), capMat2)
+        : new THREE.Mesh(new THREE.ConeGeometry(rad * 0.3, h * 0.3, 7), capMat2);
+      cap.position.set(m.position.x, baseY + (mesa ? h * 1.0 : h * 0.85) - 5.5, m.position.z);
       cap.rotation.y = m.rotation.y;
       root.add(cap);
     }
   }
 
-  // ---------- 天空、雲與熱氣球 ----------
+  // ---------- 天空 ----------
+  const sunDir = new THREE.Vector3(...theme.sunDir).normalize();
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(1900, 24, 12),
     new THREE.ShaderMaterial({
@@ -669,20 +814,22 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
       depthWrite: false,
       fog: false,
       uniforms: {
-        top: { value: new THREE.Color(SKY_TOP) },
-        horizon: { value: new THREE.Color(SKY_HORIZON) },
-        sunDir: { value: SUN_DIR },
+        top: { value: new THREE.Color(theme.skyTop) },
+        horizon: { value: new THREE.Color(theme.skyHorizon) },
+        sunDir: { value: sunDir },
+        disc: { value: theme.sunDisc },
+        sunCol: { value: night ? new THREE.Color(0.75, 0.85, 1.0) : new THREE.Color(1.0, 0.82, 0.55) },
       },
       vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
       fragmentShader: `
-        varying vec3 vDir; uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir;
+        varying vec3 vDir; uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; uniform float disc; uniform vec3 sunCol;
         void main(){
           vec3 d = normalize(vDir);
           float h = clamp(d.y, 0.0, 1.0);
           vec3 c = mix(horizon, top, pow(h, 0.5));
           float s = max(dot(d, sunDir), 0.0);
-          // 太陽本體（很亮，泛光會讓它暈開）與周圍的暖色光暈
-          c += vec3(1.0, 0.82, 0.55) * (pow(s, 600.0) * 6.0 + pow(s, 40.0) * 0.5 + pow(s, 6.0) * 0.22);
+          // 太陽或月亮本體（很亮，泛光會讓它暈開）與周圍的光暈
+          c += sunCol * disc * (pow(s, 600.0) * 6.0 + pow(s, 40.0) * 0.5 + pow(s, 6.0) * 0.22);
           gl_FragColor = vec4(c, 1.0);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
@@ -693,37 +840,57 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
   sky.frustumCulled = false;
   root.add(sky);
 
-  const clouds = new THREE.Group();
-  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xfff4e6, fog: false });
-  const puff = new THREE.IcosahedronGeometry(1, 1);
-  for (let i = 0; i < 18; i++) {
-    const g = new THREE.Group();
-    const parts = 4 + Math.floor(rng() * 4);
-    for (let k = 0; k < parts; k++) {
-      const m = new THREE.Mesh(puff, cloudMat);
-      const s = 16 + rng() * 22;
-      m.scale.set(s * 1.5, s * 0.6, s);
-      m.position.set((k - parts / 2) * 22 + rng() * 10, rng() * 8, rng() * 18 - 9);
-      g.add(m);
+  // 夜晚的星星
+  let stars: THREE.Points | null = null;
+  if (night) {
+    const count = lowDetail ? 500 : 1100;
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const a = rng() * Math.PI * 2, e = Math.asin(0.08 + rng() * 0.92);
+      pos.set([Math.cos(a) * Math.cos(e) * 1800, Math.sin(e) * 1800, Math.sin(a) * Math.cos(e) * 1800], i * 3);
     }
-    const a = rng() * Math.PI * 2, r = 250 + rng() * 650;
-    g.position.set(cx + Math.cos(a) * r, 210 + rng() * 120, cz + Math.sin(a) * r);
-    g.rotation.y = rng() * 3;
-    clouds.add(g);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    stars = new THREE.Points(g, new THREE.PointsMaterial({ color: glow(0xdfe8ff, 1.6), size: 2.2, sizeAttenuation: false, fog: false, depthWrite: false }));
+    stars.frustumCulled = false;
+    stars.renderOrder = -9;
+    root.add(stars);
   }
-  root.add(clouds);
 
+  let clouds: THREE.Group | null = null;
+  if (theme.cloud !== null) {
+    clouds = new THREE.Group();
+    const cloudMat = new THREE.MeshBasicMaterial({ color: theme.cloud, fog: false });
+    const puff = new THREE.IcosahedronGeometry(1, 1);
+    for (let i = 0; i < 18; i++) {
+      const g = new THREE.Group();
+      const parts = 4 + Math.floor(rng() * 4);
+      for (let k = 0; k < parts; k++) {
+        const m = new THREE.Mesh(puff, cloudMat);
+        const s = 16 + rng() * 22;
+        m.scale.set(s * 1.5, s * 0.6, s);
+        m.position.set((k - parts / 2) * 22 + rng() * 10, rng() * 8, rng() * 18 - 9);
+        g.add(m);
+      }
+      const a = rng() * Math.PI * 2, r = 250 + rng() * 650;
+      g.position.set(cx + Math.cos(a) * r, 210 + rng() * 120, cz + Math.sin(a) * r);
+      g.rotation.y = rng() * 3;
+      clouds.add(g);
+    }
+    root.add(clouds);
+  }
+
+  // 熱氣球（夜晚換成會發光的天燈）
   const balloons: THREE.Group[] = [];
-  const balloonCols = [0xff5d8f, 0xffd23f, 0x3bceac, 0x4d9de0, 0xff7a1a, 0xb05cff];
   const envelope = new THREE.SphereGeometry(9, 12, 10).scale(1, 1.15, 1);
   const basket = new THREE.BoxGeometry(3, 2.4, 3);
   const basketMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3c });
   for (let i = 0; i < 6; i++) {
     const g = new THREE.Group();
-    const e = new THREE.Mesh(envelope, new THREE.MeshLambertMaterial({ color: balloonCols[i], flatShading: true }));
+    const col = ACC[i % ACC.length];
+    const e = new THREE.Mesh(envelope, night ? new THREE.MeshBasicMaterial({ color: glow(col, 1.5) }) : new THREE.MeshLambertMaterial({ color: col, flatShading: true }));
     e.position.y = 13;
-    const b = new THREE.Mesh(basket, basketMat);
-    g.add(e, b);
+    g.add(e, new THREE.Mesh(basket, basketMat));
     const sp = S[Math.floor((i + 0.5) * (n / 6))];
     const side = i % 2 ? 1 : -1;
     g.position.set(sp.x + sp.nx * side * (45 + rng() * 40), sp.y + 38 + rng() * 30, sp.z + sp.nz * side * (45 + rng() * 40));
@@ -737,11 +904,10 @@ export function buildWorld(track: Track, shadows: boolean, lowDetail: boolean): 
     group: root,
     terrainH,
     update(dt, time, camera) {
-      padTex.offset.y = -(time * 1.6) % 1;
-      crowdTime.value = time;
+      for (const u of updaters) u(dt, time);
       sky.position.copy(camera.position);
-      clouds.rotation.y += dt * 0.004;
-      for (const r of rotors) r.rotation.z += dt * 0.9;
+      if (stars) stars.position.copy(camera.position);
+      if (clouds) clouds.rotation.y += dt * 0.004;
       for (const b of balloons) {
         b.position.y = b.userData.y0 + Math.sin(time * 0.4 + b.userData.ph) * 3;
         b.rotation.y += dt * 0.1;

@@ -44,6 +44,11 @@ export class Hud {
   private scr = { x: 0, y: 0 };
 
   constructor(track: Track) {
+    this.setTrack(track);
+  }
+
+  /** 換地圖時重畫小地圖底圖 */
+  setTrack(track: Track): void {
     this.buildMap(track);
   }
 
@@ -148,6 +153,7 @@ export class Hud {
         if (e.e === 'jump') this.popup('飛越！');
         else if (e.e === 'n2o') this.popup('N2O +1', 'blue');
         else if (e.e === 'mini') this.popup('小噴！', 'gold');
+        else if (e.e === 'driftFail') this.popup('撞牆！這次甩尾的集氣歸零', 'warn');
         break;
       case 'kill': {
         const d = document.createElement('div');

@@ -32,15 +32,15 @@ export const CFG = {
   driftKick: 0.1,
 
   // ---- 集氣：甩尾是主要來源，但「打人、擊毀、尾流、滯空、加速帶」都會給 ----
-  gaugeRate: 0.62,
-  gaugePassive: 0.02,
+  gaugeRate: 0.43,
+  gaugePassive: 0.014,
   /** 每造成 1 點傷害得到的集氣量 */
-  gaugePerDamage: 0.005,
+  gaugePerDamage: 0.0035,
   /** 尾流中每秒集氣量 */
-  gaugeDraft: 0.14,
-  gaugePad: 0.12,
-  gaugeLand: 0.1,
-  gaugeMini: 0.05,
+  gaugeDraft: 0.1,
+  gaugePad: 0.085,
+  gaugeLand: 0.07,
+  gaugeMini: 0.035,
   maxN2O: 2,
   boostTime: 3.0,
   boostSpeedMul: 1.4,

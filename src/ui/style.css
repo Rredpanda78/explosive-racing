@@ -41,8 +41,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #sub-msg { position: absolute; left: 50%; top: 46%; transform: translateX(-50%); font-size: calc(4.4 * var(--u)); white-space: nowrap; }
 #sub-msg.warn { color: var(--danger); }
 #sub-msg.mini { color: var(--hot); }
-#reticle { position: absolute; left: 0; top: 0; width: calc(5 * var(--u)); height: calc(5 * var(--u)); margin: calc(-2.5 * var(--u)) 0 0 calc(-2.5 * var(--u)); border: calc(.35 * var(--u)) solid rgba(255,255,255,.75); border-radius: 50%; display: none; box-shadow: 0 0 calc(.8 * var(--u)) rgba(0,0,0,.5); }
-#reticle::before { content: ""; position: absolute; left: 50%; top: 50%; width: calc(.7 * var(--u)); height: calc(.7 * var(--u)); margin: calc(-.35 * var(--u)); background: #ff5a4d; border-radius: 50%; }
+
 
 .bar { height: calc(1.8 * var(--u)); background: rgba(0,0,0,.55); border: 2px solid rgba(255,255,255,.75); border-radius: 99px; overflow: hidden; transform: skewX(-14deg); }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
@@ -142,10 +141,10 @@ kbd { background: #343948; border-radius: 4px; padding: .05em .45em; font-family
 #elim:empty { display: none; }
 #elim.warn { background: rgba(255,50,50,.85); animation: blink .5s steps(2) infinite; }
 @keyframes blink { 50% { opacity: .55; } }
-#reticle.hit { border-color: #ff5a4d; transform-origin: center; box-shadow: 0 0 calc(1.6 * var(--u)) rgba(255,90,77,.9); }
-#reticle.hit::after { content: ""; position: absolute; inset: -45%; background:
-  linear-gradient(45deg, transparent 46%, #ff5a4d 46% 54%, transparent 54%),
-  linear-gradient(-45deg, transparent 46%, #ff5a4d 46% 54%, transparent 54%); }
+#reticle { position: absolute; left: 0; top: 0; width: calc(2.4 * var(--u)); height: calc(2.4 * var(--u)); margin: calc(-1.2 * var(--u)) 0 0 calc(-1.2 * var(--u)); border: calc(.2 * var(--u)) solid rgba(255,255,255,.5); border-radius: 50%; display: none; }
+#reticle::before { content: ""; position: absolute; left: 50%; top: 50%; width: calc(.44 * var(--u)); height: calc(.44 * var(--u)); margin: calc(-.22 * var(--u)); background: rgba(255,255,255,.85); border-radius: 50%; }
+#reticle.hit { border-color: #ff5a4d; }
+#reticle.hit::before { background: #ff5a4d; }
 #popups { position: absolute; left: 62%; top: 44%; font-size: calc(3.2 * var(--u)); white-space: nowrap; }
 #popups div { animation: rise 1.7s ease-out forwards; margin-bottom: .1em; }
 #popups .gold { color: var(--accent); }
@@ -176,3 +175,12 @@ body.touch #missions { top: calc(27 * var(--u)); font-size: calc(2.4 * var(--u))
 .statbar span { flex: 0 0 2.4em; opacity: .8; }
 .statbar div { flex: 1; height: 7px; background: #3a3f4d; border-radius: 4px; overflow: hidden; }
 .statbar i { display: block; height: 100%; background: var(--accent); }
+
+/* ---------- 地圖選擇 ---------- */
+.tracks { display: flex; gap: .7em; flex-wrap: wrap; justify-content: center; margin-bottom: 1em; }
+.trackbtn { border: 2px solid transparent; border-radius: 12px; padding: .55em 1em; min-width: 11.5em; background: rgba(30,34,46,.88); color: #fff; text-align: center; }
+.trackbtn b { display: block; font-weight: 900; font-size: clamp(15px, 2.2vw, 20px); }
+.trackbtn span { display: block; font-size: clamp(10px, 1.4vw, 13px); opacity: .8; font-weight: 700; margin-top: .15em; }
+.trackbtn.on { border-color: var(--accent); background: rgba(60,52,20,.92); }
+.trackbtn.on b { color: var(--accent); }
+.trackbtn:disabled { opacity: .5; cursor: default; }

@@ -10,7 +10,8 @@ import { clamp, lerpAngle } from '../game/util';
 import { BlastFx, Debris, SkidMarks } from './effects';
 import { KartView } from './kartModel';
 import { Particles } from './particles';
-import { buildWorld, SKY_HORIZON, SUN_DIR, type World } from './world';
+import { THEMES, type Theme } from './themes';
+import { buildWorld, type World } from './world';
 
 const MAX_TRACERS = 320;
 const POOL = 16;
@@ -43,6 +44,12 @@ export class GameView {
   private barrelMat: THREE.MeshLambertMaterial;
   private barrelHot: THREE.MeshBasicMaterial;
   private sun: THREE.DirectionalLight;
+  private hemi: THREE.HemisphereLight;
+  private sunDir = new THREE.Vector3(0.6, 0.5, 0.4).normalize();
+  /** 夜間地圖才會亮的車頭燈 */
+  private headlight: THREE.SpotLight;
+  private bloomPass: UnrealBloomPass | null = null;
+  private theme: Theme = THEMES.meadow;
   private camYaw = 0;
   private camY = 0;
   private fov = 66;
@@ -63,13 +70,14 @@ export class GameView {
     r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1.08;
 
-    this.scene.background = new THREE.Color(SKY_HORIZON);
-    this.scene.fog = new THREE.Fog(SKY_HORIZON, 280, 1500);
+    // 顏色與強度在 setTrack() 依地圖主題設定
+    this.scene.background = new THREE.Color(0);
+    this.scene.fog = new THREE.Fog(0, 280, 1500);
     // 天空光偏藍、地面反光偏綠；太陽是暖色，照不到的地方自然偏冷，畫面才有立體感
-    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x93a56c, 1.3));
-    const sun = (this.sun = new THREE.DirectionalLight(0xffe0b0, 2.7));
-    sun.position.copy(SUN_DIR).multiplyScalar(220);
-    this.scene.add(sun, sun.target);
+    this.hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 1);
+    const sun = (this.sun = new THREE.DirectionalLight(0xffffff, 2));
+    this.headlight = new THREE.SpotLight(0xfff0d0, 0, 95, 0.52, 0.65, 1.3);
+    this.scene.add(this.hemi, sun, sun.target, this.headlight, this.headlight.target);
     if (this.shadows) {
       r.shadowMap.enabled = true;
       r.shadowMap.type = THREE.PCFShadowMap;
@@ -87,7 +95,8 @@ export class GameView {
       const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
       this.composer = new EffectComposer(r, rt);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
-      this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.3, 0.6, 1.25));
+      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.3, 0.6, 1.25);
+      this.composer.addPass(this.bloomPass);
       this.composer.addPass(new OutputPass());
     }
 
@@ -151,9 +160,33 @@ export class GameView {
 
   /** 模型載入完成後呼叫，建立賽道場景與零件池 */
   setTrack(track: Track): void {
-    if (this.world) this.scene.remove(this.world.group);
+    if (this.world) {
+      // 換地圖：移除舊場景並釋放它佔用的顯示記憶體
+      this.scene.remove(this.world.group);
+      this.world.group.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
+        for (const mt of mats) mt.dispose();
+      });
+    }
     this.track = track;
-    this.world = buildWorld(track, this.shadows, this.mobile);
+    const th = (this.theme = THEMES[track.def.theme]);
+    (this.scene.background as THREE.Color).setHex(th.skyHorizon);
+    const fog = this.scene.fog as THREE.Fog;
+    fog.color.setHex(th.skyHorizon);
+    fog.near = th.fogNear;
+    fog.far = th.fogFar;
+    this.hemi.color.setHex(th.hemiSky);
+    this.hemi.groundColor.setHex(th.hemiGround);
+    this.hemi.intensity = th.hemiIntensity;
+    this.sun.color.setHex(th.sunColor);
+    this.sun.intensity = th.sunIntensity;
+    this.sunDir.set(th.sunDir[0], th.sunDir[1], th.sunDir[2]).normalize();
+    this.renderer.toneMappingExposure = th.exposure;
+    if (this.bloomPass) this.bloomPass.strength = th.bloom;
+    this.headlight.intensity = th.night ? 110 : 0;
+    this.world = buildWorld(track, th, this.shadows, this.mobile);
     this.scene.add(this.world.group);
     if (this.debris) this.scene.remove(this.debris.group);
     this.debris = new Debris(this.mobile ? 16 : 36, this.shadows);
@@ -465,6 +498,11 @@ export class GameView {
     this.debris?.update(dt);
     sm.update(dt);
     f.update(dt);
+    if (this.theme.night) {
+      const hx = Math.sin(p.heading), hz = Math.cos(p.heading);
+      this.headlight.position.set(p.x + hx * 1.2, p.y + 1.7, p.z + hz * 1.2);
+      this.headlight.target.position.set(p.x + hx * 32, p.y - 0.5, p.z + hz * 32);
+    }
     this.updateChaseCam(dt, p, lookBack);
     this.world?.update(dt, this.time, this.camera);
     this.updateSun(p.x, p.y - p.air, p.z);
@@ -474,7 +512,7 @@ export class GameView {
   private updateSun(x: number, y: number, z: number): void {
     const g = 4;
     this.sun.target.position.set(Math.round(x / g) * g, y, Math.round(z / g) * g);
-    this.sun.position.copy(this.sun.target.position).addScaledVector(SUN_DIR, 220);
+    this.sun.position.copy(this.sun.target.position).addScaledVector(this.sunDir, 220);
   }
 
   private updateChaseCam(dt: number, k: Kart, lookBack: boolean): void {

@@ -8,8 +8,16 @@ import {
   weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
 } from '../game/weapons';
 
+export interface TrackInfo {
+  name: string;
+  desc: string;
+  laps: number;
+  length: number;
+}
+
 export interface ScreenActions {
   start(mode?: RaceMode): void;
+  selectTrack(i: number): void;
   resume(): void;
   restart(): void;
   toMenu(): void;
@@ -39,14 +47,18 @@ const stat = (label: string, v: number) =>
 export class Screens {
   private root = document.getElementById('screens')!;
   private profile: Profile;
+  private tracks: TrackInfo[];
+  private trackIndex: () => number;
   private act: ScreenActions;
   current: 'none' | 'menu' | 'garage' | 'pause' | 'results' = 'none';
   private garageBack: 'menu' | 'results' = 'menu';
   private lastResults = '';
   private loading = false;
 
-  constructor(profile: Profile, act: ScreenActions) {
+  constructor(profile: Profile, tracks: TrackInfo[], trackIndex: () => number, act: ScreenActions) {
     this.profile = profile;
+    this.tracks = tracks;
+    this.trackIndex = trackIndex;
     this.act = act;
     this.root.addEventListener('click', (e) => {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
@@ -63,6 +75,7 @@ export class Screens {
     const p = this.profile;
     switch (act) {
       case 'start': this.act.start(id as RaceMode | undefined); break;
+      case 'track': this.act.selectTrack(Number(id)); break;
       case 'resume': this.act.resume(); break;
       case 'restart': this.act.restart(); break;
       case 'menu': this.act.toMenu(); break;
@@ -138,13 +151,20 @@ export class Screens {
     this.loading = loading;
     const p = this.profile;
     const dis = loading ? 'disabled' : '';
+    const ti = this.trackIndex();
+    const cur = this.tracks[ti];
+    const trackBtns = this.tracks.map((t, i) => `
+      <button class="trackbtn ${i === ti ? 'on' : ''}" data-act="track" data-id="${i}" ${dis}>
+        <b>${t.name}</b><span>${t.desc}</span><span>${(t.length / 1000).toFixed(1)} 公里 × ${t.laps} 圈</span>
+      </button>`).join('');
     this.root.innerHTML = `
       <div class="screen">
         <h1 class="title">EXPLOSIVE <span>RACING</span></h1>
         <div class="tagline">甩尾集氣、N2O 衝刺，再用機槍與火箭把對手轟出賽道</div>
+        <div class="tracks">${trackBtns}</div>
         <div class="modes">
           <button class="mode primary" data-act="start" data-id="race" ${dis}>
-            <b>${loading ? '載入中…' : '競速賽'}</b><span>跑完 2 圈，名次高的贏</span>
+            <b>${loading ? '載入中…' : '競速賽'}</b><span>跑完 ${cur.laps} 圈，名次高的贏</span>
           </button>
           <button class="mode" data-act="start" data-id="elim" ${dis}>
             <b>${loading ? '載入中…' : '淘汰賽'}</b><span>每 ${17} 秒淘汰最後一名，撐到最後</span>
@@ -152,7 +172,7 @@ export class Screens {
         </div>
         <div class="row" style="margin-top:1em"><button class="btn" data-act="garage">車庫</button></div>
         <div class="tagline" style="margin:1.1em 0 0">
-          <span class="cash">$${p.cash}</span>　${CARS[p.kart].name}・${PRIMARY[p.primary].name}・${SECONDARY[p.secondary].name}　出賽 ${p.races}　冠軍 ${p.wins}　最快單圈 ${formatTime(p.bestLap)}
+          <span class="cash">$${p.cash}</span>　${CARS[p.kart].name}・${PRIMARY[p.primary].name}・${SECONDARY[p.secondary].name}　出賽 ${p.races}　冠軍 ${p.wins}　${cur.name}最快單圈 ${formatTime(p.bestLaps[p.track] ?? 0)}
         </div>
         <div class="help">
           <b>鍵盤</b>　<kbd>↑↓←→</kbd> 駕駛　<kbd>Shift</kbd> 甩尾　<kbd>Ctrl</kbd> N2O　<kbd>Z</kbd> 主武器　<kbd>X</kbd> 副武器　<kbd>C</kbd> 後視　<kbd>R</kbd> 重置　<kbd>Esc</kbd> 暫停<br />

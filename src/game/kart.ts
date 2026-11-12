@@ -19,7 +19,7 @@ export const emptyInput = (): KartInput => ({
   steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false,
 });
 
-export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'pad' | 'jump' | 'land';
+export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'driftFail' | 'pad' | 'jump' | 'land';
 
 export class Kart {
   id: number;
@@ -62,6 +62,8 @@ export class Kart {
   driftDir = 0;
   driftTime = 0;
   driftRelease = 0;
+  /** 這次甩尾到目前為止集到的氣（撞牆時要扣回去） */
+  driftGain = 0;
   gauge = 0;
   n2o = 0;
   boostT = 0;
@@ -199,6 +201,7 @@ export class Kart {
       this.driftDir = Math.sign(inp.steer);
       this.driftTime = 0;
       this.driftRelease = 0;
+      this.driftGain = 0;
       this.heading += this.driftDir * C.driftKick;
       emit('driftStart');
     }
@@ -321,15 +324,20 @@ export class Kart {
     this.z += this.vz * dt;
 
     // ---- 集氣 ----
-    let fill = 0;
-    if (this.drifting && s > 10) fill += C.gaugeRate * Math.abs(Math.sin(this.slip)) * (s / vmaxBase);
-    if (this.aiAssist && s > 18) fill += 0.3 * Math.abs(inp.steer);
+    const driftFill = this.drifting && s > 10 ? C.gaugeRate * Math.abs(Math.sin(this.slip)) * (s / vmaxBase) : 0;
+    let fill = driftFill;
+    if (this.aiAssist && s > 18) fill += 0.21 * Math.abs(inp.steer);
     if (s > 15) fill += C.gaugePassive;
     if (this.drafting) {
       fill += C.gaugeDraft;
       if (!this.finished) this.stats.draftTime += dt;
     }
-    if (fill > 0) this.addGauge(fill * dt, emit);
+    if (fill > 0) {
+      const before = this.n2o + this.gauge;
+      this.addGauge(fill * dt, emit);
+      // 記下其中屬於甩尾的份量
+      if (driftFill > 0) this.driftGain += (this.n2o + this.gauge - before) * (driftFill / fill);
+    }
 
     // ---- 甩尾結束 ----
     if (
@@ -368,6 +376,14 @@ export class Kart {
         this.vz *= 1 - loss;
         this.heading = wrapAngle(this.heading + wrapAngle(tanA - this.heading) * k * 0.4);
         if (vn > 4) {
+          if (this.drifting && this.driftGain > 0.001) {
+            // 把這次甩尾集到的氣扣回去（包含已經換成整瓶的部分）
+            const total = Math.max(0, this.n2o + this.gauge - this.driftGain);
+            this.n2o = Math.min(C.maxN2O, Math.floor(total + 1e-6));
+            this.gauge = Math.min(1, Math.max(0, total - this.n2o));
+            emit('driftFail');
+          }
+          this.driftGain = 0;
           this.drifting = false;
           emit('wall');
         }
