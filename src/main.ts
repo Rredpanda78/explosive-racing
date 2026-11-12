@@ -5,7 +5,7 @@ import { Race, type RaceMode } from './game/race';
 import { loadProfile, saveProfile } from './game/save';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
-import { CAR_MODELS, DEBRIS_MODELS, KART_MODELS, loadModels, PROP_MODELS } from './render/assets';
+import { CAR_MODELS, DEBRIS_MODELS, KART_MODELS, LANDMARK_MODELS, loadModels, PROP_MODELS } from './render/assets';
 import { GameView } from './render/view';
 import { Hud } from './ui/hud';
 import { Screens, type Summary } from './ui/screens';
@@ -209,7 +209,7 @@ screens.menu(true);
 requestAnimationFrame(frame);
 
 // 先載入模型再建立場景；個別模型載入失敗時會自動改用內建幾何
-void loadModels([...CAR_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS]).then(() => {
+void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS]).then(() => {
   view.setTrack(track);
   ready = true;
   if (screens.current === 'menu') screens.menu();

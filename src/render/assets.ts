@@ -7,6 +7,8 @@ const BASE = import.meta.env.BASE_URL + 'models/';
 export const KART_MODELS = ['kart-oobi', 'kart-oodi', 'kart-ooli', 'kart-oopi', 'kart-oozi'];
 /** 使用者用 Tripo 生成的車體 */
 export const CAR_MODELS = ['tripo/car1', 'tripo/car2', 'tripo/car3', 'tripo/car4', 'tripo/car5'];
+/** 使用者用 Tripo 生成的地標造景 */
+export const LANDMARK_MODELS = ['tripo/city_a', 'tripo/city_b', 'tripo/windmill_tower', 'tripo/windmill_blades'];
 export const DEBRIS_MODELS = ['debris-tire', 'debris-plate-a', 'debris-spoiler-a', 'debris-bumper', 'debris-bolt'];
 export const PROP_MODELS = [
   'grandStand', 'grandStandCovered', 'grandStandAwning', 'pitsGarage', 'pitsOffice', 'tent', 'tentLong', 'tentClosed',
@@ -102,6 +104,27 @@ export function makeProp(n: string, width: number, recolor?: Record<string, numb
   g.add(inner);
   g.userData.height = size.y * s;
   g.userData.depth = size.z * s;
+  return g;
+}
+
+/**
+ * 地標：底部貼地、水平置中，等比縮放到指定高度。原點在底部中心，正面朝 +Z。
+ * 回傳的 userData 有縮放後的寬（width）、深（depth）、高（height）。
+ */
+export function makeLandmark(n: string, height: number): THREE.Group | null {
+  const e = cache.get(n);
+  if (!e) return null;
+  const size = e.box.getSize(new THREE.Vector3());
+  const c = e.box.getCenter(new THREE.Vector3());
+  const s = height / Math.max(size.y, 0.001);
+  const inner = e.root.clone(true);
+  inner.position.set(-c.x * s, -e.box.min.y * s, -c.z * s);
+  inner.scale.setScalar(s);
+  const g = new THREE.Group();
+  g.add(inner);
+  g.userData.width = size.x * s;
+  g.userData.depth = size.z * s;
+  g.userData.height = height;
   return g;
 }
 

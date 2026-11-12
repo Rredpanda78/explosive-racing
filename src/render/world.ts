@@ -5,7 +5,7 @@ import { TRAM } from '../game/race';
 import { makeTerrain } from '../game/terrain';
 import { PAD_HALF_WIDTH, PAD_LENGTH, type Branch, type Sample, type SceneRange, type Track } from '../game/track';
 import { mulberry32 } from '../game/util';
-import { makeInstanced, makeProp } from './assets';
+import { makeInstanced, makeLandmark, makeProp } from './assets';
 import type { Theme } from './themes';
 
 export interface World {
@@ -682,6 +682,96 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     updaters.push((_dt, time) => { crowdTime.value = time; });
   }
 
+  // ---------- Tripo 地標：草原的風車、夜城的大樓 ----------
+  /** 在賽道某處的側邊找一塊放得下 radius 大小地標的空地，正面朝向賽道 */
+  const spotFor = (dist: number, side: number, radius: number, lats: number[]): { x: number; z: number; yaw: number } | null => {
+    const s = sampleAt(dist);
+    for (const lat of lats) {
+      const x = s.x + s.nx * side * lat, z = s.z + s.nz * side * lat;
+      if (trackDist(x, z) < radius + hw + 4 || inLake(x, z, radius + 4)) continue;
+      let clash = false;
+      for (const pr of props.children) {
+        const r = (pr.userData.radius ?? 6) + radius;
+        if ((pr.position.x - x) ** 2 + (pr.position.z - z) ** 2 < r * r) { clash = true; break; }
+      }
+      if (clash) continue;
+      return { x, z, yaw: Math.atan2(-s.nx * side, -s.nz * side) };
+    }
+    return null;
+  };
+  if (theme.id === 'meadow') {
+    // 風車：塔身與扇葉是兩個模型，扇葉裝在屋頂前方的轉軸上、會轉
+    const blades: THREE.Object3D[] = [];
+    let k = 0;
+    for (const d of [260, 720, 1240, 1560, 2180]) {
+      const H = 17 + rng() * 5;
+      const tower = makeLandmark('tripo/windmill_tower', H);
+      if (!tower) break;
+      const sp = spotFor(d, k++ % 2 ? 1 : -1, H * 0.45, [hw + 22, hw + 32, hw + 45, hw + 60]);
+      if (!sp) continue;
+      tower.position.set(sp.x, terrainH(sp.x, sp.z) - 0.4, sp.z);
+      tower.rotation.y = sp.yaw + (rng() - 0.5) * 0.5;
+      tower.userData.radius = H * 0.4;
+      const bl = makeLandmark('tripo/windmill_blades', H * 0.8);
+      if (bl) {
+        const hub = new THREE.Group();
+        hub.position.set(0, H * 0.87, H * 0.36);
+        bl.position.y = -H * 0.4;
+        hub.add(bl);
+        hub.rotation.z = rng() * 6;
+        tower.add(hub);
+        blades.push(hub);
+      }
+      if (shadows) tower.traverse((o) => { o.castShadow = true; });
+      props.add(tower);
+    }
+    if (blades.length) updaters.push((dt) => { for (const b of blades) b.rotation.z += dt * 0.55; });
+  } else if (theme.id === 'city') {
+    // 賽博龐克大樓：招牌與螢幕在夜裡發光（貼圖越亮、越鮮豔的地方越亮）
+    const glowMats = new Map<THREE.Material, THREE.Material>();
+    const neon = (m: THREE.Material): THREE.Material => {
+      let out = glowMats.get(m);
+      if (!out) {
+        const c = (m as THREE.MeshLambertMaterial).clone();
+        c.onBeforeCompile = (sh) => {
+          sh.fragmentShader = sh.fragmentShader.replace(
+            '#include <emissivemap_fragment>',
+            `#include <emissivemap_fragment>
+            #ifdef USE_MAP
+              vec3 tcol = texture2D( map, vMapUv ).rgb;
+              float hi = max( max( tcol.r, tcol.g ), tcol.b );
+              float sat = hi - min( min( tcol.r, tcol.g ), tcol.b );
+              totalEmissiveRadiance += tcol * ( 0.18 + 2.4 * smoothstep( 0.35, 0.8, hi ) * smoothstep( 0.12, 0.35, sat ) );
+            #endif`,
+          );
+        };
+        glowMats.set(m, (out = c));
+      }
+      return out;
+    };
+    let k = 0;
+    for (const d of [60, 330, 560, 820, 1240, 1420, 1700, 1980]) {
+      const name = k % 2 ? 'tripo/city_b' : 'tripo/city_a';
+      const H = 58 + rng() * 22;
+      const b = makeLandmark(name, H);
+      if (!b) break;
+      const radius = Math.hypot(b.userData.width, b.userData.depth) * 0.5;
+      const sp = spotFor(d, k % 3 === 1 ? 1 : -1, radius, [hw + 4 + radius, hw + 12 + radius, hw + 24 + radius]) ?? spotFor(d, k % 3 === 1 ? -1 : 1, radius, [hw + 4 + radius, hw + 12 + radius, hw + 24 + radius]);
+      k++;
+      if (!sp) continue;
+      b.position.set(sp.x, terrainH(sp.x, sp.z) - 0.5, sp.z);
+      b.rotation.y = sp.yaw;
+      b.userData.radius = radius;
+      b.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.material = Array.isArray(mesh.material) ? mesh.material.map(neon) : neon(mesh.material);
+        mesh.castShadow = shadows;
+      });
+      props.add(b);
+    }
+  }
+
   // ---------- 散布在賽道外的景物（依主題不同） ----------
   const m4 = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -713,7 +803,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       let blocked = false;
       for (const pr of props.children) {
         const dx = pr.position.x - x, dz = pr.position.z - z;
-        if (dx * dx + dz * dz < 170) { blocked = true; break; }
+        const rr = 13 + (pr.userData.radius ?? 0);
+        if (dx * dx + dz * dz < rr * rr) { blocked = true; break; }
       }
       if (!blocked && gap > 0) for (const o of out) {
         const dx = o.x - x, dz = o.z - z;
