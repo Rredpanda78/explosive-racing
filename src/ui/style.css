@@ -375,3 +375,69 @@ kbd { background: var(--navy-2); border-bottom-color: var(--navy-3); color: var(
   .tcard b { font-size: 13px; }
   .m-detail { margin-top: .4em; font-size: 12px; line-height: 1.45; }
 }
+
+/* =====================================================================
+   比賽 HUD：跟選單同一套深藍、米白、珊瑚紅（半透明深藍面板＋米白框線）
+   ===================================================================== */
+#hud { font-style: normal; text-shadow: none; color: var(--cream); }
+.hudpanel, #hud-pos, #hud-top, #hud-left, #hud-right, #missions, #minimap {
+  background: rgba(19, 40, 75, .78); border: 2px solid rgba(243, 234, 213, .85); border-radius: calc(1.6 * var(--u));
+  box-shadow: 0 calc(.5 * var(--u)) 0 rgba(11, 26, 51, .55);
+}
+/* 名次 */
+#hud-pos { padding: calc(.6 * var(--u)) calc(1.6 * var(--u)) calc(.9 * var(--u)); color: var(--cream); font-size: calc(9.5 * var(--u)); letter-spacing: -.02em; }
+#hud-pos small { color: var(--coral); font-size: 42%; margin-left: .1em; }
+/* 圈數與時間 */
+#hud-top { padding: calc(.5 * var(--u)) calc(2.4 * var(--u)) calc(.7 * var(--u)); top: calc(2 * var(--u)); }
+#hud-lap { font-size: calc(3.2 * var(--u)); letter-spacing: .08em; }
+#hud-lap b { color: var(--coral); font-size: 140%; }
+#hud-time { font-size: calc(2.8 * var(--u)); opacity: .9; letter-spacing: .04em; }
+#elim { background: var(--navy-3); border: 1px solid rgba(243,234,213,.5); color: var(--cream); }
+#elim.warn { background: var(--coral); border-color: var(--coral); }
+/* 小地圖與暫停鈕 */
+#minimap { padding: calc(.4 * var(--u)); }
+#btn-pause { background: rgba(19, 40, 75, .85); border: 2px solid var(--cream); color: var(--cream); }
+/* 左下：武器與耐久 */
+#hud-left { padding: calc(.8 * var(--u)) calc(1.4 * var(--u)) calc(1.2 * var(--u)); font-weight: 800; }
+#hud-left > div:first-child { margin-top: 0; }
+.bar { background: var(--navy-3); border: 2px solid rgba(243, 234, 213, .8); border-radius: calc(.6 * var(--u)); transform: none; }
+#w1 .bar i { background: var(--coral); }
+#w1.hot .bar i { background: #ff2e2e; animation: blink .35s steps(2) infinite; }
+#w1.hot .wname { color: var(--coral); }
+#w2 .bar i { background: var(--cream); }
+#w2.cd .bar i { background: #6f7f9c; }
+#hp .bar i { background: #8fd694; }
+#hp.low .bar i { background: var(--coral); }
+#hp span { color: var(--cream); }
+/* 右下：速度、N2O 氣瓶、集氣條 */
+#hud-right { padding: calc(.6 * var(--u)) calc(1.6 * var(--u)) calc(1.2 * var(--u)); }
+#speed b { color: var(--cream); letter-spacing: -.02em; }
+#speed small { color: var(--coral); font-weight: 900; }
+#n2o i { transform: none; border: 2px solid rgba(243, 234, 213, .85); background: var(--navy-3); border-radius: calc(.6 * var(--u)); position: relative; }
+#n2o i.full { background: var(--coral); box-shadow: 0 0 calc(1.4 * var(--u)) rgba(232, 87, 74, .9); }
+#n2o i.full::after { content: "N2O"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: calc(1.7 * var(--u)); font-style: normal; color: var(--cream); }
+#gauge { height: calc(2.2 * var(--u)); }
+#gauge i { background: linear-gradient(90deg, var(--coral-2), var(--coral), #ffb2a6); }
+/* 倒數、GO、名次等大字：米白字、深藍描邊、珊瑚紅陰影 */
+#center-msg { color: var(--cream); -webkit-text-stroke: calc(.6 * var(--u)) var(--navy); text-shadow: calc(.6 * var(--u)) calc(.8 * var(--u)) 0 var(--coral); letter-spacing: .02em; }
+#sub-msg { color: var(--cream); -webkit-text-stroke: calc(.3 * var(--u)) var(--navy); paint-order: stroke fill; font-weight: 900; }
+#sub-msg.warn { color: var(--coral); }
+#sub-msg.mini { color: #ffb02e; }
+/* 往上飄的提示：深藍小膠囊 */
+#popups div { display: table; background: rgba(19, 40, 75, .85); border: 1px solid rgba(243, 234, 213, .6); border-radius: 99px; padding: .05em .7em; margin-bottom: .25em; font-weight: 900; }
+#popups .gold { color: #ffd27a; border-color: #ffd27a; }
+#popups .blue { color: #8fdcff; border-color: #8fdcff; }
+#popups .warn { color: var(--cream); background: var(--coral); border-color: var(--coral); }
+/* 擊殺訊息 */
+#feed div { background: rgba(19, 40, 75, .85); border-left: 3px solid var(--cream); border-radius: 6px; }
+#feed .me { border-left-color: var(--coral); color: #ffb2a6; }
+/* 任務清單 */
+#missions { background: rgba(19, 40, 75, .82); color: var(--cream); }
+#missions b, .missions-box b { color: var(--coral); }
+#missions em, .missions-box em { color: #ffd27a; }
+#missions .ok, .missions-box .ok { color: #8fd694; }
+#reticle { border-color: rgba(243, 234, 213, .7); }
+#reticle::before { background: var(--cream); }
+#reticle.hit { border-color: var(--coral); }
+#reticle.hit::before { background: var(--coral); }
+body.touch #missions { top: calc(33 * var(--u)); }

@@ -373,10 +373,10 @@ export class Hud {
       else c.lineTo(x, y);
     });
     c.closePath();
-    c.strokeStyle = 'rgba(0,0,0,0.6)';
+    c.strokeStyle = '#0b1a33';
     c.lineWidth = 9;
     c.stroke();
-    c.strokeStyle = 'rgba(255,255,255,0.9)';
+    c.strokeStyle = '#f3ead5';
     c.lineWidth = 5;
     c.stroke();
     // 捷徑：黃色虛線
@@ -388,17 +388,17 @@ export class Hud {
         else c.lineTo(x, y);
       });
       c.setLineDash([]);
-      c.strokeStyle = 'rgba(0,0,0,0.55)';
+      c.strokeStyle = '#0b1a33';
       c.lineWidth = 5;
       c.stroke();
       c.setLineDash([4, 3]);
-      c.strokeStyle = '#ffd23f';
+      c.strokeStyle = '#e8574a';
       c.lineWidth = 3;
       c.stroke();
       c.setLineDash([]);
     }
     // 機關：紅色三角形
-    c.fillStyle = '#ff4d4d';
+    c.fillStyle = '#ffb02e';
     for (const h of track.def.hazards ?? []) {
       const s = track.samples[track.wrap(Math.round(h.dist / track.spacing))];
       const [x, y] = this.mapXY(s.x, s.z);
@@ -409,10 +409,10 @@ export class Hud {
     }
     const s0 = track.samples[0];
     const [sx, sy] = this.mapXY(s0.x, s0.z);
-    c.fillStyle = '#ff4747';
+    c.fillStyle = '#e8574a';
     c.fillRect(sx - 6, sy - 2, 12, 4);
     // 跳台位置
-    c.fillStyle = '#ff9d2e';
+    c.fillStyle = '#ffd27a';
     for (const r of track.ramps) {
       const s = track.samples[track.wrap(Math.round(r / track.spacing))];
       const [x, y] = this.mapXY(s.x, s.z);
@@ -437,11 +437,14 @@ export class Hud {
       c.beginPath();
       c.arc(x, y, 4, 0, Math.PI * 2);
       c.fill();
+      c.lineWidth = 1.5;
+      c.strokeStyle = '#0b1a33';
+      c.stroke();
     }
     const p = race.player;
     const [x, y] = this.mapXY(p.x, p.z);
-    c.fillStyle = '#fff';
-    c.strokeStyle = '#111';
+    c.fillStyle = '#e8574a';
+    c.strokeStyle = '#f3ead5';
     c.lineWidth = 2;
     c.beginPath();
     c.arc(x, y, 6, 0, Math.PI * 2);
