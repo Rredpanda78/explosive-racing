@@ -30,6 +30,10 @@ export interface TrackDef {
   /** 控制點 [x, z, 高度] */
   points: [number, number, number][];
   pads: BoostPad[];
+  /** 跳台（距起跑線的公尺數，指跳台頂端的位置），整條路寬都是斜坡 */
+  ramps: number[];
+  /** 爆炸桶的位置 */
+  barrels: BoostPad[];
 }
 
 export const PAD_LENGTH = 9;
@@ -59,10 +63,20 @@ export const TRACKS: TrackDef[] = [
     ],
     pads: [
       { dist: 150, lat: 0 },
-      { dist: 905, lat: -4 },
+      { dist: 900, lat: -4 },
+      { dist: 900, lat: 4 },
       { dist: 1290, lat: 4 },
+      { dist: 1590, lat: 0 },
       { dist: 2040, lat: 0 },
       { dist: 2330, lat: -3 },
+    ],
+    ramps: [965, 1650],
+    barrels: [
+      { dist: 330, lat: 9.2 }, { dist: 338, lat: -9.2 }, { dist: 520, lat: -9.2 }, { dist: 680, lat: 9.2 },
+      { dist: 850, lat: 9.2 }, { dist: 856, lat: -9.2 }, { dist: 1130, lat: -9.2 }, { dist: 1240, lat: 9.2 },
+      { dist: 1350, lat: 9.2 }, { dist: 1425, lat: -9.2 }, { dist: 1500, lat: 9.2 }, { dist: 1760, lat: 9.2 },
+      { dist: 1766, lat: -9.2 }, { dist: 1980, lat: -9.2 }, { dist: 2120, lat: 9.2 }, { dist: 2126, lat: -9.2 },
+      { dist: 2300, lat: 9.2 },
     ],
   },
 ];
@@ -83,6 +97,7 @@ export class Track {
   laps: number;
   def: TrackDef;
   pads: BoostPad[];
+  ramps: number[];
   /** 最近一次 locate() 算出的橫向偏移（左為正） */
   lat = 0;
 
@@ -158,6 +173,7 @@ export class Track {
       for (let k = -R; k <= R; k++) s += raw[(i + k + n) % n];
       this.samples[i].curv = s / (2 * R + 1);
     }
+    this.ramps = def.ramps.map((d) => ((d % this.length) + this.length) % this.length);
     this.pads = def.pads.map((p) => ({ dist: ((p.dist % this.length) + this.length) % this.length, lat: p.lat }));
   }
 
@@ -195,6 +211,26 @@ export class Track {
   heightAt(idx: number, x: number, z: number): number {
     const s = this.samples[idx];
     return s.y + ((x - s.x) * s.tx + (z - s.z) * s.tz) * s.slope;
+  }
+
+  /** 與某個距離點的有號差距（考慮賽道首尾相接） */
+  private rel(idx: number, dist: number): number {
+    let d = this.samples[idx].dist - dist;
+    if (d > this.length / 2) d -= this.length;
+    else if (d < -this.length / 2) d += this.length;
+    return d;
+  }
+
+  /**
+   * 跳台：回傳 0~1 表示車在斜坡上的進度（1 = 頂端，該起跳了），不在斜坡上回傳 -1。
+   * rampLen 為斜坡長度。
+   */
+  rampProgress(idx: number, rampLen: number): number {
+    for (const r of this.ramps) {
+      const d = this.rel(idx, r);
+      if (d > -rampLen && d <= 1.6) return Math.min(1, (d + rampLen) / rampLen);
+    }
+    return -1;
   }
 
   /** 車輛（idx, lat）是否踩在加速帶上 */

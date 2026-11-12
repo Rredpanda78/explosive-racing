@@ -1,3 +1,4 @@
+import type { CarId } from './cars';
 import type { CarUpgradeId, PrimaryId, SecondaryId, WeaponId } from './weapons';
 
 export interface Profile {
@@ -7,6 +8,9 @@ export interface Profile {
   primary: PrimaryId;
   secondary: SecondaryId;
   car: Record<CarUpgradeId, number>;
+  /** 目前使用的車款與已擁有的車款 */
+  kart: CarId;
+  karts: Partial<Record<CarId, boolean>>;
   bestLap: number;
   races: number;
   wins: number;
@@ -17,11 +21,13 @@ const KEY = 'explosive-racing-save-v1';
 export function defaultProfile(): Profile {
   return {
     cash: 0,
-    owned: { mg: true, vulcan: false, rocket: true, howitzer: false },
-    lvl: { mg: 1, vulcan: 1, rocket: 1, howitzer: 1 },
+    owned: { mg: true, vulcan: false, shotgun: false, rocket: true, howitzer: false, salvo: false },
+    lvl: { mg: 1, vulcan: 1, shotgun: 1, rocket: 1, howitzer: 1, salvo: 1 },
     primary: 'mg',
     secondary: 'rocket',
     car: { engine: 0, n2o: 0, armor: 0 },
+    kart: 'kart-oobi',
+    karts: { 'kart-oobi': true },
     bestLap: 0,
     races: 0,
     wins: 0,
@@ -44,6 +50,7 @@ export function loadProfile(): Profile {
       owned: { ...d.owned, ...p.owned },
       lvl: { ...d.lvl, ...p.lvl },
       car: { ...d.car, ...p.car },
+      karts: { ...d.karts, ...p.karts },
     };
   } catch {
     return d;

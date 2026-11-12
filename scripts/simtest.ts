@@ -1,9 +1,12 @@
-// 無畫面模擬測試：讓 8 台車（含玩家位）全由 AI 跑完比賽，檢查物理與比賽流程。
-// 另外用腳本化的輸入測試玩家的甩尾／集氣／N2O。
+// 無畫面模擬測試：
+// 1. 地形不能蓋住路面（之前破圖的原因）
+// 2. 8 台車全由 AI 跑完競速賽與淘汰賽
+// 3. 玩家的甩尾／集氣在各種操作下的表現
 import { CFG } from '../src/game/config';
 import { emptyInput } from '../src/game/kart';
 import { Race } from '../src/game/race';
 import { defaultProfile } from '../src/game/save';
+import { makeTerrain } from '../src/game/terrain';
 import { Track, TRACKS } from '../src/game/track';
 
 const track = new Track(TRACKS[0]);
@@ -11,15 +14,32 @@ let kmax = 0;
 for (const s of track.samples) kmax = Math.max(kmax, Math.abs(s.curv));
 console.log(`track length ${track.length.toFixed(0)} m, samples ${track.n}, min radius ${(1 / kmax).toFixed(1)} m`);
 
-// ---- 1. 全 AI 比賽 ----
+// ---- 1. 地形檢查 ----
 {
-  const race = new Race(track, defaultProfile(), 12345);
+  const terrain = makeTerrain(track);
+  let worst = Infinity, minY = Infinity;
+  for (const s of track.samples) {
+    minY = Math.min(minY, s.y);
+    // 路面中央、兩側邊緣與護欄外
+    for (const lat of [0, -track.halfWidth, track.halfWidth, -(track.halfWidth + 6), track.halfWidth + 6]) {
+      const gap = s.y - terrain.height(s.x + s.nx * lat, s.z + s.nz * lat);
+      worst = Math.min(worst, gap);
+    }
+  }
+  console.log(`terrain: road is at least ${worst.toFixed(2)} m above grass; far plane at ${terrain.baseY.toFixed(1)}, lowest road ${minY.toFixed(1)}`);
+  if (worst < 0.4) throw new Error('terrain pokes through the road');
+  if (terrain.baseY > minY - 1) throw new Error('far ground plane would cover the lowest part of the track');
+}
+
+function runAll(mode: 'race' | 'elim', seed: number): void {
+  const race = new Race(track, defaultProfile(), mode, seed);
   race.autoPlayer = true;
   race.player.aiAssist = true;
   const dt = 1 / 60;
   const count: Record<string, number> = {};
   let t = 0;
-  while (t < 400 && !race.karts.every((k) => k.finished)) {
+  const done = () => (mode === 'race' ? race.karts.every((k) => k.finished) : race.state === 'finished');
+  while (t < 500 && !done()) {
     race.step(dt, emptyInput());
     for (const e of race.events) {
       const key = e.t === 'kart' ? `kart:${e.e}` : e.t;
@@ -28,31 +48,36 @@ console.log(`track length ${track.length.toFixed(0)} m, samples ${track.n}, min 
     race.events.length = 0;
     t += dt;
   }
-  console.log('events', count);
+  console.log(`--- ${mode} (${t.toFixed(0)} s) ---`);
+  console.log(Object.entries(count).filter(([k]) => !['shot', 'hit', 'count', 'go'].includes(k)).map(([k, v]) => `${k}:${v}`).join(' '));
   for (const k of race.results()) {
     console.log(
-      `${k.rank}. ${k.name.padEnd(4)} finish ${k.finished ? k.finishTime.toFixed(1) : 'DNF'} laps [${k.lapTimes.map((x) => x.toFixed(1)).join(', ')}] kills ${k.kills} deaths ${k.deaths} ${k.primary}/${k.secondary}`,
+      `${k.rank}. ${k.name.padEnd(4)} ${k.out ? 'OUT' : k.finished ? k.finishTime.toFixed(1) : 'running'} laps [${k.lapTimes.map((x) => x.toFixed(1)).join(', ')}] K${k.kills}/D${k.deaths} n2o×${k.stats.n2oUsed} air ${k.stats.airTime.toFixed(1)}s draft ${k.stats.draftTime.toFixed(1)}s barrel ${k.stats.barrels} ${k.car.slice(5)}/${k.primary}/${k.secondary}`,
     );
   }
   for (const k of race.karts) {
-    if (!isFinite(k.x) || !isFinite(k.z)) throw new Error('NaN position');
-    if (!k.finished) throw new Error(`${k.name} did not finish`);
+    if (!isFinite(k.x) || !isFinite(k.z) || !isFinite(k.y)) throw new Error('NaN position');
+    if (mode === 'race' && !k.finished) throw new Error(`${k.name} did not finish`);
   }
+  if (!done()) throw new Error(`${mode} did not end`);
+  if (!count['kart:jump']) throw new Error('nobody used a ramp');
 }
+runAll('race', 12345);
+runAll('elim', 777);
 
-// ---- 2. 玩家甩尾測試：在超寬賽道上（不會撞牆）量測各種操作下甩尾能維持多久 ----
+// ---- 3. 玩家甩尾測試：在超寬賽道上（不會撞牆）量測各種操作下甩尾能維持多久 ----
 {
-  const wide = new Track({ ...TRACKS[0], halfWidth: 2000 });
+  const wide = new Track({ ...TRACKS[0], halfWidth: 2000, ramps: [], barrels: [], pads: [] });
   const dt = 1 / 60;
   const scenario = (name: string, shiftT: number, after: number): number => {
-    const race = new Race(wide, defaultProfile(), 1);
+    const race = new Race(wide, defaultProfile(), 'race', 1);
     for (const k of race.karts) if (!k.isPlayer) { k.x += 5000; }
     const k = race.player;
     const inp = emptyInput();
     while (race.state === 'countdown') race.step(dt, inp);
     inp.accel = 1;
     for (let i = 0; i < 60 * 5; i++) race.step(dt, inp);
-    const h0 = k.heading, g0 = k.gauge, v0 = k.speed;
+    const h0 = k.heading, g0 = k.gauge + k.n2o, v0 = k.speed;
     let t = 0, maxSlip = 0, dur = 0, vMin = 99, mini = false, started = false;
     while (t < 8) {
       inp.drift = t < shiftT;
@@ -65,10 +90,11 @@ console.log(`track length ${track.length.toFixed(0)} m, samples ${track.n}, min 
       else if (started && t > dur + 1) break;
       t += dt;
     }
-    let turned = (k.heading - h0) * 57.3;
-    console.log(`${name.padEnd(26)} drift ${dur.toFixed(2)}s  maxSlip ${(maxSlip * 57.3).toFixed(0)}°  v ${v0.toFixed(1)}→min ${vMin.toFixed(1)}  gauge +${(k.gauge - g0).toFixed(2)}  heading Δ${turned.toFixed(0)}°  mini ${mini}`);
+    const turned = (k.heading - h0) * 57.3;
+    console.log(`${name.padEnd(26)} drift ${dur.toFixed(2)}s  maxSlip ${(maxSlip * 57.3).toFixed(0)}°  v ${v0.toFixed(1)}→min ${vMin.toFixed(1)}  gauge +${(k.gauge + k.n2o - g0).toFixed(2)}  heading Δ${turned.toFixed(0)}°  mini ${mini}`);
     return dur;
   };
+  console.log(`--- drift (top speed ${CFG.maxSpeed}) ---`);
   const hold = scenario('tap 0.3s + hold dir', 0.3, 1);
   const neutral = scenario('tap 0.3s + neutral', 0.3, 0);
   const counter = scenario('tap 0.3s + counter', 0.3, -1);

@@ -85,6 +85,15 @@ export class KartView {
   private lastHp = -1;
   private fakeYaw = 0;
   private t = Math.random() * 10;
+  /** 被擊毀後變成翻滾燃燒的殘骸（純畫面效果） */
+  wrecked = false;
+  wreckT = 0;
+  private wreckV = new THREE.Vector3();
+  private wreckSpin = new THREE.Vector3();
+  private lastVx = 0;
+  private lastVz = 0;
+  private baseColor = new THREE.Color();
+  private tumbleAngle = 0;
 
   constructor(look: KartLook, shadows: boolean) {
     const g = this.group;
@@ -97,6 +106,7 @@ export class KartView {
     const model = cloneModel(look.model);
     if (model) this.buildFromModel(model, look);
     else this.buildProcedural(look);
+    this.baseColor.copy(this.paint.color);
     this.addWeapons(look.primary, look.secondary);
 
     // 噴射火焰
@@ -200,7 +210,12 @@ export class KartView {
     for (const side of [1, -1]) {
       const x = GUN_X * side;
       b.add(box(0.16, 0.34, 0.5, GUN_LIGHT, x * 0.86, GUN_Y - 0.2, GUN_Z - 0.3));
-      if (primary === 'vulcan') {
+      if (primary === 'shotgun') {
+        // 兩根並排的粗短槍管
+        for (const dy of [-0.07, 0.07]) b.add(barrel(0.085, 0.95, GUN, x, GUN_Y + dy, GUN_Z + 0.15));
+        b.add(box(0.3, 0.34, 0.5, GUN_LIGHT, x, GUN_Y - 0.02, GUN_Z - 0.4));
+        b.add(box(0.26, 0.1, 0.5, DARK, x, GUN_Y - 0.22, GUN_Z + 0.05));
+      } else if (primary === 'vulcan') {
         const grp = new THREE.Group();
         grp.position.set(x, GUN_Y, GUN_Z + 0.25);
         for (let i = 0; i < 6; i++) {
@@ -224,7 +239,21 @@ export class KartView {
       this.muzzles.push(mz);
     }
     // 副武器：引擎蓋上
-    if (secondary === 'rocket') {
+    if (secondary === 'salvo') {
+      // 2×2 的發射架，略微上仰
+      const rack = new THREE.Group();
+      rack.position.set(0, HOOD_Y + 0.2, HOOD_Z);
+      rack.rotation.x = -0.12;
+      rack.add(box(0.78, 0.5, 0.7, GUN, 0, 0, 0));
+      for (const x of [-0.19, 0.19]) for (const y of [-0.12, 0.12]) {
+        rack.add(barrel(0.095, 0.74, GUN_LIGHT, x, y, 0.02));
+        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.18, 8).rotateX(Math.PI / 2), WARHEAD);
+        tip.position.set(x, y, 0.42);
+        rack.add(tip);
+      }
+      b.add(rack);
+      b.add(box(0.5, 0.14, 0.34, GUN_LIGHT, 0, HOOD_Y - 0.1, HOOD_Z - 0.1));
+    } else if (secondary === 'rocket') {
       b.add(box(0.74, 0.3, 0.62, GUN, 0, HOOD_Y + 0.1, HOOD_Z));
       b.add(box(0.5, 0.12, 0.3, GUN_LIGHT, 0, HOOD_Y - 0.1, HOOD_Z - 0.1));
       for (const x of [-0.19, 0.19]) {
@@ -249,13 +278,64 @@ export class KartView {
     this.muzzleT[side > 0 ? 0 : 1] = 0.05;
   }
 
+  /** 被擊毀：車身變黑，帶著原本的速度往上彈飛翻滾 */
+  startWreck(): void {
+    this.wrecked = true;
+    this.wreckT = 0;
+    const R = Math.random;
+    this.wreckV.set(this.lastVx * 0.55 + (R() - 0.5) * 6, 9 + R() * 5, this.lastVz * 0.55 + (R() - 0.5) * 6);
+    this.wreckSpin.set((R() - 0.5) * 14, (R() - 0.5) * 8, (R() - 0.5) * 14);
+    this.paint.color.copy(this.baseColor).multiplyScalar(0.22);
+    this.paint.emissive.setRGB(0.25, 0.06, 0);
+    for (const f of this.flames) f.visible = false;
+    for (const m of this.muzzles) m.visible = false;
+    if (this.hpSprite) this.hpSprite.visible = false;
+    this.group.visible = true;
+  }
+
+  updateWreck(dt: number, ground: number): void {
+    this.wreckT += dt;
+    const g = this.group;
+    const v = this.wreckV;
+    v.y -= 24 * dt;
+    g.position.addScaledVector(v, dt);
+    if (g.position.y < ground + 0.55) {
+      g.position.y = ground + 0.55;
+      if (v.y < 0) v.y = -v.y * 0.36;
+      v.x *= 0.72;
+      v.z *= 0.72;
+      this.wreckSpin.multiplyScalar(0.6);
+    }
+    g.rotation.x += this.wreckSpin.x * dt;
+    g.rotation.y += this.wreckSpin.y * dt;
+    g.rotation.z += this.wreckSpin.z * dt;
+  }
+
+  endWreck(): void {
+    this.wrecked = false;
+    this.paint.color.copy(this.baseColor);
+    this.paint.emissive.setRGB(0, 0, 0);
+    this.group.rotation.set(0, 0, 0);
+    this.tumbleAngle = 0;
+  }
+
   update(k: Kart, dt: number): void {
     this.t += dt;
+    this.lastVx = k.vx;
+    this.lastVz = k.vz;
     const g = this.group;
     g.visible = !k.dead && !(k.invulnT > 0 && k.invulnT < 10 && Math.floor(this.t * 12) % 2 === 0);
     g.position.set(k.x, k.y, k.z);
     g.rotation.y = k.heading;
     g.rotation.x = -k.pitch;
+    // 被炸飛時在空中翻滾，落地後轉回正面
+    if (k.air > 0 && k.tumble !== 0) this.tumbleAngle += k.tumble * dt;
+    else {
+      const full = Math.PI * 2;
+      this.tumbleAngle -= Math.round(this.tumbleAngle / full) * full;
+      this.tumbleAngle *= Math.exp(-14 * dt);
+    }
+    g.rotation.z = this.tumbleAngle;
 
     // AI 沒有真的甩尾，用假的車身偏擺讓過彎看起來有滑動感
     const fakeTarget = k.aiAssist && k.speed > 18 ? k.steerVis * 0.38 : 0;

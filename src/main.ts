@@ -1,14 +1,14 @@
 import './ui/style.css';
 import { GameAudio } from './audio';
-import { KILL_REWARD, PAYOUT } from './game/config';
-import { Race } from './game/race';
+import { KILL_REWARD, PAYOUT, STREAK_BONUS } from './game/config';
+import { Race, type RaceMode } from './game/race';
 import { loadProfile, saveProfile } from './game/save';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
 import { DEBRIS_MODELS, KART_MODELS, loadModels, PROP_MODELS } from './render/assets';
 import { GameView } from './render/view';
 import { Hud } from './ui/hud';
-import { Screens } from './ui/screens';
+import { Screens, type Summary } from './ui/screens';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const touchRoot = document.getElementById('touch')!;
@@ -22,20 +22,24 @@ const hud = new Hud(track);
 const audio = new GameAudio();
 
 let race: Race | null = null;
+let mode: RaceMode = 'race';
 let ready = false;
 let paused = false;
 let resultsTimer = 0;
 let resultsShown = false;
 /** 擊毀瞬間的短暫慢動作（以真實時間計） */
 let slowT = 0;
+/** 這場靠連續擊毀多賺的獎金 */
+let streakCash = 0;
 
 function setTouchUI(on: boolean): void {
   document.body.classList.toggle('touch', on);
   touchRoot.classList.toggle('hidden', !on || !race || resultsShown);
 }
 
-function startRace(): void {
+function startRace(m?: RaceMode): void {
   if (!ready) return;
+  if (m) mode = m;
   audio.init();
   audio.setMusic('race');
   audio.setMusicRush(false);
@@ -44,7 +48,7 @@ function startRace(): void {
     const el = document.documentElement as HTMLElement & { requestFullscreen?: () => Promise<void> };
     el.requestFullscreen?.().then(() => (screen.orientation as unknown as { lock?: (o: string) => Promise<void> }).lock?.('landscape')).catch(() => {});
   }
-  race = new Race(track, profile);
+  race = new Race(track, profile, mode);
   view.setRace(race);
   hud.show(race);
   screens.hide();
@@ -52,6 +56,7 @@ function startRace(): void {
   resultsTimer = 0;
   resultsShown = false;
   slowT = 0;
+  streakCash = 0;
   input.clear();
   input.capture = true;
   if (coarse) input.touchMode = true;
@@ -73,7 +78,7 @@ function toMenu(): void {
 function setPaused(p: boolean): void {
   if (!race || resultsShown) return;
   paused = p;
-  if (p) screens.pause(audio.muted);
+  if (p) screens.pause(audio.muted, hud.missionHtml(race));
   else {
     screens.hide();
     input.clear();
@@ -83,7 +88,7 @@ function setPaused(p: boolean): void {
 const screens = new Screens(profile, {
   start: startRace,
   resume: () => setPaused(false),
-  restart: startRace,
+  restart: () => startRace(),
   toMenu,
   toggleMute: () => {
     audio.setMuted(!audio.muted);
@@ -114,9 +119,13 @@ window.addEventListener('keydown', () => audio.init(), { once: true });
 function finishRace(r: Race): void {
   const p = r.player;
   const rank = p.rank;
-  const reward = (PAYOUT[rank - 1] ?? 0) + p.kills * KILL_REWARD;
+  const payout = PAYOUT[rank - 1] ?? 0;
+  const killCash = p.kills * KILL_REWARD;
+  const missions = r.missions.map((m) => ({ text: m.text, reward: m.reward, done: m.done(p, rank) }));
+  const missionCash = missions.reduce((a, m) => a + (m.done ? m.reward : 0), 0);
   const best = p.lapTimes.length ? Math.min(...p.lapTimes) : 0;
-  profile.cash += reward;
+  const summary: Summary = { rank, payout, killCash, streakCash, missionCash, total: payout + killCash + streakCash + missionCash, bestLap: best, missions };
+  profile.cash += summary.total;
   profile.races++;
   if (rank === 1) profile.wins++;
   if (best > 0 && (profile.bestLap <= 0 || best < profile.bestLap)) profile.bestLap = best;
@@ -126,7 +135,7 @@ function finishRace(r: Race): void {
   hud.hide();
   touchRoot.classList.add('hidden');
   audio.setMusic('menu');
-  screens.results(r, rank, reward, best);
+  screens.results(r, summary);
 }
 
 let last = performance.now();
@@ -152,16 +161,20 @@ function frame(now: number): void {
       view.onEvent(e, race);
       audio.onEvent(e, race);
       hud.onEvent(e, race);
-      if (e.t === 'kill' && (e.killer === p || e.victim === p) && !resultsShown) slowT = 0.11;
-      if (e.t === 'lap' && e.k === p && e.lap === race.track.laps - 1) audio.setMusicRush(true);
+      if (e.t === 'kill' && (e.killer === p || e.victim === p) && !resultsShown) {
+        slowT = 0.12;
+        if (e.killer === p && e.streak > 1) streakCash += (e.streak - 1) * STREAK_BONUS;
+      }
+      if (e.t === 'lap' && e.k === p && race.mode === 'race' && e.lap === race.track.laps - 1) audio.setMusicRush(true);
+      if (e.t === 'elim' && race.aliveCount <= 3) audio.setMusicRush(true);
     }
     race.events.length = 0;
     view.update(dt, race, input.lookBack && !resultsShown);
     if (!resultsShown) {
-      hud.update(race, view);
+      hud.update(race, view, real);
       if (race.state === 'finished') {
         resultsTimer += real;
-        if (resultsTimer > 2.6) finishRace(race);
+        if (resultsTimer > 2.8) finishRace(race);
       }
     }
     if (input.touchMode !== touchShown) {
@@ -186,4 +199,4 @@ void loadModels([...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS]).then(() => {
 });
 
 // 方便除錯與之後的自動化測試
-(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio };
+(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, track };

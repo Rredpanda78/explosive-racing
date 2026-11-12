@@ -136,3 +136,43 @@ kbd { background: #343948; border-radius: 4px; padding: .05em .45em; font-family
 
 #rotate { display: none; position: fixed; inset: 0; background: #14161c; z-index: 50; align-items: center; justify-content: center; text-align: center; font-weight: 900; font-size: 22px; line-height: 1.8; }
 @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+
+/* ---------- 新增的 HUD 元件 ---------- */
+#elim { margin-top: .3em; font-size: calc(2.6 * var(--u)); background: rgba(0,0,0,.45); padding: .15em .9em; border-radius: 99px; font-style: normal; white-space: nowrap; }
+#elim:empty { display: none; }
+#elim.warn { background: rgba(255,50,50,.85); animation: blink .5s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .55; } }
+#reticle.hit { border-color: #ff5a4d; transform-origin: center; box-shadow: 0 0 calc(1.6 * var(--u)) rgba(255,90,77,.9); }
+#reticle.hit::after { content: ""; position: absolute; inset: -45%; background:
+  linear-gradient(45deg, transparent 46%, #ff5a4d 46% 54%, transparent 54%),
+  linear-gradient(-45deg, transparent 46%, #ff5a4d 46% 54%, transparent 54%); }
+#popups { position: absolute; left: 62%; top: 44%; font-size: calc(3.2 * var(--u)); white-space: nowrap; }
+#popups div { animation: rise 1.7s ease-out forwards; margin-bottom: .1em; }
+#popups .gold { color: var(--accent); }
+#popups .blue { color: var(--n2o); }
+#popups .warn { color: var(--danger); }
+@keyframes rise { 0% { opacity: 0; transform: translateY(1em) scale(.8); } 12% { opacity: 1; transform: translateY(0) scale(1.1); } 22% { transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-1.6em); } }
+#missions, .missions-box { font-style: normal; font-weight: 700; font-size: calc(2.1 * var(--u)); line-height: 1.7; background: rgba(0,0,0,.42); border-radius: 8px; padding: .5em .9em; text-shadow: none; }
+#missions { position: absolute; left: calc(3 * var(--u) + env(safe-area-inset-left)); top: calc(16 * var(--u)); transition: opacity .6s; }
+#missions.fade { opacity: 0; }
+#missions b, .missions-box b { display: block; color: var(--accent); }
+#missions i, .missions-box i { font-style: normal; opacity: .7; }
+#missions em, .missions-box em { font-style: normal; color: var(--accent); margin-left: .4em; }
+#missions .ok, .missions-box .ok { color: #7dff8a; }
+.missions-box { font-size: clamp(12px, 1.8vw, 15px); margin: .6em auto 1em; max-width: 30em; text-align: left; }
+.missions-box .no { opacity: .55; }
+#sub-msg.draft { color: var(--n2o); }
+body.touch #missions { top: calc(27 * var(--u)); font-size: calc(2.4 * var(--u)); }
+
+/* ---------- 模式選擇與車款 ---------- */
+.modes { display: flex; gap: 1em; flex-wrap: wrap; justify-content: center; }
+.mode { border: 0; border-radius: 14px; padding: .8em 1.4em; min-width: 12.5em; background: #2a2e3a; color: #fff; box-shadow: 0 5px 0 rgba(0,0,0,.45); text-align: center; transition: transform .08s; }
+.mode b { display: block; font-style: italic; font-weight: 900; font-size: clamp(20px, 3.4vw, 32px); }
+.mode span { display: block; margin-top: .25em; font-size: clamp(11px, 1.6vw, 14px); opacity: .85; font-weight: 700; }
+.mode.primary { background: linear-gradient(180deg, #ffe066, #ffb800); color: #2a1a00; }
+.mode:active { transform: translateY(3px); box-shadow: 0 2px 0 rgba(0,0,0,.45); }
+.mode:disabled { opacity: .5; cursor: default; }
+.statbar { display: flex; align-items: center; gap: .6em; font-size: .9em; margin: .18em 0; }
+.statbar span { flex: 0 0 2.4em; opacity: .8; }
+.statbar div { flex: 1; height: 7px; background: #3a3f4d; border-radius: 4px; overflow: hidden; }
+.statbar i { display: block; height: 100%; background: var(--accent); }

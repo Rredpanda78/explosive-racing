@@ -1,22 +1,24 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
 import { clamp, lerpAngle } from '../game/util';
-import { KART_MODELS } from './assets';
 import { BlastFx, Debris, SkidMarks } from './effects';
 import { KartView } from './kartModel';
 import { Particles } from './particles';
-import { buildWorld, SKY_HORIZON, type World } from './world';
+import { buildWorld, SKY_HORIZON, SUN_DIR, type World } from './world';
 
-const MAX_TRACERS = 256;
-const POOL = 14;
-const SUN_DIR = new THREE.Vector3(0.45, 0.8, 0.3).normalize();
+const MAX_TRACERS = 320;
+const POOL = 16;
 
 export class GameView {
   renderer: THREE.WebGLRenderer;
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(66, 1, 0.3, 2600);
+  camera = new THREE.PerspectiveCamera(66, 1, 0.3, 4000);
   mobile: boolean;
   shadows: boolean;
   /** 畫面震動強度 0~1（實際位移為平方） */
@@ -24,17 +26,22 @@ export class GameView {
   /** 0~1，氮氣／加速帶時的速度感，HUD 用來畫速度線 */
   boostK = 0;
 
+  private composer: EffectComposer | null = null;
   private world?: World;
   private track?: Track;
   private kartViews = new Map<Kart, KartView>();
-  private smoke = new Particles(900, false);
-  private fire = new Particles(1400, true);
+  private smoke = new Particles(1100, false);
+  private fire = new Particles(1800, true);
   private skid = new SkidMarks();
   private debris: Debris | null = null;
   private blast = new BlastFx();
   private tracers: THREE.InstancedMesh;
   private missiles: THREE.Group[] = [];
   private shells: THREE.Mesh[] = [];
+  private barrels: THREE.Mesh[] = [];
+  private barrelGeo: THREE.BufferGeometry;
+  private barrelMat: THREE.MeshLambertMaterial;
+  private barrelHot: THREE.MeshBasicMaterial;
   private sun: THREE.DirectionalLight;
   private camYaw = 0;
   private camY = 0;
@@ -50,30 +57,45 @@ export class GameView {
   constructor(canvas: HTMLCanvasElement, mobile: boolean) {
     this.mobile = mobile;
     this.shadows = !mobile;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2));
+    const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: mobile, powerPreference: 'high-performance' }));
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2));
+    // 色調映射：讓太陽、火焰這些很亮的地方平順地壓回螢幕能顯示的範圍，又不會讓顏色變灰
+    r.toneMapping = THREE.NeutralToneMapping;
+    r.toneMappingExposure = 1.08;
+
     this.scene.background = new THREE.Color(SKY_HORIZON);
-    this.scene.fog = new THREE.Fog(SKY_HORIZON, 220, 1150);
-    this.scene.add(new THREE.HemisphereLight(0xdcefff, 0x7fae6a, 1.15));
-    const sun = (this.sun = new THREE.DirectionalLight(0xfff1d6, 1.9));
-    sun.position.copy(SUN_DIR).multiplyScalar(200);
+    this.scene.fog = new THREE.Fog(SKY_HORIZON, 280, 1500);
+    // 天空光偏藍、地面反光偏綠；太陽是暖色，照不到的地方自然偏冷，畫面才有立體感
+    this.scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x93a56c, 1.3));
+    const sun = (this.sun = new THREE.DirectionalLight(0xffe0b0, 2.7));
+    sun.position.copy(SUN_DIR).multiplyScalar(220);
     this.scene.add(sun, sun.target);
     if (this.shadows) {
-      this.renderer.shadowMap.enabled = true;
-      this.renderer.shadowMap.type = THREE.PCFShadowMap;
+      r.shadowMap.enabled = true;
+      r.shadowMap.type = THREE.PCFShadowMap;
       sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048);
       const c = sun.shadow.camera;
-      c.left = -85; c.right = 85; c.top = 85; c.bottom = -85; c.near = 10; c.far = 420;
+      c.left = -95; c.right = 95; c.top = 95; c.bottom = -95; c.near = 10; c.far = 520;
       sun.shadow.bias = -0.0006;
-      sun.shadow.normalBias = 0.06;
+      sun.shadow.normalBias = 0.07;
+    }
+
+    // 後製：泛光讓火焰、噴射、太陽、加速帶發亮（手機為了效能不開）
+    if (!mobile) {
+      const size = r.getDrawingBufferSize(new THREE.Vector2());
+      const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+      this.composer = new EffectComposer(r, rt);
+      this.composer.addPass(new RenderPass(this.scene, this.camera));
+      this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.3, 0.6, 1.25));
+      this.composer.addPass(new OutputPass());
     }
 
     this.scene.add(this.skid.mesh, this.blast.group, this.smoke.points, this.fire.points);
 
     this.tracers = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.1, 0.1, 5.5),
-      new THREE.MeshBasicMaterial({ color: 0xffe7a0, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 1.7, 0.8), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
       MAX_TRACERS,
     );
     this.tracers.count = 0;
@@ -100,6 +122,30 @@ export class GameView {
       this.scene.add(s);
       this.shells.push(s);
     }
+
+    // 爆炸桶：紅色油桶加黃色警示帶
+    const cv = document.createElement('canvas');
+    cv.width = 128;
+    cv.height = 64;
+    const c2 = cv.getContext('2d')!;
+    c2.fillStyle = '#d7263d';
+    c2.fillRect(0, 0, 128, 64);
+    c2.fillStyle = '#8f1526';
+    for (const y of [8, 52]) c2.fillRect(0, y, 128, 4);
+    c2.fillStyle = '#ffd23f';
+    c2.fillRect(0, 22, 128, 20);
+    c2.fillStyle = '#1a1a1a';
+    for (let x = -20; x < 140; x += 20) {
+      c2.beginPath();
+      c2.moveTo(x, 42); c2.lineTo(x + 10, 42); c2.lineTo(x + 20, 22); c2.lineTo(x + 10, 22);
+      c2.closePath();
+      c2.fill();
+    }
+    const btex = new THREE.CanvasTexture(cv);
+    btex.colorSpace = THREE.SRGBColorSpace;
+    this.barrelGeo = new THREE.CylinderGeometry(0.78, 0.78, 1.6, 14).translate(0, 0.8, 0);
+    this.barrelMat = new THREE.MeshLambertMaterial({ map: btex });
+    this.barrelHot = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 2.4, 1.2) });
     this.resize();
   }
 
@@ -107,10 +153,10 @@ export class GameView {
   setTrack(track: Track): void {
     if (this.world) this.scene.remove(this.world.group);
     this.track = track;
-    this.world = buildWorld(track, this.shadows);
+    this.world = buildWorld(track, this.shadows, this.mobile);
     this.scene.add(this.world.group);
     if (this.debris) this.scene.remove(this.debris.group);
-    this.debris = new Debris(this.mobile ? 16 : 30, this.shadows);
+    this.debris = new Debris(this.mobile ? 16 : 36, this.shadows);
     this.scene.add(this.debris.group);
   }
 
@@ -120,6 +166,8 @@ export class GameView {
       kv.dispose();
     }
     this.kartViews.clear();
+    for (const b of this.barrels) this.scene.remove(b);
+    this.barrels = [];
     this.smoke.clear();
     this.fire.clear();
     this.skid.clear();
@@ -132,11 +180,18 @@ export class GameView {
     this.boostK = 0;
     if (!race) return;
     for (const k of race.karts) {
-      const model = KART_MODELS[k.id % KART_MODELS.length];
-      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, isPlayer: k.isPlayer, model }, this.shadows);
+      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, isPlayer: k.isPlayer, model: k.car }, this.shadows);
       this.kartViews.set(k, kv);
       this.scene.add(kv.group);
       kv.update(k, 0);
+    }
+    for (const b of race.barrels) {
+      const m = new THREE.Mesh(this.barrelGeo, this.barrelMat);
+      m.position.set(b.x, b.y, b.z);
+      m.rotation.y = Math.random() * 6;
+      m.castShadow = this.shadows;
+      this.scene.add(m);
+      this.barrels.push(m);
     }
     this.camYaw = race.player.heading;
     this.camY = race.player.y;
@@ -145,6 +200,10 @@ export class GameView {
   resize(): void {
     const w = window.innerWidth, h = window.innerHeight;
     this.renderer.setSize(w, h, false);
+    if (this.composer) {
+      this.composer.setPixelRatio(this.renderer.getPixelRatio());
+      this.composer.setSize(w, h);
+    }
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.updateParticleScale();
@@ -166,8 +225,15 @@ export class GameView {
     return true;
   }
 
-  private addShake(a: number): void {
+  addShake(a: number): void {
     this.shake = Math.min(1, this.shake + a);
+  }
+
+  private sparks(x: number, y: number, z: number, n: number, speed: number, ground: number, vx = 0, vz = 0): void {
+    const R = Math.random;
+    for (let i = 0; i < n; i++) {
+      this.fire.spawn(x, y, z, vx + (R() - 0.5) * speed, 1.5 + R() * speed * 0.5, vz + (R() - 0.5) * speed, 0.25 + R() * 0.3, 0.5, 0.08, 1, 0.8, 0.35, 1, 20, 0, ground);
+    }
   }
 
   onEvent(e: RaceEvent, race: Race): void {
@@ -180,7 +246,7 @@ export class GameView {
         f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.06, 2.2, 0.8, 1, 0.8, 0.35, 0.9);
         break;
       case 'hit':
-        for (let i = 0; i < 4; i++) f.spawn(e.x, e.y, e.z, e.k.vx * 0.5 + (R() - 0.5) * 16, 2 + R() * 7, e.k.vz * 0.5 + (R() - 0.5) * 16, 0.25 + R() * 0.25, 0.55, 0.1, 1, 0.8, 0.3, 1, 20, 0, e.k.y);
+        this.sparks(e.x, e.y, e.z, 4, 16, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
         f.spawn(e.x, e.y, e.z, 0, 0, 0, 0.07, 2.4, 0.6, 1, 0.9, 0.6, 0.9);
         if (e.k === p) this.addShake(0.1);
         break;
@@ -203,22 +269,38 @@ export class GameView {
           sm.spawn(e.x, e.y + 0.5, e.z, Math.cos(a) * sp, 2.5 + R() * 5, Math.sin(a) * sp, 1.2 + R() * 1.2, 2.2, 7 + R() * 4, 0.12, 0.11, 0.11, 0.72, -1.2, 1.2);
         }
         this.blast.spawn(e.x, e.y, e.z, e.gy, e.r);
-        this.debris?.burst(e.x, e.y, e.z, e.gy, e.kart ? 9 : 3, e.kart ? 15 : 10);
+        this.debris?.burst(e.x, e.y, e.z, e.gy, e.kart ? 7 : 3, e.kart ? 15 : 10);
         const d = Math.hypot(e.x - p.x, e.z - p.z);
         this.addShake(clamp(1 - d / 80, 0, 1) * 0.85);
         break;
       }
+      case 'ram': {
+        // 撞擊：力道越大火花越多
+        const n = Math.min(26, 5 + Math.round(e.power * 1.6));
+        this.sparks(e.x, e.y, e.z, n, 10 + e.power, e.a.y, (e.a.vx + e.b.vx) * 0.5, (e.a.vz + e.b.vz) * 0.5);
+        if (e.power > 5) this.debris?.burst(e.x, e.y, e.z, e.a.y, 1, 7);
+        if (e.a === p || e.b === p) this.addShake(Math.min(0.6, 0.12 + e.power * 0.04));
+        break;
+      }
       case 'launch': {
         const fx = Math.sin(e.k.heading), fz = Math.cos(e.k.heading);
-        for (let i = 0; i < 8; i++) sm.spawn(e.k.x + fx * 1.4, e.k.y + 1, e.k.z + fz * 1.4, e.k.vx + (R() - 0.5) * 4, 1 + R() * 2, e.k.vz + (R() - 0.5) * 4, 0.5, 0.8, 2.6, 0.85, 0.85, 0.85, 0.5);
+        for (let i = 0; i < 6; i++) sm.spawn(e.k.x + fx * 1.4, e.k.y + 1, e.k.z + fz * 1.4, e.k.vx + (R() - 0.5) * 4, 1 + R() * 2, e.k.vz + (R() - 0.5) * 4, 0.5, 0.8, 2.6, 0.85, 0.85, 0.85, 0.5);
         f.spawn(e.k.x + fx * 1.6, e.k.y + 1, e.k.z + fz * 1.6, e.k.vx, 0, e.k.vz, 0.1, 3.2, 1, 1, 0.75, 0.35, 1);
-        if (e.k === p) this.addShake(e.kind === 'howitzer' ? 0.3 : 0.15);
+        if (e.k === p) this.addShake(e.kind === 'howitzer' ? 0.3 : 0.14);
+        break;
+      }
+      case 'start': {
+        const k = e.k;
+        for (let i = 0; i < 20; i++) {
+          const a = (i / 20) * Math.PI * 2;
+          f.spawn(k.x, k.y + 0.5, k.z, Math.cos(a) * 8, 1 + R() * 3, Math.sin(a) * 8, 0.4, 1.8, 0.2, 1, 0.7, 0.25, 1);
+        }
         break;
       }
       case 'kart': {
         const k = e.k;
         if (e.e === 'wall') {
-          for (let i = 0; i < 9; i++) f.spawn(k.x, k.y + 0.6, k.z, (R() - 0.5) * 14, 2 + R() * 6, (R() - 0.5) * 14, 0.35, 0.5, 0.1, 1, 0.8, 0.4, 1, 20, 0, k.y);
+          this.sparks(k.x, k.y + 0.6, k.z, 12, 14, k.y);
           if (k === p) this.addShake(0.35);
         } else if (e.e === 'boost' || e.e === 'mini' || e.e === 'pad') {
           const blue = e.e === 'boost';
@@ -226,11 +308,20 @@ export class GameView {
             const a = (i / 16) * Math.PI * 2;
             f.spawn(k.x, k.y + 0.6, k.z, k.vx * 0.6 + Math.cos(a) * 7, R() * 3, k.vz * 0.6 + Math.sin(a) * 7, 0.35, 1.7, 0.2, blue ? 0.3 : 1, blue ? 0.8 : 0.65, blue ? 1 : 0.2, 1);
           }
+          if (blue && k === p) this.addShake(0.22);
         } else if (e.e === 'n2o') {
           for (let i = 0; i < 14; i++) {
             const a = (i / 14) * Math.PI * 2;
             f.spawn(k.x + Math.cos(a) * 1.6, k.y + 0.3, k.z + Math.sin(a) * 1.6, k.vx, 5 + R() * 2, k.vz, 0.45, 1.1, 0.2, 0.35, 0.85, 1, 1);
           }
+        } else if (e.e === 'land') {
+          // 落地：揚起一圈塵土
+          for (let i = 0; i < 14; i++) {
+            const a = (i / 14) * Math.PI * 2;
+            sm.spawn(k.x + Math.cos(a) * 1.2, k.y + 0.2, k.z + Math.sin(a) * 1.2, k.vx * 0.3 + Math.cos(a) * 5, 0.8 + R(), k.vz * 0.3 + Math.sin(a) * 5, 0.6, 1, 3.6, 0.85, 0.8, 0.7, 0.5, -0.4, 2);
+          }
+          this.sparks(k.x, k.y + 0.2, k.z, 6, 10, k.y);
+          if (k === p) this.addShake(0.3);
         }
         break;
       }
@@ -247,11 +338,35 @@ export class GameView {
     this.time += dt;
     const R = Math.random;
     const f = this.fire, sm = this.smoke;
+    const track = race.track;
+    const wallLat = track.halfWidth - 1.05;
+    const p = race.player;
+
     for (const k of race.karts) {
-      this.kartViews.get(k)?.update(k, dt);
+      const kv = this.kartViews.get(k);
+      if (!kv) continue;
+      // ---- 被擊毀：殘骸翻滾燃燒，重生時恢復 ----
+      if (k.dead) {
+        if (!kv.wrecked) kv.startWreck();
+        if (k.out && kv.wreckT > 4) {
+          kv.group.visible = false;
+        } else {
+          kv.updateWreck(dt, track.samples[k.idx].y);
+          const g = kv.group.position;
+          if (R() < dt * 40) sm.spawn(g.x, g.y + 0.6, g.z, (R() - 0.5) * 2, 2 + R() * 2, (R() - 0.5) * 2, 1.1, 1.2, 4.2, 0.09, 0.09, 0.09, 0.65, -1, 0.8);
+          if (R() < dt * 45) f.spawn(g.x + (R() - 0.5), g.y + 0.5, g.z + (R() - 0.5), 0, 2 + R() * 3, 0, 0.35, 1.8, 0.3, 1, 0.5, 0.1, 0.9);
+        }
+        this.skid.wheel(k, 0, false, 0, 0, 0, 0, 0);
+        this.skid.wheel(k, 1, false, 0, 0, 0, 0, 0);
+        continue;
+      }
+      if (kv.wrecked) kv.endWreck();
+      kv.update(k, dt);
+
       const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
       const lx = fz, lz = -fx;
-      const sliding = !k.dead && (k.drifting ? Math.abs(k.slip) > 0.12 : k.aiAssist && Math.abs(k.steerVis) > 0.75 && k.speed > 20);
+      const grounded = k.air <= 0;
+      const sliding = grounded && (k.drifting ? Math.abs(k.slip) > 0.12 : (k.aiAssist && Math.abs(k.steerVis) > 0.75 && k.speed > 20) || Math.abs(k.spinVel) > 0.6);
       // 後輪位置：胎痕與輪胎煙
       for (let w = 0; w < 2; w++) {
         const side = w === 0 ? 1 : -1;
@@ -267,13 +382,28 @@ export class GameView {
           f.spawn(wx, k.y + 0.12, wz, k.vx * 0.3 - fx * 3 + (R() - 0.5) * 5, 1.5 + R() * 4, k.vz * 0.3 - fz * 3 + (R() - 0.5) * 5, 0.2 + R() * 0.25, 0.42, 0.08, hot ? 0.45 : 1, hot ? 0.8 : 0.72, hot ? 1 : 0.25, 1, 16, 0, k.y);
         }
       }
-      if (k.dead) continue;
+      // 貼著護欄磨：持續噴火花
+      if (grounded && Math.abs(k.lat) > wallLat && Math.abs(k.speed) > 10) {
+        const sm0 = track.samples[k.idx];
+        const sg = Math.sign(k.lat);
+        const cx = k.x + sm0.nx * sg * 1.0, cz = k.z + sm0.nz * sg * 1.0;
+        const cnt = Math.min(4, Math.round(dt * 150));
+        for (let i = 0; i < cnt; i++) f.spawn(cx, k.y + 0.3 + R() * 0.6, cz, k.vx * 0.5 - sm0.nx * sg * (2 + R() * 5), 1 + R() * 5, k.vz * 0.5 - sm0.nz * sg * (2 + R() * 5), 0.2 + R() * 0.25, 0.45, 0.08, 1, 0.75, 0.3, 1, 18, 0, k.y);
+        if (k === p) this.addShake(dt * 0.6);
+      }
       if (k.boostT > 0 || k.miniT > 0 || k.padT > 0) {
         const blue = k.boostT > 0;
         const cnt = blue ? 3 : 1;
         for (let i = 0; i < cnt; i++) {
           const side = R() > 0.5 ? 0.3 : -0.3;
-          f.spawn(k.x + lx * side - fx * 1.6, k.y + 0.6, k.z + lz * side - fz * 1.6, k.vx * 0.4 - fx * 7, R() * 0.6, k.vz * 0.4 - fz * 7, 0.24, 1.3, 0.15, blue ? 0.35 : 1, blue ? 0.75 : 0.6, blue ? 1 : 0.2, 0.9);
+          f.spawn(k.x + lx * side - fx * 1.6, k.y + 0.6, k.z + lz * side - fz * 1.6, k.vx * 0.4 - fx * 7, R() * 0.6, k.vz * 0.4 - fz * 7, 0.24, 1.2, 0.15, blue ? 0.35 : 1, blue ? 0.75 : 0.6, blue ? 1 : 0.2, 0.5);
+        }
+      }
+      // 尾流：白色氣流線從車身兩側往後流
+      if (k.drafting && k === p) {
+        for (let i = 0; i < 2; i++) {
+          const side = (R() - 0.5) * 3.4;
+          f.spawn(k.x + lx * side + fx * (2 + R() * 4), k.y + 0.4 + R() * 1.6, k.z + lz * side + fz * (2 + R() * 4), k.vx * 0.25, 0, k.vz * 0.25, 0.22, 0.5, 0.12, 0.85, 0.95, 1, 0.7);
         }
       }
       // 受損冒煙，瀕死時著火
@@ -281,6 +411,19 @@ export class GameView {
       if (hpR < 0.5 && R() < dt * (hpR < 0.25 ? 22 : 10)) {
         sm.spawn(k.x - fx * 0.9, k.y + 1, k.z - fz * 0.9, k.vx * 0.3, 1.6 + R(), k.vz * 0.3, 0.9, 0.8, 2.8, 0.1, 0.1, 0.1, 0.6, -1, 0.8);
         if (hpR < 0.25) f.spawn(k.x - fx * 0.9, k.y + 0.9, k.z - fz * 0.9, k.vx * 0.5, 1.5 + R() * 2, k.vz * 0.5, 0.3, 1.2, 0.3, 1, 0.5, 0.1, 0.9);
+      }
+    }
+
+    // 爆炸桶：引爆後消失，重生前不顯示；即將連鎖引爆時發白光
+    for (let i = 0; i < this.barrels.length; i++) {
+      const b = race.barrels[i], m = this.barrels[i];
+      m.visible = b.respawnT <= 0;
+      m.material = b.fuse > 0 ? this.barrelHot : this.barrelMat;
+      // 剛重生時從地面長出來（只是畫面效果，進度記在網格自己身上）
+      if (!m.visible) m.userData.grow = 0;
+      else {
+        m.userData.grow = Math.min(1, (m.userData.grow ?? 1) + dt * 2.5);
+        m.scale.setScalar(Math.max(0.05, m.userData.grow));
       }
     }
 
@@ -296,7 +439,7 @@ export class GameView {
     this.tracers.count = nb;
     this.tracers.instanceMatrix.needsUpdate = true;
 
-    // 飛彈與砲彈
+    // 火箭與砲彈
     for (let i = 0; i < POOL; i++) {
       const mm = this.missiles[i];
       const m = race.missiles[i];
@@ -322,34 +465,36 @@ export class GameView {
     this.debris?.update(dt);
     sm.update(dt);
     f.update(dt);
-    this.updateChaseCam(dt, race.player, lookBack);
+    this.updateChaseCam(dt, p, lookBack);
     this.world?.update(dt, this.time, this.camera);
-    this.updateSun(race.player.x, race.player.y, race.player.z);
+    this.updateSun(p.x, p.y - p.air, p.z);
   }
 
   /** 陰影範圍跟著玩家移動（以固定格距對齊，避免陰影邊緣閃爍） */
   private updateSun(x: number, y: number, z: number): void {
     const g = 4;
     this.sun.target.position.set(Math.round(x / g) * g, y, Math.round(z / g) * g);
-    this.sun.position.copy(this.sun.target.position).addScaledVector(SUN_DIR, 200);
+    this.sun.position.copy(this.sun.target.position).addScaledVector(SUN_DIR, 220);
   }
 
   private updateChaseCam(dt: number, k: Kart, lookBack: boolean): void {
     const want = k.heading + k.slip * 0.55;
     this.camYaw = lerpAngle(this.camYaw, want, 1 - Math.exp(-7 * dt));
-    this.camY += (k.y - this.camY) * (1 - Math.exp(-10 * dt));
+    // 鏡頭高度跟著路面走；飛起來時只跟一部分，才看得出車離地了
+    const targetY = k.y - k.air * 0.55;
+    this.camY += (targetY - this.camY) * (1 - Math.exp(-10 * dt));
     const yaw = this.camYaw + (lookBack ? Math.PI : 0);
     const dx = Math.sin(yaw), dz = Math.cos(yaw);
     const bk = k.boostT > 0 ? 1 : k.padT > 0 ? 0.7 : k.miniT > 0 ? 0.5 : 0;
     this.boostK += (bk - this.boostK) * Math.min(1, dt * 5);
     const ratio = clamp(k.speed / k.topSpeed, 0, 1.4);
-    const dist = 8.6 + this.boostK * 1.5;
+    const dist = 8.6 + this.boostK * 1.6;
     // 震動：強度平方 × 幾個不同頻率的正弦波相加（比每幀亂數平滑）
     this.shake = Math.max(0, this.shake - dt * 1.9);
     this.shakeT += dt * 34;
-    const sh = this.shake * this.shake * 0.55;
+    const sh = this.shake * this.shake * 0.6;
     const t = this.shakeT;
-    const slope = Math.tan(k.pitch) * (lookBack ? -1 : 1);
+    const slope = Math.tan(clamp(k.air > 0 ? 0 : k.pitch, -0.3, 0.3)) * (lookBack ? -1 : 1);
     this.camera.position.set(
       k.x - dx * dist + Math.sin(t * 1.7) * sh,
       this.camY + 4.5 - slope * dist * 0.5 + Math.sin(t * 2.3) * sh,
@@ -357,7 +502,7 @@ export class GameView {
     );
     this.camera.lookAt(k.x + dx * 6, this.camY + 1.7 + slope * 6, k.z + dz * 6);
     this.camera.rotateZ(Math.sin(t * 1.1) * sh * 0.05);
-    const fov = 64 + ratio * 8 + this.boostK * 13;
+    const fov = 64 + ratio * 9 + this.boostK * 14;
     this.fov += (fov - this.fov) * Math.min(1, dt * 6);
     if (Math.abs(this.camera.fov - this.fov) > 0.05) {
       this.camera.fov = this.fov;
@@ -391,6 +536,7 @@ export class GameView {
   }
 
   render(): void {
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 }

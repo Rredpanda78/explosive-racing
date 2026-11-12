@@ -1,8 +1,8 @@
 /** 手感調校參數。單位：公尺、秒、弧度。 */
 export const CFG = {
   // 基本動力
-  maxSpeed: 36,
-  accel: 17,
+  maxSpeed: 37,
+  accel: 18,
   brake: 34,
   reverseMax: 9,
   coast: 7,
@@ -31,13 +31,20 @@ export const CFG = {
   driftDrag: 8,
   driftKick: 0.1,
 
-  // 集氣與 N2O
-  gaugeRate: 0.3,
-  gaugePassive: 0.01,
+  // ---- 集氣：甩尾是主要來源，但「打人、擊毀、尾流、滯空、加速帶」都會給 ----
+  gaugeRate: 0.62,
+  gaugePassive: 0.02,
+  /** 每造成 1 點傷害得到的集氣量 */
+  gaugePerDamage: 0.005,
+  /** 尾流中每秒集氣量 */
+  gaugeDraft: 0.14,
+  gaugePad: 0.12,
+  gaugeLand: 0.1,
+  gaugeMini: 0.05,
   maxN2O: 2,
   boostTime: 3.0,
-  boostSpeedMul: 1.38,
-  boostAccel: 36,
+  boostSpeedMul: 1.4,
+  boostAccel: 38,
 
   // 小噴（甩尾結束後短時間內再按一次加速）
   miniMinDrift: 0.35,
@@ -52,9 +59,33 @@ export const CFG = {
   padAccel: 34,
   slopeGravity: 0.45,
 
-  // 碰撞
+  // 起跑衝刺：倒數結束前這段時間內按下油門
+  startWindow: 0.5,
+  startBoostTime: 1.5,
+
+  // 尾流：緊跟在前車正後方一小段時間後生效
+  draftMin: 3,
+  draftMax: 24,
+  draftCone: 0.17,
+  draftDelay: 0.5,
+  draftSpeedMul: 1.07,
+  draftAccel: 6,
+
+  // 跳台
+  rampLength: 7,
+  rampHeight: 1.5,
+  rampVy: 10.5,
+  gravity: 26,
+  landBoostTime: 0.8,
+
+  // 碰撞與衝撞
   kartRadius: 1.25,
   wallLoss: 0.3,
+  /** 相對速度超過這個值的碰撞才會造成傷害 */
+  ramMinSpeed: 7,
+  ramDamage: 1.1,
+  /** 噴射中撞人的傷害倍率 */
+  ramBoostMul: 2.4,
 
   // 耐久
   hp: 100,
@@ -63,6 +94,24 @@ export const CFG = {
   regenDelay: 5,
   regenRate: 3,
 
+  // 爆炸桶：被子彈、火箭或車撞到就引爆
+  barrelDamage: 34,
+  barrelRadius: 7.5,
+  barrelRespawn: 14,
+
+  // 碰撞物理
+  /** 車與車擦撞時的摩擦係數（決定被擦到時會不會打轉） */
+  kartFriction: 0.45,
+  /** 轉動慣量：越小越容易被撞到打轉 */
+  spinInertia: 3.4,
+  spinDamping: 4.5,
+  /** 爆炸把車炸離地面的向上速度 */
+  blastLift: 9,
+
+  // 淘汰賽
+  elimFirst: 28,
+  elimInterval: 17,
+
   // 武器共用
   bulletSpeed: 260,
   aiDamageMul: 0.65,
@@ -70,5 +119,7 @@ export const CFG = {
   racers: 8,
 };
 
-export const PAYOUT = [1200, 900, 700, 550, 420, 320, 240, 180];
+export const PAYOUT = [1500, 1100, 850, 650, 500, 400, 300, 220];
 export const KILL_REWARD = 150;
+/** 連續擊毀（中途沒被擊毀）每多一台的額外獎金 */
+export const STREAK_BONUS = 75;

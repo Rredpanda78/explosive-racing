@@ -1,22 +1,39 @@
-import { KILL_REWARD, PAYOUT } from '../game/config';
-import type { Race } from '../game/race';
+import { CAR_IDS, CARS, type CarId } from '../game/cars';
+import { KILL_REWARD } from '../game/config';
+import type { Race, RaceMode } from '../game/race';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
 import {
-  CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, SECONDARY, carUpgradeCost, isPrimary,
-  weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type WeaponId,
+  CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
+  weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
 } from '../game/weapons';
 
 export interface ScreenActions {
-  start(): void;
+  start(mode?: RaceMode): void;
   resume(): void;
   restart(): void;
   toMenu(): void;
   toggleMute(): boolean;
 }
 
+/** 一場比賽的結算內容（由 main 計算後交給結算畫面顯示） */
+export interface Summary {
+  rank: number;
+  payout: number;
+  killCash: number;
+  streakCash: number;
+  missionCash: number;
+  total: number;
+  bestLap: number;
+  missions: { text: string; reward: number; done: boolean }[];
+}
+
 const pips = (lvl: number, max: number) =>
   `<span class="pips">${Array.from({ length: max }, (_, i) => `<i class="${i < lvl ? 'on' : ''}"></i>`).join('')}</span>`;
+
+/** 0~1 的能力條 */
+const stat = (label: string, v: number) =>
+  `<div class="statbar"><span>${label}</span><div><i style="width:${Math.round(Math.max(0.08, Math.min(1, v)) * 100)}%"></i></div></div>`;
 
 /** 主選單、車庫、暫停、結算畫面 */
 export class Screens {
@@ -26,13 +43,14 @@ export class Screens {
   current: 'none' | 'menu' | 'garage' | 'pause' | 'results' = 'none';
   private garageBack: 'menu' | 'results' = 'menu';
   private lastResults = '';
+  private loading = false;
 
   constructor(profile: Profile, act: ScreenActions) {
     this.profile = profile;
     this.act = act;
     this.root.addEventListener('click', (e) => {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
-      if (el) this.handle(el.dataset.act!, el.dataset.id);
+      if (el && !(el as HTMLButtonElement).disabled) this.handle(el.dataset.act!, el.dataset.id);
     });
   }
 
@@ -44,14 +62,14 @@ export class Screens {
   private handle(act: string, id?: string): void {
     const p = this.profile;
     switch (act) {
-      case 'start': this.act.start(); break;
+      case 'start': this.act.start(id as RaceMode | undefined); break;
       case 'resume': this.act.resume(); break;
       case 'restart': this.act.restart(); break;
       case 'menu': this.act.toMenu(); break;
       case 'garage': this.garageBack = this.current === 'results' ? 'results' : 'menu'; this.garage(); break;
       case 'back':
         if (this.garageBack === 'results' && this.lastResults) { this.current = 'results'; this.root.innerHTML = this.lastResults; }
-        else this.menu();
+        else this.menu(this.loading);
         break;
       case 'mute': {
         const m = this.act.toggleMute();
@@ -61,11 +79,11 @@ export class Screens {
       }
       case 'buy': {
         const w = id as WeaponId;
-        const price = (isPrimary(w) ? PRIMARY[w] : SECONDARY[w]).price;
+        const price = (isPrimary(w) ? PRIMARY[w] : SECONDARY[w as SecondaryId]).price;
         if (!p.owned[w] && p.cash >= price) {
           p.cash -= price;
           p.owned[w] = true;
-          if (isPrimary(w)) p.primary = w; else p.secondary = w;
+          if (isPrimary(w)) p.primary = w; else p.secondary = w as SecondaryId;
         }
         saveProfile(p);
         this.garage();
@@ -73,7 +91,7 @@ export class Screens {
       }
       case 'equip': {
         const w = id as WeaponId;
-        if (p.owned[w]) { if (isPrimary(w)) p.primary = w; else p.secondary = w; }
+        if (p.owned[w]) { if (isPrimary(w)) p.primary = w; else p.secondary = w as SecondaryId; }
         saveProfile(p);
         this.garage();
         break;
@@ -94,25 +112,53 @@ export class Screens {
         this.garage();
         break;
       }
+      case 'buycar': {
+        const c = id as CarId;
+        if (!p.karts[c] && p.cash >= CARS[c].price) {
+          p.cash -= CARS[c].price;
+          p.karts[c] = true;
+          p.kart = c;
+        }
+        saveProfile(p);
+        this.garage();
+        break;
+      }
+      case 'usecar': {
+        const c = id as CarId;
+        if (p.karts[c]) p.kart = c;
+        saveProfile(p);
+        this.garage();
+        break;
+      }
     }
   }
 
   menu(loading = false): void {
     this.current = 'menu';
+    this.loading = loading;
     const p = this.profile;
+    const dis = loading ? 'disabled' : '';
     this.root.innerHTML = `
       <div class="screen">
         <h1 class="title">EXPLOSIVE <span>RACING</span></h1>
-        <div class="tagline">甩尾集氣、N2O 衝刺，再用機槍與飛彈把對手轟出賽道</div>
-        <div class="row">
-          <button class="btn primary" data-act="start" ${loading ? 'disabled' : ''}>${loading ? '載入中…' : '開始比賽'}</button>
-          <button class="btn" data-act="garage">車庫</button>
+        <div class="tagline">甩尾集氣、N2O 衝刺，再用機槍與火箭把對手轟出賽道</div>
+        <div class="modes">
+          <button class="mode primary" data-act="start" data-id="race" ${dis}>
+            <b>${loading ? '載入中…' : '競速賽'}</b><span>跑完 2 圈，名次高的贏</span>
+          </button>
+          <button class="mode" data-act="start" data-id="elim" ${dis}>
+            <b>${loading ? '載入中…' : '淘汰賽'}</b><span>每 ${17} 秒淘汰最後一名，撐到最後</span>
+          </button>
         </div>
-        <div class="tagline" style="margin:1.2em 0 0"><span class="cash">$${p.cash}</span>　出賽 ${p.races}　冠軍 ${p.wins}　最快單圈 ${formatTime(p.bestLap)}</div>
+        <div class="row" style="margin-top:1em"><button class="btn" data-act="garage">車庫</button></div>
+        <div class="tagline" style="margin:1.1em 0 0">
+          <span class="cash">$${p.cash}</span>　${CARS[p.kart].name}・${PRIMARY[p.primary].name}・${SECONDARY[p.secondary].name}　出賽 ${p.races}　冠軍 ${p.wins}　最快單圈 ${formatTime(p.bestLap)}
+        </div>
         <div class="help">
           <b>鍵盤</b>　<kbd>↑↓←→</kbd> 駕駛　<kbd>Shift</kbd> 甩尾　<kbd>Ctrl</kbd> N2O　<kbd>Z</kbd> 主武器　<kbd>X</kbd> 副武器　<kbd>C</kbd> 後視　<kbd>R</kbd> 重置　<kbd>Esc</kbd> 暫停<br />
           <b>手機</b>　自動油門，左下方向鍵、左側中間開火，右下甩尾與 N2O<br />
-          <b>技巧</b>　過彎時點一下甩尾並按住方向可以拖漂很久，反打方向盤回正；集滿一管得到一瓶 N2O（最多兩瓶）；甩尾結束瞬間再按一次 <kbd>↑</kbd>（手機按 N2O）可觸發小噴；地上的箭頭是加速帶
+          <b>集氣</b>　甩尾最快；打中對手、擊毀（直接送一瓶）、跟在別人正後方吃尾流、飛越跳台、踩加速帶也都會集氣<br />
+          <b>技巧</b>　倒數到 GO 的瞬間才按油門可以起跑衝刺；點一下甩尾並按住方向能拖漂，結束瞬間再按一次 <kbd>↑</kbd> 觸發小噴；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
         </div>
       </div>`;
   }
@@ -120,14 +166,19 @@ export class Screens {
   private weaponCard(id: WeaponId): string {
     const p = this.profile;
     const prim = isPrimary(id);
-    const def = prim ? PRIMARY[id] : SECONDARY[id];
+    const def = prim ? PRIMARY[id] : SECONDARY[id as SecondaryId];
     const owned = p.owned[id];
     const lvl = p.lvl[id];
     const equipped = owned && (prim ? p.primary === id : p.secondary === id);
     const mul = weaponLvlMul(lvl);
-    const stat = prim
-      ? `每秒傷害 ${(PRIMARY[id as 'mg'].dmg * PRIMARY[id as 'mg'].rate * mul).toFixed(0)}　射速 ${PRIMARY[id as 'mg'].rate}/秒`
-      : `傷害 ${(SECONDARY[id as 'rocket'].dmg * mul).toFixed(0)}　冷卻 ${SECONDARY[id as 'rocket'].cooldown} 秒`;
+    let info: string;
+    if (prim) {
+      const P = PRIMARY[id];
+      info = `每秒傷害 ${(P.dmg * P.pellets * P.rate * mul).toFixed(0)}　射程 ${P.range} m`;
+    } else {
+      const S = SECONDARY[id as SecondaryId];
+      info = `傷害 ${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}　冷卻 ${S.cooldown} 秒`;
+    }
     let btns: string;
     if (!owned) {
       btns = `<button class="btn small primary" data-act="buy" data-id="${id}" ${p.cash < def.price ? 'disabled' : ''}>購買 $${def.price}</button>`;
@@ -141,12 +192,32 @@ export class Screens {
     return `<div class="card ${equipped ? 'equipped' : ''}">
       <h4>${def.name}<small>${owned ? 'Lv.' + lvl : '未擁有'}</small></h4>
       <p>${def.desc}</p>
-      <div class="stat">${stat}　${pips(owned ? lvl : 0, MAX_WEAPON_LVL)}</div>
+      <div class="stat">${info}　${pips(owned ? lvl : 0, MAX_WEAPON_LVL)}</div>
       <div class="row">${btns}</div>
     </div>`;
   }
 
-  private carCard(id: CarUpgradeId): string {
+  private carCard(id: CarId): string {
+    const p = this.profile;
+    const c = CARS[id];
+    const owned = !!p.karts[id];
+    const using = p.kart === id;
+    const btn = !owned
+      ? `<button class="btn small primary" data-act="buycar" data-id="${id}" ${p.cash < c.price ? 'disabled' : ''}>購買 $${c.price}</button>`
+      : `<button class="btn small" data-act="usecar" data-id="${id}" ${using ? 'disabled' : ''}>${using ? '使用中' : '選用'}</button>`;
+    return `<div class="card ${using ? 'equipped' : ''}">
+      <h4>${c.name}<small>${owned ? '已擁有' : '未擁有'}</small></h4>
+      <p>${c.desc}</p>
+      ${stat('極速', (c.speed - 0.94) / 0.12)}
+      ${stat('加速', (c.accel - 0.88) / 0.2)}
+      ${stat('操控', (c.handling - 0.9) / 0.26)}
+      ${stat('耐久', (100 + c.hp - 80) / 80)}
+      ${stat('集氣', (c.gauge - 0.9) / 0.45 + c.boostTime * 0.5)}
+      <div class="row" style="margin-top:.7em">${btn}</div>
+    </div>`;
+  }
+
+  private upgradeCard(id: CarUpgradeId): string {
     const p = this.profile;
     const lvl = p.car[id];
     const cost = carUpgradeCost(lvl);
@@ -172,23 +243,24 @@ export class Screens {
           <span class="cash">$${p.cash}</span>
           <div class="row">
             <button class="btn small" data-act="back">返回</button>
-            <button class="btn small primary" data-act="start">出賽</button>
+            <button class="btn small primary" data-act="start" ${this.loading ? 'disabled' : ''}>出賽</button>
           </div>
         </div>
-        <div class="section"><h3>主武器（車身兩側）</h3><div class="cards">${this.weaponCard('mg')}${this.weaponCard('vulcan')}</div></div>
-        <div class="section"><h3>副武器（引擎蓋）</h3><div class="cards">${this.weaponCard('rocket')}${this.weaponCard('howitzer')}</div></div>
-        <div class="section"><h3>車輛升級</h3><div class="cards">${this.carCard('engine')}${this.carCard('n2o')}${this.carCard('armor')}</div></div>
+        <div class="section"><h3>車款</h3><div class="cards">${CAR_IDS.map((c) => this.carCard(c)).join('')}</div></div>
+        <div class="section"><h3>主武器（車身兩側，朝正前方直射）</h3><div class="cards">${PRIMARY_IDS.map((w) => this.weaponCard(w)).join('')}</div></div>
+        <div class="section"><h3>副武器（引擎蓋）</h3><div class="cards">${SECONDARY_IDS.map((w) => this.weaponCard(w)).join('')}</div></div>
+        <div class="section"><h3>車輛升級（所有車款共用）</h3><div class="cards">${(['engine', 'n2o', 'armor'] as CarUpgradeId[]).map((u) => this.upgradeCard(u)).join('')}</div></div>
       </div>`;
     const s = this.root.querySelector('.screen');
     if (s) s.scrollTop = scroll;
   }
 
-  pause(muted: boolean): void {
+  pause(muted: boolean, missionHtml: string): void {
     this.current = 'pause';
     this.root.innerHTML = `
       <div class="screen">
         <h1 class="title" style="font-size:clamp(28px,7vw,64px)">暫停</h1>
-        <div class="tagline"></div>
+        <div class="missions-box">${missionHtml}</div>
         <div class="row" style="flex-direction:column;align-items:center">
           <button class="btn primary" data-act="resume">繼續</button>
           <button class="btn" data-act="restart">重新開始</button>
@@ -198,24 +270,27 @@ export class Screens {
       </div>`;
   }
 
-  results(race: Race, rank: number, reward: number, bestLap: number): void {
+  results(race: Race, s: Summary): void {
     this.current = 'results';
     const p = race.player;
+    const elim = race.mode === 'elim';
     const order = race.results();
     const rows = order.map((k, i) => `
       <tr class="${k === p ? 'me' : ''}">
         <td>${i + 1}</td><td>${k.name}</td>
-        <td>${k.finished ? formatTime(k.finishTime) : '未完賽'}</td>
+        <td>${elim ? (k.out ? '淘汰' : '存活') : k.finished ? formatTime(k.finishTime) : '未完賽'}</td>
         <td>擊毀 ${k.kills}</td>
       </tr>`).join('');
+    const missions = s.missions.map((m) => `<div class="${m.done ? 'ok' : 'no'}">${m.done ? '✔' : '✘'} ${m.text} <em>${m.done ? '+$' + m.reward : '$' + m.reward}</em></div>`).join('');
     this.lastResults = `
       <div class="screen">
         <div class="results">
-          <h2>第 ${rank} 名</h2>
+          <h2>${elim && s.rank === 1 ? '冠軍！' : `第 ${s.rank} 名`}</h2>
           <table>${rows}</table>
+          <div class="missions-box"><b>本場任務</b>${missions}</div>
           <div class="earn">
-            名次獎金 $${PAYOUT[rank - 1] ?? 0}　＋　擊毀 ${p.kills} × $${KILL_REWARD}<br />
-            本場收入 <b>$${reward}</b>　最快單圈 ${formatTime(bestLap)}
+            名次 $${s.payout}　＋　擊毀 ${p.kills} × $${KILL_REWARD}${s.streakCash ? '　＋　連續擊毀 $' + s.streakCash : ''}　＋　任務 $${s.missionCash}<br />
+            本場收入 <b>$${s.total}</b>${s.bestLap > 0 ? '　最快單圈 ' + formatTime(s.bestLap) : ''}
           </div>
           <div class="row">
             <button class="btn primary" data-act="start">再來一場</button>

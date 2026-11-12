@@ -14,6 +14,8 @@ export class AIController {
   pause = 1;
   /** 0.9 ~ 1.0，越高越快 */
   skill: number;
+  /** 車款本身的極速倍率（由 Race 設定） */
+  baseSpeedMul = 1;
   private rng: () => number;
   private inp: KartInput = { steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false };
 
@@ -82,7 +84,7 @@ export class AIController {
     inp.fireSecondary = false;
     if (k.secCd <= 0) {
       // 火箭要正對目標；榴彈落點固定在車前約 45 公尺，目標在那附近才打
-      const st = k.secondary === 'rocket' ? race.pickTarget(k, 0.045, 110) : race.pickTarget(k, 0.09, 58, 32);
+      const st = k.secondary !== 'howitzer' ? race.pickTarget(k, 0.045, 110) : race.pickTarget(k, 0.09, 58, 32);
       if (st) {
         this.secDelay -= dt;
         if (this.secDelay <= 0) {
@@ -104,7 +106,7 @@ export class AIController {
 
   /** 依與玩家的距離調整速度，讓比賽保持膠著 */
   rubberBand(k: Kart, player: Kart | undefined, race: Race): void {
-    let mul = this.skill;
+    let mul = this.skill * this.baseSpeedMul;
     if (player && !player.finished) {
       const gap = (k.prog - player.prog) * race.track.spacing;
       if (gap > 120) mul *= 0.93;

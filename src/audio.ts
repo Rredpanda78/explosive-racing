@@ -372,6 +372,21 @@ export class GameAudio {
         this.thump(v * 0.9);
         break;
       }
+      case 'ram': {
+        // 撞擊：金屬碰撞聲 + 低頻衝擊，力道越大越響
+        const mine = e.a === p || e.b === p;
+        const v = (mine ? 1 : near(e.x, e.z, 70)) * Math.min(1, 0.25 + e.power * 0.07);
+        this.burst(2600, 1.5, 0.12, v * 0.35);
+        this.thump(v * 0.6);
+        break;
+      }
+      case 'start':
+        if (e.k === p) { this.burst(500, 0.8, 0.6, 0.45, 'bandpass', 2600); this.beep(1320, 0.18, 0.15); }
+        break;
+      case 'elim':
+        this.beep(330, 0.25, 0.2);
+        setTimeout(() => this.beep(247, 0.4, 0.2), 180);
+        break;
       case 'launch':
         this.burst(500, 0.8, 0.35, e.k === p ? 0.35 : near(e.k.x, e.k.z, 80) * 0.2, 'bandpass', 1800);
         break;
@@ -383,6 +398,8 @@ export class GameAudio {
         else if (e.e === 'n2o') { this.beep(880, 0.08, 0.15); setTimeout(() => this.beep(1320, 0.12, 0.15), 80); }
         else if (e.e === 'wall') { this.burst(300, 0.8, 0.2, 0.4, 'lowpass'); this.thump(0.3); }
         else if (e.e === 'driftStart') this.burst(2200, 2, 0.12, 0.12);
+        else if (e.e === 'jump') this.burst(900, 0.7, 0.45, 0.3, 'bandpass', 300);
+        else if (e.e === 'land') { this.thump(0.55); this.burst(400, 0.8, 0.18, 0.3, 'lowpass'); }
         break;
       case 'count':
         this.beep(440, 0.15);
