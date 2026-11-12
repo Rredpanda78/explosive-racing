@@ -8,6 +8,7 @@ import { Race } from '../src/game/race';
 import { defaultProfile } from '../src/game/save';
 import { makeTerrain } from '../src/game/terrain';
 import { Track, TRACKS } from '../src/game/track';
+import { wrapAngle } from '../src/game/util';
 import { PRIMARY_IDS, SECONDARY_IDS } from '../src/game/weapons';
 
 for (const def of TRACKS) {
@@ -173,5 +174,32 @@ runAll('elim', 777);
   });
   if (!cancel.ev.includes('driftCancel')) throw new Error('drift cancel did not trigger');
   if (cancel.vDrop > 1) throw new Error(`drift cancel lost ${cancel.vDrop.toFixed(1)} m/s`);
+
+  // 重甩：甩尾中放開方向再快速按回同一邊，1.2 秒內要轉得明顯更多（髮夾彎用）
+  const turnIn = (taps: boolean): { deg: number; ev: string[]; v: number } => {
+    const race = new Race(wide, defaultProfile(), 'race', 1);
+    for (const o of race.karts) if (!o.isPlayer) o.x += 5000;
+    const k = race.player;
+    const inp = emptyInput();
+    while (race.state === 'countdown') race.step(dt, inp);
+    inp.accel = 1;
+    for (let i = 0; i < 60 * 5; i++) race.step(dt, inp);
+    const ev: string[] = [];
+    let turned = 0, prevH = k.heading;
+    for (let t = 0; t < 1.2; t += dt) {
+      inp.drift = t < 0.6;
+      inp.steer = taps && t > 0.2 && t < 0.3 ? 0 : 1;
+      race.events.length = 0;
+      race.step(dt, inp);
+      turned += wrapAngle(k.heading - prevH);
+      prevH = k.heading;
+      for (const e of race.events) if (e.t === 'kart' && e.k === k && !ev.includes(e.e)) ev.push(e.e);
+    }
+    return { deg: turned * 57.3, ev, v: k.speed };
+  };
+  const plain = turnIn(false), hard = turnIn(true);
+  console.log(`hard drift: normal ${plain.deg.toFixed(0)}° (v ${plain.v.toFixed(1)}) vs double-tap ${hard.deg.toFixed(0)}° (v ${hard.v.toFixed(1)}) events: ${hard.ev.join(' ')}`);
+  if (!hard.ev.includes('hardDrift')) throw new Error('double tap did not trigger a hard drift');
+  if (hard.deg < plain.deg * 1.3) throw new Error('hard drift does not turn much more');
 }
 console.log('SIM OK');

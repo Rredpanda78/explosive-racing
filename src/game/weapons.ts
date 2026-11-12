@@ -43,22 +43,28 @@ export interface SecondaryDef {
 /** 主武器：裝在車身兩側。全部朝車頭正前方，沒有輔助瞄準。 */
 export const PRIMARY: Record<PrimaryId, PrimaryDef> = {
   mg: { id: 'mg', kind: 'gun', name: '.50 機槍', desc: '射速穩定、準度高、不易過熱', rate: 9, pellets: 1, dmg: 3.6, spread: 0.012, heat: 0.034, range: 150, spinUp: 0, price: 0, perk: '穿甲彈：子彈打穿第一台車後繼續飛' },
-  vulcan: { id: 'vulcan', kind: 'gun', name: '六管機槍', desc: '六根槍管旋轉射擊：要先預熱，火力最猛但容易過熱', rate: 28, pellets: 1, dmg: 1.7, spread: 0.03, heat: 0.0165, range: 130, spinUp: 0.45, price: 2500, perk: '快速預熱：幾乎不用等，過熱再慢 20%' },
-  flame: { id: 'flame', kind: 'flame', name: '火焰發射器', desc: '近距離扇形噴火，被燒到會持續燃燒；也能引燃油桶', rate: 15, pellets: 1, dmg: 2.3, spread: 0.2, heat: 0.028, range: 26, spinUp: 0, price: 2800, perk: '烈焰：射程 +30%，燃燒時間變成 4 秒' },
-  laser: { id: 'laser', kind: 'laser', name: '雷射槍', desc: '光束瞬間命中正前方第一個目標，射程最遠，要持續照住才有傷害', rate: 20, pellets: 1, dmg: 1.35, spread: 0, heat: 0.021, range: 180, spinUp: 0, price: 3200, perk: '貫穿光束：打穿第一台車，連後面的車一起燒' },
+  vulcan: { id: 'vulcan', kind: 'gun', name: '六管機槍', desc: '六根槍管旋轉射擊：要先預熱，火力最猛但容易過熱', rate: 28, pellets: 1, dmg: 2.4, spread: 0.024, heat: 0.0165, range: 130, spinUp: 0.35, price: 2500, perk: '快速預熱：幾乎不用等，過熱再慢 20%' },
+  flame: { id: 'flame', kind: 'flame', name: '火焰發射器', desc: '近距離扇形噴火，被燒到會持續燃燒；也能引燃油桶', rate: 15, pellets: 1, dmg: 1.0, spread: 0.2, heat: 0.028, range: 26, spinUp: 0, price: 2800, perk: '烈焰：射程 +30%，燃燒時間變成 4 秒' },
+  laser: { id: 'laser', kind: 'laser', name: '雷射槍', desc: '蓄力一下射出貫穿光束：正前方第一台車直接打爆，穿過去之後每打中一台威力就衰減；冷卻很長', rate: 1, pellets: 1, dmg: 0, spread: 0, heat: 1, range: 180, spinUp: 0, price: 3200, perk: '過載光束：光束加寬 30%，更容易打中' },
 };
 
+/** 雷射槍：蓄力秒數、冷卻（隨等級縮短，Lv.3 再快 15%）、貫穿後保留的威力（隨等級提高）、光束半寬 */
+export const LASER_CHARGE = 0.3;
+export const laserCooldown = (lvl: number) => (7.2 - 0.6 * (lvl - 1)) * lvl3Mul(lvl);
+export const laserKeep = (lvl: number) => 0.3 + 0.08 * (lvl - 1);
+export const laserWidth = (lvl: number) => (lvl >= PERK_LVL5 ? 1.7 : 1.3);
+
 /** 被火焰燒到後每秒的燃燒傷害與持續秒數 */
-export const BURN_DPS = 6;
+export const BURN_DPS = 4;
 export const BURN_TIME = 2.5;
 
 /** 副武器：裝在引擎蓋上（地雷類從車尾放出） */
 export const SECONDARY: Record<SecondaryId, SecondaryDef> = {
-  rocket: { id: 'rocket', name: '火箭炮', desc: '朝正前方直線飛行，命中或撞牆時爆炸', dmg: 38, radius: 5.5, cooldown: 3.2, count: 1, price: 0, perk: '雙聯裝：一次射出兩枚火箭' },
-  grenade: { id: 'grenade', name: '榴彈發射器', desc: '朝前方拋射，落地或碰到車就大範圍爆炸並震退敵車', dmg: 42, radius: 8, cooldown: 3.0, count: 1, price: 2500, perk: '子母彈：爆炸後再彈出 3 顆小榴彈' },
-  mine: { id: 'mine', name: '地雷', desc: '往車尾放下地雷，啟動後有車經過就爆炸（最多同時 3 顆）', dmg: 44, radius: 6, cooldown: 2.6, count: 1, price: 2200, perk: '重型地雷：爆炸範圍 +40%，可以同時留 5 顆' },
-  cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆（威力小、不會把車炸飛）', dmg: 13, radius: 3.8, cooldown: 6, count: 5, price: 3000, perk: '加量：一次撒出 7 顆' },
-  missile: { id: 'missile', name: '追蹤導彈', desc: '隨機鎖定一台對手並追蹤；被鎖定的人會收到警告，急轉可以甩掉', dmg: 36, radius: 5.5, cooldown: 6.5, count: 1, price: 4000, perk: '雙彈頭：同時射出兩枚，分別鎖定不同對手' },
+  rocket: { id: 'rocket', name: '火箭炮', desc: '朝正前方直線飛行，命中或撞牆時爆炸', dmg: 56, radius: 6.5, cooldown: 2.3, count: 1, price: 0, perk: '雙聯裝：一次射出兩枚火箭' },
+  grenade: { id: 'grenade', name: '榴彈發射器', desc: '自動預判前方對手的位置拋射，落地或碰到車就大範圍爆炸並震退敵車（不會炸到自己）', dmg: 18, radius: 11, cooldown: 4, count: 1, price: 2500, perk: '子母彈：爆炸後再彈出 3 顆小榴彈' },
+  mine: { id: 'mine', name: '地雷', desc: '往車尾放下地雷，啟動後有車經過就爆炸（最多同時 3 顆）', dmg: 58, radius: 6, cooldown: 2.2, count: 1, price: 2200, perk: '重型地雷：爆炸範圍 +40%，可以同時留 5 顆' },
+  cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆（威力小、不會把車炸飛）', dmg: 14, radius: 3.8, cooldown: 4.3, count: 5, price: 3000, perk: '加量：一次撒出 7 顆' },
+  missile: { id: 'missile', name: '追蹤導彈', desc: '隨機鎖定一台對手並追蹤；被鎖定的人會收到警告，急轉可以甩掉', dmg: 23, radius: 5.5, cooldown: 7, count: 1, price: 4000, perk: '雙彈頭：同時射出兩枚（每枚威力 55%），分別鎖定不同對手' },
 };
 
 export const PRIMARY_IDS = Object.keys(PRIMARY) as PrimaryId[];

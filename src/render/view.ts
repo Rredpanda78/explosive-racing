@@ -360,15 +360,20 @@ export class GameView {
         this.kartViews.get(e.k)?.muzzleFlash(e.side);
         f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.06, 2.2, 0.8, 1, 0.8, 0.35, 0.9);
         break;
+      case 'rail':
+        // 雷射射出：槍口一團亮光，自己開火時鏡頭小震一下
+        f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.1, 3.2, 0.55, 1, 0.45, 0.6, 1);
+        if (e.k === p) this.addShake(0.12);
+        break;
       case 'hit':
         if (e.w === 'flame') {
           if (e.k === p) this.addShake(0.03);
           break;
         }
         if (e.w === 'laser') {
-          if (R() < 0.5) this.sparks(e.x, e.y, e.z, 2, 10, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
-          f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.06, 1.6, 0.5, 1, 0.4, 0.5, 0.9);
-          if (e.k === p) this.addShake(0.04);
+          this.sparks(e.x, e.y, e.z, 10, 22, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
+          f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.12, 4.5, 0.5, 1, 0.4, 0.5, 0.95);
+          if (e.k === p) this.addShake(0.35);
           break;
         }
         this.sparks(e.x, e.y, e.z, 5, 18, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
@@ -716,7 +721,7 @@ export class GameView {
 
   private updateChaseCam(dt: number, k: Kart, lookBack: boolean): void {
     const want = k.heading + k.slip * 0.55;
-    this.camYaw = lerpAngle(this.camYaw, want, 1 - Math.exp(-7 * dt));
+    this.camYaw = lerpAngle(this.camYaw, want, 1 - Math.exp(-5.5 * dt));
     // 鏡頭高度跟著路面走；飛起來時只跟一部分，才看得出車離地了
     const targetY = k.y - k.air * 0.55;
     this.camY += (targetY - this.camY) * (1 - Math.exp(-10 * dt));

@@ -1,4 +1,4 @@
-export type DifficultyId = 'easy' | 'normal' | 'hard';
+export type DifficultyId = 'easy' | 'normal' | 'hard' | 'expert';
 
 /** 電腦車手的難度參數 */
 export interface Difficulty {
@@ -29,6 +29,8 @@ export interface Difficulty {
   secDelay: [number, number];
   /** N2O 的使用延遲 */
   boostDelay: [number, number];
+  /** 走賽車線：彎前先靠外、彎中切內側（不再隨機換車道） */
+  line?: boolean;
 }
 
 export const DIFFICULTY: Record<DifficultyId, Difficulty> = {
@@ -46,6 +48,11 @@ export const DIFFICULTY: Record<DifficultyId, Difficulty> = {
     id: 'hard', name: '困難', desc: '電腦比你快、火力全開、帶著升級武器',
     skill: [1.0, 1.06], corner: 1.5, turn: 1.75, gauge: 0.34, dmg: 1.0, lvl: [2, 5], shortcut: 0.7, miniBoost: true,
     ahead: 1.0, behind: 1.12, burst: [0.9, 1.6], pause: [0.3, 1], secDelay: [0.4, 1.8], boostDelay: [0.2, 1.2],
+  },
+  expert: {
+    id: 'expert', name: '極限', desc: '幾乎不犯錯：走賽車線切彎、滿級武器、火力不停，領先也不放水',
+    skill: [1.03, 1.08], corner: 1.62, turn: 1.9, gauge: 0.42, dmg: 1.1, lvl: [4, 5], shortcut: 0.95, miniBoost: true,
+    ahead: 1.0, behind: 1.16, burst: [1.2, 2], pause: [0.15, 0.6], secDelay: [0.15, 0.8], boostDelay: [0.1, 0.6], line: true,
   },
 };
 

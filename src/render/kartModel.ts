@@ -16,7 +16,6 @@ const SKIN = new THREE.MeshLambertMaterial({ color: 0x2b3440 });
 const WARHEAD = new THREE.MeshLambertMaterial({ color: 0xff5533 });
 const additive = (color: number, opacity: number) =>
   new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-const FLAME = additive(0x59ccff, 0.85);
 const FLAME_CORE = additive(0xffffff, 0.9);
 const FLAME_MINI = additive(0xffa033, 0.85);
 const MUZZLE = additive(0xffd27a, 0.95);
@@ -72,7 +71,29 @@ const shellTex = (() => {
 const SHELL = new THREE.MeshBasicMaterial({
   map: shellTex, color: new THREE.Color(0.55, 0.85, 1.5), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
 });
-const WING_GLOW = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.4, 1.6, 2.6) });
+const NOZZLE_METAL = new THREE.MeshLambertMaterial({ color: 0x5d636e });
+// 噴口外殼（沿 Z 軸、長度 1，用 scale 調大小）、噴口的光環、拉長的尾焰
+const nozzleGeo = new THREE.CylinderGeometry(1, 0.78, 1, 12, 1, true).rotateX(Math.PI / 2).translate(0, 0, -0.5);
+const ringGeo = new THREE.TorusGeometry(1, 0.07, 6, 22);
+const streakGeo = new THREE.CylinderGeometry(0.06, 1, 1, 7, 1, true).rotateX(Math.PI / 2).translate(0, 0, -0.5);
+
+/**
+ * N2O 變形：每台車各自一套小配件與噴口（參考卡丁車開氮氣時車尾彈出小尾翼、多個噴口的感覺）。
+ * fins = 車尾兩片立起的小尾翼；pods = 兩側滑出的推進器；ducktail = 升起的鴨尾小擾流；
+ * split = 兩片斜立的小翼；blower = 引擎蓋升起增壓器、兩側小鰭；basic = 卡丁車用的小尾翼。
+ */
+type KitStyle = 'fins' | 'pods' | 'ducktail' | 'split' | 'blower' | 'basic';
+const KIT_STYLE: Record<string, { style: KitStyle; flame: number }> = {
+  'tripo/car1': { style: 'fins', flame: 0x59ccff },
+  'tripo/car2': { style: 'pods', flame: 0xff4f7a },
+  'tripo/car3': { style: 'ducktail', flame: 0x9fe8ff },
+  'tripo/car4': { style: 'split', flame: 0xb07bff },
+  'tripo/car5': { style: 'blower', flame: 0xff8a2a },
+};
+
+/** 變形配件：base 是展開後的位置；收起時位置加上 slide、旋轉加上 fold，並縮小 */
+interface KitPart { o: THREE.Object3D; base: THREE.Vector3; rot: THREE.Euler; slide: THREE.Vector3; fold: THREE.Vector3 }
+interface Nozzle { housing: KitPart; r: number; main: boolean; flame: THREE.Mesh; core: THREE.Mesh; ring: THREE.Mesh; streak: THREE.Mesh; mat: THREE.Material }
 
 // 甩尾時從後輪往外後方噴出的白色破風：好幾道帶鋸齒的弧線
 const sprayTex = [0, 1, 2].map((seed) => {
@@ -215,9 +236,9 @@ export class KartView {
   /** 火焰發射器的噴流與雷射光束（左右各一） */
   private fires: THREE.Object3D[] = [];
   private beams: THREE.Object3D[] = [];
-  /** N2O 變形：兩側展開的翼片與升起的尾翼，以及破風氣流 */
-  private wings: THREE.Group[] = [];
-  private spoiler = new THREE.Group();
+  /** N2O 變形：每台車各自的小配件與多個噴口，以及破風氣流 */
+  private kit: KitPart[] = [];
+  private nozzles: Nozzle[] = [];
   private shell: THREE.Mesh;
   private deploy = 0;
   /** 甩尾的破風噴花（左右各一）與排氣管的螺旋火環 */
@@ -268,20 +289,8 @@ export class KartView {
     this.baseColor.copy(this.paint.color);
     this.addWeapons(look.primary, look.secondary);
     this.shell = new THREE.Mesh(shellGeo, SHELL);
-    this.addBoostKit();
+    this.addBoostKit(KIT_STYLE[look.model] ?? { style: 'basic', flame: 0x59ccff });
     this.addDriftFx();
-
-    // 噴射火焰
-    for (const x of [-0.3, 0.3]) {
-      const f = new THREE.Mesh(flameGeo, FLAME);
-      f.position.set(x, this.m.exhaustY, this.m.tailZ);
-      f.visible = false;
-      const core = new THREE.Mesh(flameCoreGeo, FLAME_CORE);
-      f.add(core);
-      b.add(f);
-      this.flames.push(f);
-      this.cores.push(core);
-    }
 
     if (shadows) {
       b.traverse((o) => {
@@ -501,28 +510,144 @@ export class KartView {
     }
   }
 
-  /** N2O 時展開的翼片與尾翼（平常收起來看不到） */
-  private addBoostKit(): void {
+  /** N2O 變形配件與噴口（平常收起來看不到，噴口的火焰在小噴時也會出現） */
+  private addBoostKit(kit: { style: KitStyle; flame: number }): void {
     const b = this.body;
-    const paint = this.trim;
-    for (const side of [1, -1]) {
-      const w = new THREE.Group();
-      w.position.set(side * (this.m.halfW - 0.03), this.m.wingY, this.m.wingZ);
-      w.add(box(0.95, 0.045, 0.42, paint, side * 0.47, 0, 0));
-      w.add(box(0.95, 0.03, 0.05, WING_GLOW, side * 0.47, 0.01, -0.22));
-      w.add(box(0.04, 0.24, 0.36, paint, side * 0.93, 0.11, 0));
-      w.visible = false;
-      b.add(w);
-      this.wings.push(w);
+    const m = this.m;
+    const trim = this.trim;
+    const fc = new THREE.Color(kit.flame);
+    const flameMat = additive(kit.flame, 0.85);
+    const glow = new THREE.MeshBasicMaterial({ color: fc.clone().multiplyScalar(2.2) });
+    this.ownMats.push(flameMat, glow);
+    const W = m.halfW, tz = m.tailZ, ey = m.exhaustY;
+    const part = (o: THREE.Object3D, slide: [number, number, number] = [0, 0, 0], fold: [number, number, number] = [0, 0, 0]): KitPart => {
+      const p: KitPart = { o, base: o.position.clone(), rot: o.rotation.clone(), slide: new THREE.Vector3(...slide), fold: new THREE.Vector3(...fold) };
+      o.visible = false;
+      b.add(o);
+      this.kit.push(p);
+      return p;
+    };
+    // 噴口：外殼是變形配件（往車內縮），火焰、光環、尾焰跟著外殼的位置
+    const nozzle = (x: number, y: number, r: number, main: boolean, slide: [number, number, number] = [0, 0, 0.16]) => {
+      const g = new THREE.Group();
+      g.position.set(x, y, tz + 0.1);
+      const h = new THREE.Mesh(nozzleGeo, NOZZLE_METAL);
+      h.scale.set(r * 1.25, r * 1.25, 0.24);
+      g.add(h);
+      const rim = new THREE.Mesh(ringGeo, glow);
+      rim.scale.set(r * 1.2, r * 1.2, r * 1.2);
+      rim.position.z = -0.24;
+      g.add(rim);
+      const housing = part(g, slide);
+      const flame = new THREE.Mesh(flameGeo, flameMat);
+      const core = new THREE.Mesh(flameCoreGeo, FLAME_CORE);
+      flame.add(core);
+      const ringMat = additive(kit.flame, 0.8);
+      const streakMat = additive(kit.flame, 0.2);
+      this.ownMats.push(ringMat, streakMat);
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      const streak = new THREE.Mesh(streakGeo, streakMat);
+      for (const o of [flame, ring, streak]) { o.visible = false; b.add(o); }
+      this.nozzles.push({ housing, r, main, flame, core, ring, streak, mat: flameMat });
+      this.flames.push(flame);
+      this.cores.push(core);
+    };
+    const finPair = (x: number, y: number, z: number, h: number, l: number) => {
+      for (const side of [1, -1]) {
+        const g = new THREE.Group();
+        g.position.set(side * x, y, z);
+        g.add(box(0.04, h, l, trim, 0, h / 2, 0));
+        g.add(box(0.045, 0.03, l * 0.9, glow, 0, h, 0));
+        part(g, [0, -0.08, 0], [0, 0, side * 1.45]);
+      }
+    };
+    switch (kit.style) {
+      case 'fins': {
+        finPair(W - 0.2, m.rearY - 0.04, tz + 0.45, 0.3, 0.38);
+        nozzle(-0.2, ey, 0.12, true);
+        nozzle(0.2, ey, 0.12, true);
+        nozzle(-0.48, ey, 0.085, false);
+        nozzle(0.48, ey, 0.085, false);
+        break;
+      }
+      case 'pods': {
+        for (const side of [1, -1]) {
+          const g = new THREE.Group();
+          g.position.set(side * (W + 0.04), ey + 0.12, tz + 0.55);
+          g.add(barrel(0.13, 0.72, trim, 0, 0, 0));
+          g.add(box(0.03, 0.17, 0.3, trim, 0, 0.16, 0.05));
+          g.add(box(0.035, 0.03, 0.26, glow, 0, 0.25, 0.05));
+          part(g, [-side * 0.32, 0, 0.15]);
+          nozzle(side * (W + 0.04), ey + 0.12, 0.12, true, [-side * 0.32, 0, 0.3]);
+        }
+        nozzle(0, ey, 0.1, false);
+        break;
+      }
+      case 'ducktail': {
+        const g = new THREE.Group();
+        g.position.set(0, m.spoilerY, m.spoilerZ);
+        for (const x of [-0.3, 0.3]) g.add(box(0.05, 0.18, 0.07, GUN, x, 0.09, 0));
+        g.add(box(1.0, 0.045, 0.26, trim, 0, 0.19, -0.02));
+        g.add(box(1.0, 0.025, 0.04, glow, 0, 0.2, -0.15));
+        part(g, [0, -0.2, 0]);
+        nozzle(0, ey + 0.13, 0.1, true);
+        nozzle(-0.15, ey - 0.03, 0.1, true);
+        nozzle(0.15, ey - 0.03, 0.1, true);
+        nozzle(-(W - 0.24), ey, 0.07, false);
+        nozzle(W - 0.24, ey, 0.07, false);
+        break;
+      }
+      case 'split': {
+        for (const side of [1, -1]) {
+          const g = new THREE.Group();
+          g.position.set(side * 0.34, m.rearY - 0.02, tz + 0.42);
+          g.add(box(0.04, 0.16, 0.06, GUN, 0, 0.08, 0));
+          const blade = box(0.5, 0.035, 0.22, trim, side * 0.2, 0.17, 0);
+          blade.rotation.z = side * 0.38;
+          g.add(blade);
+          const strip = box(0.5, 0.02, 0.035, glow, side * 0.2, 0.19, -0.1);
+          strip.rotation.z = side * 0.38;
+          g.add(strip);
+          part(g, [0, -0.16, 0], [0.7, 0, 0]);
+        }
+        nozzle(-0.25, ey - 0.1, 0.095, true);
+        nozzle(0.25, ey - 0.1, 0.095, true);
+        nozzle(-0.25, ey + 0.1, 0.095, false);
+        nozzle(0.25, ey + 0.1, 0.095, false);
+        break;
+      }
+      case 'blower': {
+        const g = new THREE.Group();
+        g.position.set(0, m.hoodY - 0.04, m.hoodZ - 0.15);
+        g.add(box(0.42, 0.14, 0.5, GUN_LIGHT, 0, 0.07, 0));
+        for (const x of [-0.12, 0.12]) {
+          const st = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.24, 8), NOZZLE_METAL);
+          st.position.set(x, 0.24, 0.06);
+          g.add(st);
+          const top = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.062, 0.03, 8), glow);
+          top.position.set(x, 0.37, 0.06);
+          g.add(top);
+        }
+        part(g, [0, -0.22, 0]);
+        for (const side of [1, -1]) {
+          const fin = new THREE.Group();
+          fin.position.set(side * (W - 0.04), ey + 0.22, tz + 0.42);
+          fin.add(box(0.03, 0.17, 0.32, trim, 0, 0, -0.16));
+          fin.add(box(0.035, 0.025, 0.3, glow, 0, 0.09, -0.16));
+          part(fin, [0, 0, 0], [0, side * 1.3, 0]);
+        }
+        nozzle(-0.38, ey, 0.15, true);
+        nozzle(0.38, ey, 0.15, true);
+        nozzle(-0.64, ey + 0.04, 0.08, false);
+        nozzle(0.64, ey + 0.04, 0.08, false);
+        break;
+      }
+      default: {
+        finPair(0.42, m.rearY, m.rearZ, 0.24, 0.3);
+        nozzle(-0.3, ey, 0.11, true);
+        nozzle(0.3, ey, 0.11, true);
+      }
     }
-    const sp = this.spoiler;
-    sp.position.set(0, this.m.spoilerY, this.m.spoilerZ);
-    for (const x of [-0.36, 0.36]) sp.add(box(0.06, 0.42, 0.09, GUN, x, 0.2, 0));
-    sp.add(box(1.5, 0.06, 0.38, paint, 0, 0.42, -0.02));
-    sp.add(box(1.5, 0.03, 0.05, WING_GLOW, 0, 0.44, -0.2));
-    for (const x of [-0.76, 0.76]) sp.add(box(0.05, 0.3, 0.42, paint, x, 0.36, -0.02));
-    sp.visible = false;
-    b.add(sp);
     // 氣流殼要比照獨立的材質透明度：每台車各自一份
     const mat = SHELL.clone();
     this.ownMats.push(mat);
@@ -551,10 +676,10 @@ export class KartView {
     for (const m of this.muzzles) m.visible = false;
     for (const f of this.fires) f.visible = false;
     for (const bm of this.beams) bm.visible = false;
-    for (const w of this.wings) w.visible = false;
+    for (const p of this.kit) p.o.visible = false;
+    for (const n of this.nozzles) n.ring.visible = n.streak.visible = false;
     for (const m of this.sprays) m.parent!.visible = false;
     for (const sw of this.swirls) sw.visible = false;
-    this.spoiler.visible = false;
     this.shell.visible = false;
     this.deploy = 0;
     if (this.hpSprite) this.hpSprite.visible = false;
@@ -609,8 +734,9 @@ export class KartView {
     const fakeTarget = k.aiAssist && k.speed > 18 ? k.steerVis * 0.38 : 0;
     this.fakeYaw += (fakeTarget - this.fakeYaw) * Math.min(1, dt * 6);
     this.body.rotation.y = this.fakeYaw;
-    const lean = -(k.slip * 0.22 + k.steerVis * 0.05 * Math.min(1, k.speed / 20));
-    this.body.rotation.z += (lean - this.body.rotation.z) * Math.min(1, dt * 8);
+    // 車身側傾：跟著實際的轉向角速度慢慢傾斜，看起來是貼著地面滑過彎
+    const lean = -(k.slip * 0.24 + k.yawRate * 0.045 * Math.min(1, k.speed / 20));
+    this.body.rotation.z += (lean - this.body.rotation.z) * Math.min(1, dt * 5);
     const fast = k.boostT > 0 || k.padT > 0;
     const pitch = fast ? -0.07 : 0;
     this.body.rotation.x += (pitch - this.body.rotation.x) * Math.min(1, dt * 6);
@@ -631,13 +757,18 @@ export class KartView {
         f.rotation.z = Math.random() * 6;
       }
     }
+    const laserCharging = k.charge > 0 && !k.dead;
     for (const bm of this.beams) {
-      bm.visible = firing;
-      if (firing) {
+      const on = firing || laserCharging;
+      bm.visible = on;
+      if (on) {
         const len = Math.max(1, k.beamLen - 1);
-        // 兩道光束收束到命中點
+        // 兩道光束收束到光束盡頭
         bm.rotation.y = Math.atan2(-this.m.gunX * bm.userData.side, len);
-        const w = 0.8 + Math.random() * 0.5;
+        // 蓄力：細細閃爍的瞄準線；射出：粗光束很快變細消失
+        const w = firing
+          ? (0.5 + 3.2 * Math.min(1, k.firing / 0.25)) * (0.9 + Math.random() * 0.2)
+          : (0.12 + 0.3 * Math.min(1, k.charge / 0.3)) * (0.6 + Math.random() * 0.6);
         bm.scale.set(w, w, len);
       }
     }
@@ -679,34 +810,51 @@ export class KartView {
         sw.scale.setScalar(0.5 + Math.random() * 0.18 + (k.miniT > 0 ? 0.2 : 0));
       }
     }
-    // N2O 變形：翼片往外展開、尾翼升起；結束後收回
-    this.deploy += ((boosting && !k.dead ? 1 : 0) - this.deploy) * Math.min(1, dt * (boosting ? 9 : 4));
+    // N2O 變形：小配件彈出／滑出、噴口伸出；結束後收回
+    this.deploy += ((boosting && !k.dead ? 1 : 0) - this.deploy) * Math.min(1, dt * (boosting ? 10 : 4));
     const d = this.deploy * this.deploy * (3 - 2 * this.deploy);
     const show = d > 0.02;
-    for (let i = 0; i < this.wings.length; i++) {
-      const w = this.wings[i], side = i === 0 ? 1 : -1;
-      w.visible = show;
-      w.scale.setScalar(Math.max(0.01, d));
-      w.rotation.z = side * (1 - d) * 1.4;
+    const u = 1 - d;
+    for (const p of this.kit) {
+      p.o.position.copy(p.base).addScaledVector(p.slide, u);
+      p.o.visible = show;
+      if (!show) continue;
+      p.o.rotation.set(p.rot.x + p.fold.x * u, p.rot.y + p.fold.y * u, p.rot.z + p.fold.z * u);
+      p.o.scale.setScalar(0.2 + 0.8 * d);
     }
-    this.spoiler.visible = show;
-    this.spoiler.position.y = this.m.spoilerY + 0.28 * d;
-    this.spoiler.scale.set(0.35 + 0.65 * d, Math.max(0.01, d), 1);
     this.shell.visible = show;
     if (show) {
       const m = this.shell.material as THREE.MeshBasicMaterial;
-      m.opacity = 0.42 * d * (0.85 + Math.random() * 0.3);
+      m.opacity = 0.2 * d * (0.85 + Math.random() * 0.3);
       if (m.map) m.map.offset.y = (this.t * 3.2) % 1;
       this.shell.scale.set(1, 1, 0.9 + Math.random() * 0.15);
     }
-    for (let i = 0; i < this.flames.length; i++) {
-      const f = this.flames[i];
-      f.visible = boosting || mini;
-      if (f.visible) {
-        f.material = boosting ? FLAME : FLAME_MINI;
-        const s = (boosting ? 1.15 : 0.65) * (0.8 + Math.random() * 0.5);
-        f.scale.set(boosting ? 1.2 : 0.9, boosting ? 1.2 : 0.9, s);
-        this.cores[i].scale.z = 0.7 + Math.random() * 0.5;
+    // 噴口火焰：N2O 時全部噴口一起噴（加上光環與拉長的尾焰），小噴只有主噴口
+    for (let i = 0; i < this.nozzles.length; i++) {
+      const n = this.nozzles[i];
+      const hp = n.housing.o.position;
+      const tipZ = hp.z - 0.24 * (n.housing.o.visible ? n.housing.o.scale.z : 0.2);
+      const on = boosting || (mini && n.main);
+      n.flame.visible = on;
+      if (on) {
+        n.flame.material = boosting ? n.mat : FLAME_MINI;
+        const rs = (n.r / 0.24) * (boosting ? 1.25 : 0.95);
+        n.flame.position.set(hp.x, hp.y, tipZ);
+        n.flame.scale.set(rs, rs, (boosting ? 1.1 : 0.6) * (0.8 + Math.random() * 0.5) * (n.main ? 1 : 0.75));
+        n.core.scale.z = 0.7 + Math.random() * 0.5;
+      }
+      n.ring.visible = boosting && d > 0.5;
+      n.streak.visible = boosting && d > 0.3;
+      if (n.ring.visible) {
+        const ph = (this.t * 3.2 + i * 0.17) % 1;
+        const rs = n.r * (1.3 + ph * 2.4);
+        n.ring.position.set(hp.x, hp.y, tipZ - 0.1 - ph * 0.6);
+        n.ring.scale.set(rs, rs, rs);
+        (n.ring.material as THREE.MeshBasicMaterial).opacity = 0.75 * (1 - ph);
+      }
+      if (n.streak.visible) {
+        n.streak.position.set(hp.x, hp.y, tipZ - 0.2);
+        n.streak.scale.set(n.r * 0.42, n.r * 0.42, (n.main ? 3.4 : 2.4) * (0.85 + Math.random() * 0.3) * d);
       }
     }
     for (let i = 0; i < 2; i++) {

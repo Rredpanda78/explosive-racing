@@ -450,3 +450,49 @@ kbd { background: var(--navy-2); border-bottom-color: var(--navy-3); color: var(
 #reticle.hit { border-color: var(--coral); }
 #reticle.hit::before { background: var(--coral); }
 body.touch #missions { top: calc(33 * var(--u)); }
+
+/* ---------- 線上對戰：開房／加入、房間 ---------- */
+.m-mode.net { grid-column: 1 / -1; padding: .35em .8em; border-style: dashed; }
+.m-mode.net b { font-size: clamp(16px, 2.2vw, 22px); }
+.net-panel { width: min(520px, 94vw); background: var(--navy-2); border: 3px solid var(--cream); border-radius: 16px; padding: 1.2em 1.4em; display: flex; flex-direction: column; gap: .8em; align-items: stretch; }
+.net-panel h2 { margin: 0; text-align: center; font-size: clamp(24px, 4vw, 36px); font-weight: 900; letter-spacing: .06em; }
+.net-panel .sub { margin: 0; text-align: center; opacity: .8; font-weight: 700; font-size: clamp(12px, 1.6vw, 15px); }
+.net-panel .field { display: flex; align-items: center; gap: .6em; font-weight: 800; }
+.net-panel input { flex: 1; min-width: 0; font: inherit; font-weight: 800; font-size: clamp(16px, 2.2vw, 20px); padding: .45em .7em; border-radius: 10px; border: 2px solid var(--cream); background: var(--navy-3); color: var(--cream); }
+.net-panel .btn.wide { width: 100%; }
+.net-panel .or { text-align: center; opacity: .7; font-weight: 700; font-size: .9em; }
+.joinrow { display: flex; gap: .6em; }
+.joinrow input { text-transform: uppercase; letter-spacing: .25em; text-align: center; }
+.joinrow .btn { min-width: 5em; }
+.net-msg { background: rgba(232,87,74,.18); border: 2px solid var(--coral); border-radius: 10px; padding: .5em .8em; font-weight: 800; text-align: center; }
+.net-panel > .btn.small { align-self: center; }
+.net-panel.room { width: min(980px, 96vw); }
+.room-head { display: flex; align-items: center; justify-content: space-between; gap: 1em; flex-wrap: wrap; }
+.code-box { display: flex; align-items: baseline; gap: .6em; }
+.code-box span { font-weight: 800; opacity: .8; }
+.code-box b { font-size: clamp(30px, 5vw, 48px); font-weight: 900; letter-spacing: .2em; color: var(--coral); }
+.room-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 1.2em; }
+.room-grid h3 { margin: 0 0 .5em; font-size: clamp(14px, 1.8vw, 18px); }
+.room-grid h3 small { font-weight: 700; opacity: .7; }
+.players { display: flex; flex-direction: column; gap: .4em; }
+.pl { display: flex; align-items: center; gap: .6em; background: var(--navy-3); border-radius: 10px; padding: .35em .6em; border: 2px solid transparent; }
+.pl.me { border-color: var(--coral); }
+.pl img, .pl > i { width: 64px; height: 40px; object-fit: contain; flex: none; }
+.pl b { display: flex; gap: .4em; align-items: center; font-size: clamp(14px, 1.8vw, 17px); }
+.pl b em { font-style: normal; font-size: .7em; background: var(--coral); color: var(--cream); padding: .05em .45em; border-radius: 6px; }
+.pl b em.you { background: transparent; border: 1px solid var(--cream); }
+.pl span { display: block; font-size: clamp(11px, 1.3vw, 13px); opacity: .75; font-weight: 700; }
+.cfg { display: flex; flex-direction: column; gap: .6em; }
+.room-tracks { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: .5em; }
+.tcard.mini { padding: .3em .4em; }
+.tcard.mini b { font-size: clamp(11px, 1.3vw, 14px); }
+.tcard:disabled { cursor: default; transform: none; }
+.tcard:disabled:not(.on) { opacity: .55; }
+.seg:disabled { cursor: default; }
+.seg:disabled:not(.on) { opacity: .5; }
+.wait { align-self: center; font-weight: 800; opacity: .85; padding: .6em 1em; }
+@media (max-width: 720px), (max-height: 500px) {
+  .room-grid { grid-template-columns: 1fr; }
+  .net-panel { padding: .8em 1em; gap: .5em; }
+  .pl img, .pl > i { width: 48px; height: 30px; }
+}

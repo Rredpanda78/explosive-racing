@@ -12,7 +12,10 @@ export const CFG = {
   gripTurnLow: 2.3,
   gripTurnHigh: 0.9,
   aiTurnHigh: 1.5,
-  gripNormal: 11,
+  gripNormal: 8.5,
+  /** 轉向的角速度跟上方向盤的快慢（越小越有滑行感、越不會一按就猛轉） */
+  yawResp: 11,
+  yawRespDrift: 8,
 
   // 甩尾
   driftMinSpeed: 13,
@@ -58,6 +61,13 @@ export const CFG = {
   comboWindow: 1.8,
   /** 斷飄：甩尾中點一下煞車立刻結束甩尾，這段時間內的煞車不會減速 */
   cancelGrace: 0.25,
+  /** 重甩：甩尾中同方向連按兩下（放開到再按的間隔要短），轉得更兇、滑得更開，適合髮夾彎 */
+  hardTapWindow: 0.26,
+  hardDriftTime: 1.0,
+  hardTurnMul: 1.6,
+  hardGrip: 0.9,
+  hardKick: 0.16,
+  hardDrag: 1.5,
 
   // 小噴（甩尾結束後短時間內再按一次加速）
   miniMinDrift: 0.35,
@@ -90,6 +100,9 @@ export const CFG = {
   rampVy: 10.5,
   gravity: 26,
   landBoostTime: 0.8,
+  /** 坡頂飛起：路面往下彎的速度超過這個「重力」就會離地，空中也用這個比較輕的重力 */
+  hopGravity: 7,
+  hopMinSpeed: 22,
 
   // 碰撞與衝撞
   kartRadius: 1.25,

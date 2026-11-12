@@ -507,8 +507,10 @@ export class GameAudio {
     const kind = PRIMARY[p.primary].kind;
     const firing = p.firing > 0;
     this.flameGain.gain.setTargetAtTime(firing && kind === 'flame' ? 0.34 : 0, t, 0.05);
-    this.laserGain.gain.setTargetAtTime(firing && kind === 'laser' ? 0.06 : 0, t, 0.03);
-    if (firing && kind === 'laser') this.laserOsc.frequency.setTargetAtTime(p.beamHit ? 1180 : 940, t, 0.03);
+    // 雷射蓄力：音高往上爬的充能聲
+    const charging = kind === 'laser' && p.charge > 0;
+    this.laserGain.gain.setTargetAtTime(charging ? 0.07 : 0, t, 0.02);
+    if (charging) this.laserOsc.frequency.setTargetAtTime(320 + 1700 * Math.min(1, p.charge / 0.3), t, 0.02);
     // 被導彈鎖定：急促的警告嗶聲
     if (p.lockT > 0 && t - this.lastLock > 0.2) {
       this.lastLock = t;
@@ -596,9 +598,30 @@ export class GameAudio {
         this.burst(e.k.primary === 'vulcan' ? 2400 : 1300, 1.2, 0.07, vol);
         break;
       }
+      case 'rail': {
+        // 雷射射出：高頻往下掃的「咻」＋低頻衝擊
+        const v = e.k === p ? 1 : near(e.x, e.z, 120) * 0.6;
+        if (v < 0.02) break;
+        const ctx = this.ctx;
+        const t = ctx.currentTime;
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(2600, t);
+        o.frequency.exponentialRampToValueAtTime(140, t + 0.38);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.22 * v, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.42);
+        o.connect(g).connect(this.sfx);
+        o.start(t);
+        o.stop(t + 0.45);
+        this.burst(5200, 3, 0.18, 0.25 * v);
+        this.thump(0.45 * v);
+        break;
+      }
       case 'hit': {
-        // 火焰與雷射是連續判定，命中聲要稀疏一點
-        if (e.w !== 'gun' && Math.random() > 0.25) break;
+        // 火焰是連續判定，命中聲要稀疏一點
+        if (e.w === 'flame' && Math.random() > 0.25) break;
         if (e.k === p) this.burst(3200, 4, 0.05, 0.18);
         else if (e.by === p) this.burst(4200, 6, 0.04, 0.1);
         break;
@@ -669,6 +692,8 @@ export class GameAudio {
         else if (e.e === 'n2o') { this.beep(880, 0.08, 0.15); setTimeout(() => this.beep(1320, 0.12, 0.15), 80); }
         else if (e.e === 'wall') { this.burst(300, 0.8, 0.2, 0.4, 'lowpass'); this.thump(0.3); }
         else if (e.e === 'driftStart') this.burst(2200, 2, 0.12, 0.12);
+        else if (e.e === 'hardDrift') { this.burst(1500, 1.4, 0.3, 0.32); this.thump(0.25); }
+        else if (e.e === 'hop') this.burst(700, 0.8, 0.25, 0.12, 'bandpass', 500);
         else if (e.e === 'combo') { this.beep(1320, 0.07, 0.14); setTimeout(() => this.beep(1760, 0.09, 0.14), 70); }
         else if (e.e === 'chain') this.beep(1046, 0.08, 0.1);
         else if (e.e === 'driftCancel') this.burst(1600, 1.5, 0.1, 0.18);

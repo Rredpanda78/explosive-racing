@@ -19,7 +19,7 @@ export const emptyInput = (): KartInput => ({
   steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false,
 });
 
-export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'driftFail' | 'pad' | 'jump' | 'land' | 'chain' | 'combo' | 'driftCancel';
+export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'driftFail' | 'pad' | 'jump' | 'land' | 'chain' | 'combo' | 'driftCancel' | 'hardDrift' | 'hop';
 
 export class Kart {
   id: number;
@@ -27,6 +27,13 @@ export class Kart {
   color: number;
   car: CarId = 'kart-oobi';
   isPlayer = false;
+  /** 連線：這台車由別台電腦控制（只顯示收到的狀態，不在這裡跑物理、不在這裡扣血） */
+  remote = false;
+  /** 連線：控制這台車的玩家編號（0 = 電腦車手，由房主控制）與車在名單裡的編號 */
+  owner = 0;
+  netId = 0;
+  /** 連線：遠端車目前有沒有按著主武器（這裡照著模擬子彈、雷射） */
+  netFire = false;
   /** AI 用的簡化操控：不甩尾，改用較高的轉向率並在過彎時集氣 */
   aiAssist = false;
   /** AI 高速時的轉向率與過彎集氣量（依難度） */
@@ -53,6 +60,9 @@ export class Kart {
   vy = 0;
   /** 這次離地是不是自己飛越跳台（被炸飛不算，落地沒有獎勵） */
   jumped = false;
+  /** 衝過坡頂輕輕飛起（操控照常，只有高度在飛） */
+  hop = false;
+  private hopT = 0;
   /** 被撞之後的打轉角速度，會逐漸衰減 */
   spinVel = 0;
   /** 被炸飛時車身翻滾的角速度（只影響畫面） */
@@ -81,6 +91,16 @@ export class Kart {
   /** 斷飄後的寬限時間（煞車不減速） */
   private cancelT = 0;
   private prevBrake = false;
+  /** 目前的轉向角速度（平滑跟上方向盤）與還沒轉完的甩尾甩動角度 */
+  yawRate = 0;
+  private kick = 0;
+  /** 重甩剩餘時間；雙擊偵測用的方向狀態 */
+  hardT = 0;
+  private steerDir = 0;
+  private lastDir = 0;
+  private steerGap = 99;
+  private tapDir = 0;
+  private tapAge = 99;
   /** 操控輔助（只有玩家，由設定決定）：甩完自動小噴、甩尾自動回正並限制角度 */
   autoMini = false;
   driftAssist = false;
@@ -149,6 +169,8 @@ export class Kart {
   burnBy: Kart | null = null;
   /** 被追蹤導彈鎖定的警告時間 */
   lockT = 0;
+  /** 雷射蓄力中的秒數（0 = 沒在蓄力） */
+  charge = 0;
   /** 剛被機關打到後的保護時間（避免同一個機關連續判定） */
   hazardCd = 0;
 
@@ -227,7 +249,22 @@ export class Kart {
     let sp = Math.hypot(this.vx, this.vz);
     const vf = this.vx * fx + this.vz * fz;
     const reversing = vf < -0.3;
-    const flying = this.air > 0;
+    // 坡頂的小飛躍不影響操控
+    if (this.air <= 0) this.hop = false;
+    const flying = this.air > 0 && !this.hop;
+
+    // ---- 雙擊同方向：放開方向後很快又按回同一邊 ----
+    const sd = Math.abs(inp.steer) > 0.15 ? Math.sign(inp.steer) : 0;
+    this.tapAge += dt;
+    if (sd !== this.steerDir) {
+      if (sd === 0) this.steerGap = 0;
+      else if (this.steerDir === 0 && sd === this.lastDir && this.steerGap < C.hardTapWindow) {
+        this.tapDir = sd;
+        this.tapAge = 0;
+      }
+      if (sd !== 0) this.lastDir = sd;
+      this.steerDir = sd;
+    } else if (sd === 0) this.steerGap += dt;
 
     const accelOn = inp.accel > 0.5;
     const accelEdge = accelOn && !this.prevAccel;
@@ -247,9 +284,20 @@ export class Kart {
       this.shortDrift = false;
       this.chainDrift = this.sinceShort < C.chainWindow;
       this.chainShown = false;
-      this.heading += this.driftDir * C.driftKick;
+      this.kick += this.driftDir * C.driftKick;
       emit('driftStart');
     }
+    // ---- 重甩：甩尾中（或甩尾前一刻）同方向雙擊 ----
+    if (this.drifting && this.tapAge < 0.3 && this.tapDir === this.driftDir) {
+      this.tapAge = 99;
+      this.hardT = C.hardDriftTime;
+      this.shortDrift = false;
+      this.driftRelease = 0;
+      this.kick += this.driftDir * C.hardKick;
+      emit('hardDrift');
+    }
+    this.hardT = this.drifting ? Math.max(0, this.hardT - dt) : 0;
+    const hk = clamp(this.hardT / 0.3, 0, 1);
     this.sinceShort += dt;
     this.comboT += dt;
     this.cancelT = Math.max(0, this.cancelT - dt);
@@ -275,7 +323,7 @@ export class Kart {
         }
       } else {
         this.driftHeld = false;
-        this.shortDrift = this.driftKeyT < C.shortDriftKey;
+        this.shortDrift = this.driftKeyT < C.shortDriftKey && this.hardT <= 0;
       }
     }
 
@@ -289,6 +337,8 @@ export class Kart {
       else if (inp.drift) omega = sameDir > 0.1 ? inp.steer * C.driftTurn * this.handling : this.driftDir * C.driftIdleTurn;
       // 放開甩尾鍵後：繼續按同方向 = 拖漂，維持滑行角度
       else omega = sameDir > 0.1 ? inp.steer * C.driftHoldTurn * this.handling : this.driftDir * C.driftIdleTurn * 0.5;
+      // 重甩：往甩尾方向轉得更快（反打不受影響）
+      if (sameDir >= -0.1) omega *= 1 + (C.hardTurnMul - 1) * hk;
     } else {
       const av = Math.abs(vf);
       const t = clamp((av - 8) / (vmaxBase - 8), 0, 1);
@@ -296,8 +346,13 @@ export class Kart {
       const rate = lerp(C.gripTurnLow, hi, t) * Math.min(1, av / 5);
       omega = inp.steer * rate * (reversing ? -1 : 1);
     }
+    // 角速度平滑跟上方向盤（滑行感）；甩尾開始的甩動也分幾幀轉完，不會一下跳過去
+    const resp = this.aiAssist ? 40 : flying ? 6 : this.drifting ? C.yawRespDrift : C.yawResp;
+    this.yawRate += (omega - this.yawRate) * (1 - Math.exp(-resp * dt));
+    const kk = this.kick * Math.min(1, dt * 16);
+    this.kick -= kk;
     // 被撞到的打轉疊加在方向盤之上
-    this.heading = wrapAngle(this.heading + (omega + this.spinVel) * dt);
+    this.heading = wrapAngle(this.heading + (this.yawRate + this.spinVel) * dt + kk);
     this.spinVel *= Math.exp(-C.spinDamping * dt);
     fx = Math.sin(this.heading);
     fz = Math.cos(this.heading);
@@ -320,16 +375,19 @@ export class Kart {
       this.driftTime += dt;
       if (!this.finished) this.stats.driftTime += dt;
     }
+    // 重甩：抓地力更低，車尾甩得更開
+    if (hk > 0) grip = lerp(grip, Math.min(grip, C.hardGrip), hk);
     if (flying) grip = 0.4; // 空中幾乎不能改變行進方向
-    // 甩尾輔助：限制最大甩尾角度
-    if (this.drifting && this.driftAssist && Math.abs(this.slip) > 0.6) grip = Math.max(grip, 6);
+    // 甩尾輔助：限制最大甩尾角度（重甩時放寬）
+    if (this.drifting && this.driftAssist && Math.abs(this.slip) > (hk > 0 ? 0.95 : 0.6)) grip = Math.max(grip, 6);
     let dirx = fx, dirz = fz;
     let s: number;
     if (sp > 1 && !reversing) {
       const slip0 = wrapAngle(Math.atan2(this.vx, this.vz) - this.heading);
       const slip = slip0 * Math.exp(-grip * dt);
       // 短漂與斷飄後減速比較少
-      const dragMul = this.cancelT > 0 ? 0 : this.drifting && this.shortDrift ? C.shortDriftDrag : 1;
+      // 一般過彎的小滑角不太減速（滑行感），甩尾才明顯減速
+      const dragMul = this.cancelT > 0 ? 0 : !this.drifting ? 0.35 : (this.shortDrift ? C.shortDriftDrag : 1) * (1 + (C.hardDrag - 1) * hk);
       if (!flying) sp = Math.max(0, sp - C.driftDrag * dragMul * Math.abs(Math.sin(slip0)) * dt);
       const a = this.heading + slip;
       dirx = Math.sin(a);
@@ -456,8 +514,10 @@ export class Kart {
     let lift = 0;
     let basePitch = Math.atan(sm.slope) * along;
     if (this.air > 0) {
-      this.vy -= C.gravity * dt;
-      this.air += this.vy * dt;
+      this.vy -= (this.hop ? C.hopGravity : C.gravity) * dt;
+      // 用絕對高度積分：腳下的路往下掉時離地更高（下坡起跳飛得更遠）
+      this.air = this.y + this.vy * dt - ground;
+      if (this.hop) this.hopT += dt;
       if (this.jumped && !this.finished) this.stats.airTime += dt;
       basePitch += clamp(this.vy * 0.025, -0.35, 0.35);
       if (this.air <= 0) {
@@ -469,8 +529,10 @@ export class Kart {
           this.padT = Math.max(this.padT, C.landBoostTime);
           this.addGauge(C.gaugeLand, emit);
         }
+        // 坡頂小飛躍：飛得夠久才算落地（落地特效）
+        if (!this.hop || this.hopT > 0.3) emit('land');
         this.jumped = false;
-        emit('land');
+        this.hop = false;
       }
     } else {
       const rp = this.branch ? -1 : track.rampProgress(this.idx, C.rampLength);
@@ -482,9 +544,22 @@ export class Kart {
           this.air = C.rampHeight;
           this.vy = C.rampVy * clamp(s / vmaxBase, 0.6, 1.35);
           this.jumped = true;
+          this.hop = false;
           if (!this.finished) this.stats.jumps++;
           lift = 0;
           emit('jump');
+        }
+      } else if (!this.branch && s > C.hopMinSpeed && along > 0.5) {
+        // 坡頂：路面往下彎得比「重力」還快，車子就會輕輕飛起來
+        const a = track.samples[track.wrap(this.idx - 3)], b = track.samples[track.wrap(this.idx + 3)];
+        const kv = (b.slope - a.slope) / (6 * track.spacing);
+        if (-kv * s * s > C.hopGravity && sm.slope < 0.03 && sm.slope > -0.06) {
+          this.hop = true;
+          this.hopT = 0;
+          this.jumped = false;
+          this.vy = s * sm.slope * along;
+          this.air = 0.01;
+          emit('hop');
         }
       }
     }

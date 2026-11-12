@@ -8,9 +8,10 @@ import type { Settings } from '../settings';
 import { MUSIC_STYLES } from '../audio';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
+import type { OnlineSession } from '../net/online';
 import {
   BURN_DPS, PERK_LVL3, PERK_LVL5, CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
-  weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
+  laserCooldown, laserKeep, weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
 } from '../game/weapons';
 
 export interface TrackInfo {
@@ -51,7 +52,17 @@ export interface ScreenActions {
   calibrateTilt(): void;
   /** 進出設定頁：在設定頁可以試聽比賽配樂 */
   settingsOpen(open: boolean): void;
+  /** 線上對戰：開房、加入、房主設定、開始、回到房間、離開 */
+  online(): void;
+  createRoom(name: string): void;
+  joinRoom(code: string, name: string): void;
+  roomCfg(key: 'track' | 'mode' | 'ai' | 'diff', val: string): void;
+  roomStart(): void;
+  roomScreen(): void;
+  leaveRoom(): void;
 }
+
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 /** 一場比賽的結算內容（由 main 計算後交給結算畫面顯示） */
 export interface Summary {
@@ -79,8 +90,8 @@ export class Screens {
   private tracks: TrackInfo[];
   private trackIndex: () => number;
   private act: ScreenActions;
-  current: 'none' | 'menu' | 'garage' | 'pause' | 'results' | 'settings' = 'none';
-  private garageBack: 'menu' | 'results' = 'menu';
+  current: 'none' | 'menu' | 'garage' | 'pause' | 'results' | 'settings' | 'online' | 'room' = 'none';
+  private garageBack: 'menu' | 'results' | 'room' = 'menu';
   private lastResults = '';
   private loading = false;
 
@@ -175,11 +186,31 @@ export class Screens {
       case 'calib': this.act.calibrateTilt(); break;
       case 'restart': this.act.restart(); break;
       case 'menu': this.act.toMenu(); break;
-      case 'garage': this.garageBack = this.current === 'results' ? 'results' : 'menu'; this.garage(); break;
+      case 'garage': this.garageBack = this.current === 'results' ? 'results' : this.current === 'room' ? 'room' : 'menu'; this.garage(); break;
       case 'back':
         if (this.garageBack === 'results' && this.lastResults) { this.current = 'results'; this.root.innerHTML = this.lastResults; }
+        else if (this.garageBack === 'room') this.act.roomScreen();
         else this.menu(this.loading);
         break;
+      case 'online': this.act.online(); break;
+      case 'backmenu': this.menu(this.loading); break;
+      case 'mkroom': this.act.createRoom(this.val('#net-name')); break;
+      case 'joinroom': this.act.joinRoom(this.val('#net-code'), this.val('#net-name')); break;
+      case 'leaveroom': this.act.leaveRoom(); break;
+      case 'toroom': this.act.roomScreen(); break;
+      case 'rtrack': this.act.roomCfg('track', id ?? '0'); break;
+      case 'rmode': this.act.roomCfg('mode', id ?? 'race'); break;
+      case 'rai': this.act.roomCfg('ai', id ?? '1'); break;
+      case 'rdiff': this.act.roomCfg('diff', id ?? 'normal'); break;
+      case 'rstart': this.act.roomStart(); break;
+      case 'copylink': {
+        const link = location.origin + location.pathname + '?room=' + (id ?? '');
+        void navigator.clipboard?.writeText(link).then(() => {
+          const b = this.root.querySelector('[data-act="copylink"]');
+          if (b) b.textContent = '已複製！';
+        }).catch(() => window.prompt('邀請連結', link));
+        break;
+      }
       case 'mute': {
         const m = this.act.toggleMute();
         const b = this.root.querySelector('[data-act="mute"]');
@@ -280,6 +311,7 @@ export class Screens {
               : `<div class="m-modes">
                   <button class="m-mode primary" data-act="start" data-id="race"><b>競速賽</b><span>跑完 ${cur.laps} 圈，名次高的贏</span></button>
                   <button class="m-mode" data-act="start" data-id="elim"><b>淘汰賽</b><span>每 17 秒淘汰最後一名</span></button>
+                  <button class="m-mode net" data-act="online"><b>線上對戰</b><span>開房間跟朋友一起跑</span></button>
                 </div>`}
             <div class="m-diff"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="seg ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}">${DIFFICULTY[d].name}</button>`).join('')}</div>
             <div class="m-links"><button data-act="settings">設定</button><button data-act="music">配樂</button><button data-act="help">遊戲按鍵說明</button></div>
@@ -296,9 +328,86 @@ export class Screens {
             <b>手機</b>　自動油門；左手方向鍵（或在設定改成傾斜手機），右手開火、N2O、甩尾，右下角煞車<br />
             <b>集氣</b>　甩尾最快；打中對手、擊毀（直接送一瓶）、跟在別人正後方吃尾流、飛越跳台、踩加速帶也都會集氣<br />
             <b>甩尾</b>　點一下甩尾鍵（0.16 秒內放開）是<b>短漂</b>：回正快、減速少、集氣快，但沒有小噴；按久一點是<b>長漂</b>，按住方向能拖很久，結束後再按一次 <kbd>↑</kbd>（手機按「小噴」）觸發小噴<br />
+            <b>重甩</b>　甩尾中把方向鍵放開再快速按回同一邊（手機連點兩下同一邊的方向或甩尾鍵），甩得更兇、角度更大，適合 180 度髮夾彎；代價是掉一點速度<br />
             <b>進階</b>　短漂後 0.5 秒內接長漂集氣加成（短接長）；長漂完先不噴、直接甩下一個彎，在第二次甩尾中途按 <kbd>↑</kbd> 就能<b>連噴</b>；甩尾中點一下 <kbd>↓</kbd>（手機點煞車）是<b>斷飄</b>，立刻回正又不掉速<br />
             <b>技巧</b>　倒數到 GO 的瞬間按油門可以起跑衝刺；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
             <div class="hint">點一下關閉</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  private val(sel: string): string {
+    return this.root.querySelector<HTMLInputElement>(sel)?.value.trim() ?? '';
+  }
+
+  /** 線上對戰：輸入名字，建立房間或輸入代碼加入 */
+  onlineMenu(name: string, msg = '', code = ''): void {
+    this.current = 'online';
+    this.root.innerHTML = `
+      <div class="screen online">
+        <div class="net-panel">
+          <h2>線上對戰</h2>
+          <p class="sub">開一個房間，把代碼或邀請連結傳給朋友（最多 8 人，空位可以補電腦車手）。</p>
+          <label class="field"><span>你的名字</span><input id="net-name" maxlength="8" value="${esc(name)}" /></label>
+          <button class="btn primary wide" data-act="mkroom">建立房間</button>
+          <div class="or">或輸入朋友的房間代碼</div>
+          <div class="joinrow"><input id="net-code" maxlength="6" placeholder="例如 K7QX" value="${esc(code)}" autocapitalize="characters" autocomplete="off" /><button class="btn" data-act="joinroom">加入</button></div>
+          ${msg ? `<div class="net-msg">${esc(msg)}</div>` : ''}
+          <button class="btn small" data-act="backmenu">返回</button>
+        </div>
+      </div>`;
+    const codeEl = this.root.querySelector<HTMLInputElement>('#net-code');
+    codeEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.handle('joinroom'); });
+  }
+
+  /** 房間：車手名單與房主的比賽設定 */
+  room(s: OnlineSession): void {
+    this.current = 'room';
+    const host = s.isHost;
+    const list = s.list;
+    const dis = host ? '' : 'disabled';
+    const c = s.cfg;
+    const players = list.map((p) => {
+      const car = CARS[p.car] ?? CARS['kart-oobi'];
+      const icon = carIcon(car.model, car.liveries[p.livery] ?? car.liveries[0]);
+      return `<div class="pl ${p.pid === s.me ? 'me' : ''}">
+        ${icon ? `<img src="${icon}" alt="" />` : '<i></i>'}
+        <div><b>${esc(p.name || '車手')}${p.pid === s.hostPid ? '<em>房主</em>' : ''}${p.pid === s.me ? '<em class="you">你</em>' : ''}</b>
+        <span>${car.name}・${PRIMARY[p.primary]?.name ?? ''} / ${SECONDARY[p.secondary]?.name ?? ''}</span></div>
+      </div>`;
+    }).join('');
+    const tracks = this.tracks.map((t, i) => `
+      <button class="tcard mini ${i === c.track ? 'on' : ''}" data-act="rtrack" data-id="${i}" ${dis}>
+        <svg viewBox="0 0 100 64"><path d="${t.outline}" /></svg><b>${t.name}</b>
+      </button>`).join('');
+    const seg = (act: string, cur: string, opts: [string, string][]) =>
+      opts.map(([v, label]) => `<button class="seg ${cur === v ? 'on' : ''}" data-act="${act}" data-id="${v}" ${dis}>${label}</button>`).join('');
+    const connecting = s.status === 'connecting';
+    this.root.innerHTML = `
+      <div class="screen online">
+        <div class="net-panel room">
+          <div class="room-head">
+            <div class="code-box"><span>房間代碼</span><b>${s.code}</b></div>
+            <button class="btn small" data-act="copylink" data-id="${s.code}">複製邀請連結</button>
+          </div>
+          ${connecting ? '<div class="net-msg">連線中…</div>' : ''}
+          <div class="room-grid">
+            <div class="players"><h3>車手 ${list.length}/8</h3>${players}</div>
+            <div class="cfg">
+              <h3>比賽設定${host ? '' : '<small>（房主決定）</small>'}</h3>
+              <div class="room-tracks">${tracks}</div>
+              <div class="m-diff"><span>模式</span>${seg('rmode', c.mode, [['race', '競速賽'], ['elim', '淘汰賽']])}</div>
+              <div class="m-diff"><span>空位</span>${seg('rai', c.aiFill ? '1' : '0', [['1', '補電腦車手'], ['0', '只有玩家']])}</div>
+              <div class="m-diff"><span>電腦</span>${seg('rdiff', c.difficulty, DIFFICULTY_IDS.map((d) => [d, DIFFICULTY[d].name] as [string, string]))}</div>
+            </div>
+          </div>
+          <div class="row">
+            ${host
+              ? `<button class="btn primary" data-act="rstart" ${list.length < 2 && !c.aiFill ? 'disabled' : ''}>開始比賽</button>`
+              : '<div class="wait">等待房主開始…</div>'}
+            <button class="btn" data-act="garage">車庫</button>
+            <button class="btn" data-act="leaveroom">離開房間</button>
           </div>
         </div>
       </div>`;
@@ -316,16 +425,19 @@ export class Screens {
     if (prim) {
       const P = PRIMARY[id];
       const dps = (P.dmg * P.pellets * P.rate * mul).toFixed(0);
+      const lv1 = Math.max(1, lvl);
       info = P.kind === 'flame'
         ? `每秒傷害 ${dps} + 燃燒 ${BURN_DPS}/秒　射程 ${P.range} m`
-        : `每秒傷害 ${dps}　射程 ${P.range} m${P.kind === 'laser' ? '（瞬間命中）' : ''}`;
+        : P.kind === 'laser'
+          ? `第一台直接打爆　貫穿後保留 ${Math.round(laserKeep(lv1) * 100)}%　冷卻 ${laserCooldown(lv1).toFixed(1)} 秒　射程 ${P.range} m`
+          : `每秒傷害 ${dps}　射程 ${P.range} m`;
     } else {
       const S = SECONDARY[id as SecondaryId];
       info = `傷害 ${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}　冷卻 ${S.cooldown} 秒`;
     }
     const lv = owned ? lvl : 0;
     const perks = `<div class="perks">
-      <div class="${lv >= PERK_LVL3 ? 'on' : ''}"><b>Lv.${PERK_LVL3}</b> ${prim ? '過熱變慢 15%' : '冷卻縮短 15%'}</div>
+      <div class="${lv >= PERK_LVL3 ? 'on' : ''}"><b>Lv.${PERK_LVL3}</b> ${prim && id !== 'laser' ? '過熱變慢 15%' : '冷卻縮短 15%'}</div>
       <div class="${lv >= PERK_LVL5 ? 'on' : ''}"><b>Lv.${PERK_LVL5}</b> ${def.perk}</div>
     </div>`;
     const icon = weaponIcon(id);
@@ -451,8 +563,22 @@ export class Screens {
       </div>`;
   }
 
-  pause(muted: boolean, missionHtml: string): void {
+  pause(muted: boolean, missionHtml: string, online = false): void {
     this.pauseArgs = [muted, missionHtml];
+    if (online) {
+      this.current = 'pause';
+      this.root.innerHTML = `
+      <div class="screen">
+        <h1 class="title" style="font-size:clamp(28px,7vw,48px)">選單</h1>
+        <p class="sub">線上比賽不會暫停，車子還在跑！</p>
+        <div class="row" style="flex-direction:column;align-items:center">
+          <button class="btn primary" data-act="resume">回到比賽</button>
+          <button class="btn" data-act="mute">${muted ? '音效：關' : '音效：開'}</button>
+          <button class="btn" data-act="leaveroom">離開房間</button>
+        </div>
+      </div>`;
+      return;
+    }
     this.current = 'pause';
     this.root.innerHTML = `
       <div class="screen">
@@ -468,7 +594,7 @@ export class Screens {
       </div>`;
   }
 
-  results(race: Race, s: Summary): void {
+  results(race: Race, s: Summary, online = false): void {
     this.current = 'results';
     const p = race.player;
     const elim = race.mode === 'elim';
@@ -491,9 +617,9 @@ export class Screens {
             本場收入 <b>$${s.total}</b>${s.bestLap > 0 ? '　最快單圈 ' + formatTime(s.bestLap) : ''}
           </div>
           <div class="row">
-            <button class="btn primary" data-act="start">再來一場</button>
-            <button class="btn" data-act="garage">車庫</button>
-            <button class="btn" data-act="menu">主選單</button>
+            ${online
+              ? '<button class="btn primary" data-act="toroom">回到房間</button><button class="btn" data-act="leaveroom">離開房間</button>'
+              : '<button class="btn primary" data-act="start">再來一場</button><button class="btn" data-act="garage">車庫</button><button class="btn" data-act="menu">主選單</button>'}
           </div>
         </div>
       </div>`;

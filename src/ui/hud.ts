@@ -202,6 +202,10 @@ export class Hud {
         else if (e.e === 'combo') this.popup(`連噴 ×${p.combo}`, 'gold');
         else if (e.e === 'chain') this.popup('短接長！集氣加速', 'blue');
         else if (e.e === 'driftCancel') this.popup('斷飄');
+        else if (e.e === 'hardDrift') this.popup('重甩！', 'gold');
+        break;
+      case 'rail':
+        if (e.k === p && e.hits >= 2) this.popup(`雷射貫穿 ×${e.hits}`, 'gold');
         break;
       case 'kill': {
         const d = document.createElement('div');
@@ -231,7 +235,8 @@ export class Hud {
     for (let i = 0; i < this.n2o.length; i++) this.cls('n' + i, this.n2o[i], 'full', p.n2o > i);
     this.width('hp', this.hpBar, p.hp / p.maxHp);
     this.cls('hplow', this.hp, 'low', p.hp < p.maxHp * 0.35);
-    this.width('w1', this.w1Bar, p.heat);
+    // 雷射：條狀顯示充能進度（冷卻中慢慢補滿）；其他主武器顯示熱量
+    this.width('w1', this.w1Bar, PRIMARY[p.primary].kind === 'laser' ? 1 - p.heat : p.heat);
     this.cls('w1hot', this.w1, 'hot', p.overheated);
     const S = SECONDARY[p.secondary];
     this.width('w2', this.w2Bar, 1 - p.secCd / S.cooldown);
@@ -269,7 +274,7 @@ export class Hud {
     else if (p.finished) sub = '';
     else if (p.wrongWayT > 1) { sub = '逆向行駛！'; subCls = 'warn'; }
     else if (p.lockT > 0) { sub = '⚠ 導彈來襲：急轉可以甩掉'; subCls = 'warn'; }
-    else if (p.overheated) { sub = '武器過熱'; subCls = 'warn'; }
+    else if (p.overheated && PRIMARY[p.primary].kind !== 'laser') { sub = '武器過熱'; subCls = 'warn'; }
     else if (p.miniWindowT > 0) { sub = '小噴！'; subCls = 'mini'; }
     else if (race.state === 'countdown' && race.countdown < 1.4) { sub = document.body.classList.contains('touch') ? '抓準 GO 的瞬間按 N2O' : '抓準 GO 的瞬間按油門'; }
     this.set('sub', this.sub, sub);

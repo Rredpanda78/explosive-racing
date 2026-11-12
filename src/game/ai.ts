@@ -62,9 +62,20 @@ export class AIController {
       this.laneTarget = clamp(this.lane - Math.sign(side || 1) * (r + 4), -(tr.halfWidth - 3), tr.halfWidth - 3);
       this.laneTimer = 1.2;
     };
+    // 賽車線：前方 20–70 公尺有彎就切到內側（閃避優先）
+    let lineRate = 0.8;
+    if (this.D.line && this.laneTimer >= 1.3) {
+      let c = 0;
+      for (let i = Math.round(20 / tr.spacing); i < Math.round(70 / tr.spacing); i += 3) {
+        const ci = tr.samples[(k.idx + i) % n].curv;
+        if (Math.abs(ci) > Math.abs(c)) c = ci;
+      }
+      this.laneTarget = Math.abs(c) > 0.012 ? Math.sign(c) * (tr.halfWidth - 3.5) * Math.min(1, Math.abs(c) / 0.025) : this.laneTarget * 0.98;
+      lineRate = 1.6;
+    }
     for (const m of race.mines) if (m.owner !== k) dodge(m.x, m.z, 0.8);
     for (const b of race.boulders) if (b.enterT < 0.5) dodge(b.x, b.z, b.r);
-    this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * (this.laneTimer < 1.3 ? 2.2 : 0.8));
+    this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * (this.laneTimer < 1.3 ? 2.2 : lineRate));
 
     // 捷徑：接近分岔點時決定走不走（技術越好越常走）
     for (const b of tr.branches) {
@@ -155,10 +166,11 @@ export class AIController {
 
     // 主武器：沒有輔助瞄準，前方很窄的角度內有車才開火（火焰要夠近）
     const P = PRIMARY[k.primary];
-    const target = P.kind === 'flame' ? race.pickTarget(k, 0.24, P.range - 2) : race.pickTarget(k, 0.07, P.kind === 'laser' ? 140 : 95);
+    // 雷射一發就能打爆人，要瞄得很準才開
+    const target = P.kind === 'flame' ? race.pickTarget(k, 0.24, P.range - 2) : P.kind === 'laser' ? race.pickTarget(k, 0.035, 120) : race.pickTarget(k, 0.07, 95);
     this.burstT -= dt;
     if (target && this.burstT < -this.pause) {
-      this.burstT = this.D.burst[0] + this.rng() * (this.D.burst[1] - this.D.burst[0]);
+      this.burstT = this.D.burst[0] + this.rng() * (this.D.burst[1] - this.D.burst[0]) + P.spinUp;
       this.pause = this.D.pause[0] + this.rng() * (this.D.pause[1] - this.D.pause[0]);
     }
     inp.firePrimary = !!target && this.burstT > 0;
@@ -168,9 +180,9 @@ export class AIController {
     if (k.secCd <= 0) {
       let want = false;
       switch (k.secondary) {
-        case 'rocket': want = !!race.pickTarget(k, 0.045, 110); break;
-        // 榴彈落點固定在車前約 45 公尺，目標在那附近才打
-        case 'grenade': want = !!race.pickTarget(k, 0.09, 58, 32); break;
+        case 'rocket': want = !!race.pickTarget(k, 0.06, 110); break;
+        // 榴彈會自動預判，前方扇形內有對手就打
+        case 'grenade': want = !!race.grenadeAim(k); break;
         // 地雷：後面有人跟著才放
         case 'mine': want = !!race.pickTarget(k, 0.3, 45, 4, true); break;
         case 'cluster': want = !!race.pickTarget(k, 0.45, 35, 4, true); break;

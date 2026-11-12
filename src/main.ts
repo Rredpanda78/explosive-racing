@@ -1,7 +1,11 @@
 import './ui/style.css';
 import { GameAudio } from './audio';
 import { KILL_REWARD, PAYOUT, STREAK_BONUS } from './game/config';
+import { emptyInput } from './game/kart';
+import type { NetRacer, OnlineSetup } from './game/net';
 import { Race, type RaceMode } from './game/race';
+import { OnlineSession, type StartMsg } from './net/online';
+import { cleanCode, ERR_TEXT, newRoomCode } from './net/room';
 import { loadProfile, saveProfile } from './game/save';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
@@ -64,6 +68,28 @@ applySettings();
 
 let mode: RaceMode = 'race';
 let ready = false;
+/** 線上對戰的連線（null = 單機） */
+let online: OnlineSession | null = null;
+/** 房主已回到房間、但其他人還在跑的比賽（在背景繼續模擬） */
+let bgRace: Race | null = null;
+const NAME_KEY = 'explosive-racing-name';
+function playerName(): string {
+  try { return localStorage.getItem(NAME_KEY) ?? ''; } catch { return ''; }
+}
+function setPlayerName(n: string): void {
+  const v = n.trim().slice(0, 8);
+  if (!v) return;
+  try { localStorage.setItem(NAME_KEY, v); } catch { /* 無痕模式 */ }
+}
+/** 進房時告訴大家自己的車與裝備 */
+function myRacer(): Omit<NetRacer, 'pid'> {
+  return {
+    name: playerName() || '車手', car: profile.kart, livery: profile.livery?.[profile.kart] ?? 0,
+    primary: profile.primary, secondary: profile.secondary, plvl: profile.lvl[profile.primary], slvl: profile.lvl[profile.secondary],
+    engine: profile.car.engine, n2o: profile.car.n2o, armor: profile.car.armor,
+  };
+}
+const NO_INPUT = emptyInput();
 let paused = false;
 let resultsTimer = 0;
 let resultsShown = false;
@@ -77,7 +103,7 @@ function setTouchUI(on: boolean): void {
   touchRoot.classList.toggle('hidden', !on || !race || resultsShown);
 }
 
-function startRace(m?: RaceMode): void {
+function startRace(m?: RaceMode, seed?: number, setup?: OnlineSetup): void {
   if (!ready) return;
   if (m) mode = m;
   audio.init();
@@ -89,7 +115,8 @@ function startRace(m?: RaceMode): void {
     el.requestFullscreen?.().then(() => (screen.orientation as unknown as { lock?: (o: string) => Promise<void> }).lock?.('landscape')).catch(() => {});
   }
   if (input.tiltMode) void input.tilt.enable().then(() => input.tilt.calibrate());
-  race = new Race(track, profile, mode);
+  race = new Race(track, profile, mode, seed, setup);
+  if (setup && online) online.attach(race);
   race.player.autoMini = settings.autoMini;
   race.player.driftAssist = settings.driftAssist;
   view.setRace(race);
@@ -119,6 +146,7 @@ function selectTrack(i: number): void {
 }
 
 function toMenu(): void {
+  if (online) leaveRoom();
   race = null;
   paused = false;
   resultsShown = false;
@@ -133,7 +161,7 @@ function toMenu(): void {
 function setPaused(p: boolean): void {
   if (!race || resultsShown) return;
   paused = p;
-  if (p) screens.pause(audio.muted, hud.missionHtml(race));
+  if (p) screens.pause(audio.muted, hud.missionHtml(race), !!online);
   else {
     screens.hide();
     input.clear();
@@ -163,8 +191,108 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     audio.init();
     if (!race) audio.setMusic(open ? 'race' : 'menu');
   },
+  online: () => openOnline(),
+  createRoom: (name) => {
+    setPlayerName(name);
+    enterRoom(newRoomCode(), true);
+  },
+  joinRoom: (code, name) => {
+    setPlayerName(name);
+    const c = cleanCode(code);
+    if (c.length < 4) openOnline('請輸入 4 個字的房間代碼', c);
+    else enterRoom(c, false);
+  },
+  roomCfg: (key, val) => {
+    if (!online) return;
+    if (key === 'track') online.setCfg({ track: Number(val) });
+    else if (key === 'mode') online.setCfg({ mode: val as RaceMode });
+    else if (key === 'ai') online.setCfg({ aiFill: val === '1' });
+    else online.setCfg({ difficulty: val as typeof profile.difficulty });
+  },
+  roomStart: () => online?.start(),
+  roomScreen: () => backToRoom(),
+  leaveRoom: () => {
+    leaveRoom();
+    toMenu();
+  },
 });
 screens.settings = settings;
+
+// ---------------- 線上對戰 ----------------
+
+function openOnline(msg = '', code = ''): void {
+  screens.onlineMenu(playerName() || '車手' + Math.floor(10 + Math.random() * 90), msg, code);
+}
+
+function enterRoom(code: string, create: boolean): void {
+  online?.leave();
+  const s = new OnlineSession(myRacer, { track: trackIndex, mode: 'race', aiFill: true, difficulty: profile.difficulty });
+  online = s;
+  s.onChange = () => {
+    if (online === s && !race && screens.current === 'room') screens.room(s);
+  };
+  s.onStart = (msg) => {
+    if (online === s) startOnlineRace(s, msg);
+  };
+  s.onClosed = (code) => {
+    if (online !== s) return;
+    online = null;
+    history.replaceState(null, '', location.pathname);
+    if (race) {
+      // 比賽中斷線：別人的車退出，自己繼續跑完
+      for (const k of race.karts) if (k.remote) race.dropKart(k);
+      race.net = null;
+    } else openOnline(ERR_TEXT[code] ?? ERR_TEXT.closed);
+  };
+  s.open(code, create);
+  history.replaceState(null, '', '?room=' + code);
+  screens.room(s);
+}
+
+function leaveRoom(): void {
+  bgRace = null;
+  const s = online;
+  online = null;
+  s?.leave();
+  history.replaceState(null, '', location.pathname);
+}
+
+function startOnlineRace(s: OnlineSession, msg: StartMsg): void {
+  bgRace = null;
+  // 用房主選的賽道與模式
+  const ti = Math.max(0, Math.min(TRACKS.length - 1, msg.cfg.track));
+  if (ti !== trackIndex) {
+    trackIndex = ti;
+    track = new Track(TRACKS[ti]);
+    view.setTrack(track);
+    hud.setTrack(track);
+  }
+  startRace(msg.cfg.mode, msg.seed, s.setup(msg));
+}
+
+/** 比賽結束（或從車庫）回到房間 */
+function backToRoom(): void {
+  const s = online;
+  if (!s) return toMenu();
+  if (race) {
+    // 房主：其他人還在跑就讓比賽在背景繼續（電腦車手、淘汰判定都在房主這裡）
+    const r = race;
+    const busy = r.mode === 'elim' ? r.aliveCount > 1 : r.karts.some((k) => !k.finished && !k.out);
+    bgRace = s.isHost && busy ? r : null;
+    if (bgRace) s.backToLobby(true);
+    race = null;
+    paused = false;
+    resultsShown = false;
+    input.capture = false;
+    view.setRace(null);
+    hud.hide();
+    touchRoot.classList.add('hidden');
+    audio.setMusic('menu');
+    if (!bgRace) s.backToLobby();
+  }
+  s.refreshInfo();
+  screens.room(s);
+}
 
 function settingChanged(key: keyof Settings): void {
   if (key === 'tiltRange') {
@@ -302,7 +430,7 @@ function finishRace(r: Race): void {
   hud.hide();
   touchRoot.classList.add('hidden');
   audio.setMusic('menu');
-  screens.results(r, summary);
+  screens.results(r, summary, !!online);
 }
 
 let last = performance.now();
@@ -318,11 +446,15 @@ function frame(now: number): void {
     dt = real * 0.25;
   }
 
-  if (race && !paused) {
-    const inp = input.read();
+  // 線上比賽不會暫停（開著選單時車子放開油門繼續跑）
+  if (race && (!paused || online)) {
+    if (online) dt = real;
+    const inp = paused ? NO_INPUT : input.read();
+    online?.applyRemote(now);
     // 幀率偏低時拆成兩小步，維持物理穩定
     const steps = dt > 1 / 45 ? 2 : 1;
     for (let i = 0; i < steps; i++) race.step(dt / steps, inp);
+    online?.sendState(now);
     const p = race.player;
     for (const e of race.events) {
       view.onEvent(e, race);
@@ -351,6 +483,20 @@ function frame(now: number): void {
   } else if (!race && ready) {
     view.updateMenuCam(real);
   }
+  if (!race && bgRace) {
+    if (!online) bgRace = null;
+    else {
+      online.applyRemote(now);
+      bgRace.step(real, NO_INPUT);
+      bgRace.events.length = 0;
+      online.sendState(now);
+      const r = bgRace;
+      if (r.mode === 'elim' ? r.aliveCount <= 1 : r.karts.every((k) => k.finished || k.out)) {
+        bgRace = null;
+        online.backToLobby();
+      }
+    }
+  }
   audio.frame(race, !!race && !paused && !resultsShown);
   if (ready) view.render();
 }
@@ -358,12 +504,18 @@ function frame(now: number): void {
 screens.menu(true);
 requestAnimationFrame(frame);
 
+// 邀請連結 ?room=CODE：載入完成後直接打開加入房間的畫面
+const inviteCode = cleanCode(new URLSearchParams(location.search).get('room') ?? '');
+
 // 先載入模型再建立場景；個別模型載入失敗時會自動改用內建幾何
 void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS], (f) => screens.loadProgress(f)).then(() => {
   view.setTrack(track);
   ready = true;
-  if (screens.current === 'menu') screens.menu();
+  if (screens.current === 'menu') {
+    if (inviteCode.length >= 4) openOnline('', inviteCode);
+    else screens.menu();
+  }
 });
 
 // 方便除錯與之後的自動化測試
-(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, screens, get track() { return track; } };
+(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, screens, get track() { return track; }, get online() { return online; } };
