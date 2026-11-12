@@ -192,7 +192,7 @@ export class Race {
     this.player = player;
 
     // 爆炸桶
-    for (const b of track.def.barrels) {
+    for (const b of track.barrelSpots()) {
       const s = track.samples[track.wrap(Math.round(b.dist / track.spacing))];
       this.barrels.push({ x: s.x + s.nx * b.lat, y: s.y, z: s.z + s.nz * b.lat, respawnT: 0, fuse: 0, by: null });
     }

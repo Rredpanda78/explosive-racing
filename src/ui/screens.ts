@@ -140,6 +140,12 @@ export class Screens {
         this.act.settingsOpen(true);
         this.settingsPage();
         break;
+      case 'music':
+        this.settingsBack = 'menu';
+        this.act.settingsOpen(true);
+        this.settingsPage();
+        this.root.querySelector('[data-act="style"]')?.scrollIntoView({ block: 'center' });
+        break;
       case 'sback':
         this.act.settingsOpen(false);
         if (this.settingsBack === 'pause') this.pause(...this.pauseArgs);
@@ -276,7 +282,7 @@ export class Screens {
                   <button class="m-mode" data-act="start" data-id="elim"><b>淘汰賽</b><span>每 17 秒淘汰最後一名</span></button>
                 </div>`}
             <div class="m-diff"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="seg ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}">${DIFFICULTY[d].name}</button>`).join('')}</div>
-            <div class="m-links"><button data-act="settings">設定</button><button data-act="help">遊戲按鍵說明</button></div>
+            <div class="m-links"><button data-act="settings">設定</button><button data-act="music">配樂</button><button data-act="help">遊戲按鍵說明</button></div>
           </div>
           <div class="m-right">
             <h3>選擇賽道</h3>

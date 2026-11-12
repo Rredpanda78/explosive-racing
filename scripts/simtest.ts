@@ -32,6 +32,14 @@ console.log(`=== ${def.id}: length ${track.length.toFixed(0)} m, samples ${track
     for (const s of b.samples) for (const lat of [0, -b.halfWidth, b.halfWidth]) worst = Math.min(worst, s.y - terrain.height(s.x + s.nx * lat, s.z + s.nz * lat));
   }
   console.log(`shortcuts: ${track.branches.map((b) => `${b.def.from}-${b.def.to} m: ${b.length.toFixed(0)} m (saves ${(b.def.to - b.def.from - b.length).toFixed(0)} m)`).join(', ') || 'none'}`);
+  // 爆炸桶不能放在彎道上
+  const spots = track.barrelSpots();
+  for (const b of spots) {
+    const c = track.samples[track.wrap(Math.round(b.dist / track.spacing))].curv;
+    // 不能在急彎上，也不能在任何彎道的內側
+    if (Math.abs(c) > 0.016 || (Math.abs(c) > 0.008 && Math.sign(c) === Math.sign(b.lat))) throw new Error(`barrel in a corner at ${b.dist.toFixed(0)} m`);
+  }
+  console.log(`barrels: ${spots.length}/${def.barrels.length} placed (straights or outside of gentle bends)`);
   console.log(`terrain: road is at least ${worst.toFixed(2)} m above grass; far plane at ${terrain.baseY.toFixed(1)}, lowest road ${minY.toFixed(1)}`);
   if (worst < 0.4) throw new Error('terrain pokes through the road');
   if (terrain.baseY > minY - 1) throw new Error('far ground plane would cover the lowest part of the track');

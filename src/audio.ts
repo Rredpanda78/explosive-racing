@@ -100,8 +100,16 @@ export class GameAudio {
 
   /** 必須在使用者點擊後呼叫（瀏覽器限制） */
   init(): void {
+    // iPhone：把音訊類型設成「播放」，靜音開關打開時也聽得到（Safari 16.4 起支援）
+    const nav = navigator as unknown as { audioSession?: { type: string } };
+    if (nav.audioSession) {
+      try { nav.audioSession.type = 'playback'; } catch { /* 不支援就略過 */ }
+    }
     if (this.ctx) {
-      void this.ctx.resume();
+      if (this.ctx.state !== 'running') {
+        void this.ctx.resume();
+        this.unlockTick();
+      }
       return;
     }
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -164,6 +172,17 @@ export class GameAudio {
     lz.start();
     this.laserOsc = lz;
     if (this.mode !== 'off') this.startScheduler();
+    this.unlockTick();
+  }
+
+  /** 在使用者點擊的當下播一個無聲的音，部分手機要這樣才會真正開始出聲 */
+  private unlockTick(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const src = ctx.createBufferSource();
+    src.buffer = ctx.createBuffer(1, 1, 22050);
+    src.connect(ctx.destination);
+    src.start(0);
   }
 
   private loopNoise(type: BiquadFilterType, freq: number, q: number, gain: number): GainNode {

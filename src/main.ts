@@ -274,6 +274,13 @@ window.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'touch' && race && !input.touchMode) input.touchMode = true;
 });
 window.addEventListener('keydown', () => audio.init(), { once: true });
+// iPhone 只認點擊結束（touchend / click）才算可以出聲的操作
+const unlockAudio = (): void => {
+  audio.init();
+  if (!race && screens.current !== 'settings') audio.setMusic('menu');
+};
+window.addEventListener('touchend', unlockAudio, { passive: true });
+window.addEventListener('click', unlockAudio);
 
 function finishRace(r: Race): void {
   const p = r.player;

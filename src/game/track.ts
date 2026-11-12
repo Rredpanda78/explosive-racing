@@ -387,6 +387,48 @@ export class Track {
     this.branches = (def.shortcuts ?? []).map((sc) => new Branch(this, sc));
   }
 
+  /**
+   * 爆炸桶實際擺放的位置：放在彎道（尤其內側）上會讓人避不開，
+   * 所以往前後找最近的直線段；也避開跳台、機關與捷徑出入口，找不到就不放。
+   */
+  barrelSpots(): BoostPad[] {
+    const L = this.length;
+    const rel = (a: number, b: number) => {
+      let d = (a - b) % L;
+      if (d > L / 2) d -= L;
+      else if (d < -L / 2) d += L;
+      return d;
+    };
+    const curvAt = (d: number) => this.samples[this.wrap(Math.round(d / this.spacing))].curv;
+    // 直線段；或是緩彎的外側（彎道內側一律不放）
+    const fits = (d: number, lat: number) => {
+      for (let k = -32; k <= 32; k += 3) {
+        const c = curvAt(d + k);
+        if (Math.abs(c) <= 0.008) continue;
+        if (Math.abs(c) > 0.016 || Math.sign(c) === Math.sign(lat)) return false;
+      }
+      return true;
+    };
+    const avoid: [number, number][] = this.ramps.map((r) => [r, 32]);
+    for (const h of this.def.hazards ?? []) avoid.push([h.dist + (h.len ?? 0) / 2, 22 + (h.len ?? 0) / 2]);
+    for (const sc of this.def.shortcuts ?? []) avoid.push([sc.from, 28], [sc.to, 28]);
+    avoid.push([0, 30]);
+    const out: BoostPad[] = [];
+    const taken = (d: number, lat: number) => out.some((o) => Math.abs(rel(o.dist, d)) < 14 && Math.sign(o.lat) === Math.sign(lat));
+    const ok = (d: number, lat: number) => fits(d, lat) && !avoid.some(([c, r]) => Math.abs(rel(d, c)) < r) && !taken(d, lat);
+    for (const b of this.def.barrels) {
+      let found: number | null = null;
+      for (let k = 0; k <= 120 && found === null; k += 5) {
+        for (const sg of [1, -1]) {
+          const d = b.dist + sg * k;
+          if (ok(d, b.lat)) { found = d; break; }
+        }
+      }
+      if (found !== null) out.push({ dist: ((found % L) + L) % L, lat: b.lat });
+    }
+    return out;
+  }
+
   /** 主線上任意距離的位置（在取樣點之間內插） */
   pointAt(dist: number): { x: number; z: number; y: number; tx: number; tz: number; nx: number; nz: number } {
     const L = this.length;
