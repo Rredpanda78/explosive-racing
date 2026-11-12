@@ -47,13 +47,17 @@ function toLambert(m: THREE.Material): THREE.MeshLambertMaterial {
   return out;
 }
 
-export async function loadModels(names: string[]): Promise<void> {
+/** onProgress(0~1)：每載完一個模型回報一次（給載入條用） */
+export async function loadModels(names: string[], onProgress?: (f: number) => void): Promise<void> {
   const loader = new GLTFLoader();
+  let done = 0;
+  const tick = () => onProgress?.(++done / names.length);
   await Promise.all(
     names.map(async (n) => {
-      if (cache.has(n)) return;
+      if (cache.has(n)) return tick();
       try {
         const g = await loader.loadAsync(BASE + n + '.glb');
+        tick();
         g.scene.traverse((o) => {
           const mesh = o as THREE.Mesh;
           if (!mesh.isMesh) return;
@@ -63,6 +67,7 @@ export async function loadModels(names: string[]): Promise<void> {
         cache.set(n, { root: g.scene, box: new THREE.Box3().setFromObject(g.scene) });
       } catch (e) {
         console.warn('[assets] 模型載入失敗，改用內建幾何：', n, e);
+        tick();
       }
     }),
   );

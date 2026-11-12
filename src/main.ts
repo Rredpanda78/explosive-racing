@@ -19,7 +19,24 @@ const profile = loadProfile();
 let trackIndex = Math.max(0, TRACKS.findIndex((t) => t.id === profile.track));
 let track = new Track(TRACKS[trackIndex]);
 /** 選單上顯示的地圖清單（長度要先把賽道算出來才知道） */
-const trackList = TRACKS.map((def) => ({ name: def.name, desc: def.desc, laps: def.laps, length: Math.round(new Track(def).length) }));
+const trackList = TRACKS.map((def) => {
+  const t = new Track(def);
+  return { name: def.name, desc: def.desc, laps: def.laps, length: Math.round(t.length), outline: trackOutline(t), theme: def.theme };
+});
+
+/** 選單上的賽道縮圖：把賽道中心線縮放成 SVG 路徑（viewBox 0 0 100 64） */
+function trackOutline(t: Track): string {
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const s of t.samples) { minX = Math.min(minX, s.x); maxX = Math.max(maxX, s.x); minZ = Math.min(minZ, s.z); maxZ = Math.max(maxZ, s.z); }
+  const sc = Math.min(92 / (maxX - minX), 56 / (maxZ - minZ));
+  const ox = 50 + ((minX + maxX) / 2) * sc, oz = 32 + ((minZ + maxZ) / 2) * sc;
+  let d = '';
+  for (let i = 0; i < t.n; i += 6) {
+    const s = t.samples[i];
+    d += (i ? 'L' : 'M') + (ox - s.x * sc).toFixed(1) + ' ' + (oz - s.z * sc).toFixed(1);
+  }
+  return d + 'Z';
+}
 const settings = loadSettings(coarse);
 const view = new GameView(canvas, coarse, settings.quality);
 const input = new Input();
@@ -328,11 +345,11 @@ screens.menu(true);
 requestAnimationFrame(frame);
 
 // 先載入模型再建立場景；個別模型載入失敗時會自動改用內建幾何
-void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS]).then(() => {
+void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS], (f) => screens.loadProgress(f)).then(() => {
   view.setTrack(track);
   ready = true;
   if (screens.current === 'menu') screens.menu();
 });
 
 // 方便除錯與之後的自動化測試
-(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, get track() { return track; } };
+(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, screens, get track() { return track; } };

@@ -18,7 +18,24 @@ export interface TrackInfo {
   desc: string;
   laps: number;
   length: number;
+  /** 賽道縮圖的 SVG 路徑 */
+  outline: string;
+  theme: string;
 }
+
+/** 主選單的徽章標誌 */
+const EMBLEM = `<svg class="emblem" viewBox="0 0 320 170" aria-label="Explosive Racing">
+  <path d="M40 40 L160 14 L280 40 L296 96 L160 160 L24 96 Z" fill="#13284b" stroke="#f3ead5" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M52 50 L160 26 L268 50 L281 94 L160 148 L39 94 Z" fill="none" stroke="#f3ead5" stroke-width="2" opacity=".45" stroke-linejoin="round"/>
+  <g fill="#e8574a">
+    <path d="M128 40l4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z"/>
+    <path d="M160 32l5 10 11 1.5-8 7.5 2 11-10-5.5-10 5.5 2-11-8-7.5 11-1.5z"/>
+    <path d="M192 40l4 8 9 1-7 6 2 9-8-5-8 5 2-9-7-6 9-1z"/>
+  </g>
+  <text x="160" y="106" text-anchor="middle" font-size="44" font-weight="900" fill="#f3ead5" letter-spacing="1" font-family="'Segoe UI Black','Arial Black',sans-serif">EXPLOSIVE</text>
+  <text x="160" y="134" text-anchor="middle" font-size="21" font-weight="900" fill="#f3ead5" letter-spacing="6" font-family="'Segoe UI Black','Arial Black',sans-serif">RACING</text>
+  <path d="M8 104h22M4 116h18M290 104h22M298 116h18" stroke="#e8574a" stroke-width="5" stroke-linecap="round"/>
+</svg>`;
 
 export interface ScreenActions {
   start(mode?: RaceMode): void;
@@ -91,6 +108,16 @@ export class Screens {
   private settingsBack: 'menu' | 'pause' = 'menu';
   private pauseArgs: [boolean, string] = [false, ''];
 
+  /** 載入進度（0~1）：直接更新載入條，不重畫整個選單 */
+  private loadF = 0;
+  loadProgress(f: number): void {
+    this.loadF = f;
+    const bar = this.root.querySelector<HTMLElement>('.loadbar i');
+    if (bar) bar.style.width = Math.round(f * 100) + '%';
+    const pct = this.root.querySelector<HTMLElement>('.loadbar span');
+    if (pct) pct.textContent = '載入中… ' + Math.round(f * 100) + '%';
+  }
+
   hide(): void {
     this.current = 'none';
     this.root.innerHTML = '';
@@ -101,6 +128,7 @@ export class Screens {
     switch (act) {
       case 'start': this.act.start(id as RaceMode | undefined); break;
       case 'track': this.act.selectTrack(Number(id)); break;
+      case 'help': this.root.querySelector('.helpbox')?.classList.toggle('hidden'); break;
       case 'diff':
         p.difficulty = id as DifficultyId;
         saveProfile(p);
@@ -220,33 +248,45 @@ export class Screens {
     const dis = loading ? 'disabled' : '';
     const ti = this.trackIndex();
     const cur = this.tracks[ti];
-    const trackBtns = this.tracks.map((t, i) => `
-      <button class="trackbtn ${i === ti ? 'on' : ''}" data-act="track" data-id="${i}" ${dis}>
-        <b>${t.name}</b><span>${t.desc}</span><span>${(t.length / 1000).toFixed(1)} 公里 × ${t.laps} 圈</span>
+    const themeName: Record<string, string> = { meadow: '草原', desert: '沙漠', city: '夜城' };
+    const cards = this.tracks.map((t, i) => `
+      <button class="tcard ${i === ti ? 'on' : ''}" data-act="track" data-id="${i}" ${dis}>
+        ${i === ti ? '<em class="tag">已選</em>' : ''}
+        <svg viewBox="0 0 100 64"><path d="${t.outline}" /></svg>
+        <b>${t.name}</b>
+        <span>${themeName[t.theme] ?? ''}・${(t.length / 1000).toFixed(1)} km</span>
       </button>`).join('');
+    const loadout = `${CARS[p.kart].name}・${PRIMARY[p.primary].name} / ${SECONDARY[p.secondary].name}`;
     this.root.innerHTML = `
-      <div class="screen">
-        <h1 class="title">EXPLOSIVE <span>RACING</span></h1>
-        <div class="tagline">甩尾集氣、N2O 衝刺，再用機槍與火箭把對手轟出賽道</div>
-        <div class="tracks">${trackBtns}</div>
-        <div class="modes">
-          <button class="mode primary" data-act="start" data-id="race" ${dis}>
-            <b>${loading ? '載入中…' : '競速賽'}</b><span>跑完 ${cur.laps} 圈，名次高的贏</span>
-          </button>
-          <button class="mode" data-act="start" data-id="elim" ${dis}>
-            <b>${loading ? '載入中…' : '淘汰賽'}</b><span>每 ${17} 秒淘汰最後一名，撐到最後</span>
-          </button>
+      <div class="screen menu2">
+        <div class="m-grid">
+          <div class="m-left">
+            ${EMBLEM}
+            <button class="m-loadout" data-act="garage"><span>車庫 &amp; 裝備</span><b>${loadout}</b><i>›</i></button>
+            <div class="m-stats"><span class="cash">$${p.cash}</span><span>出賽 ${p.races}</span><span>冠軍 ${p.wins}</span></div>
+            ${loading
+              ? `<div class="loadbar"><div class="lb-track"><i style="width:${Math.round(this.loadF * 100)}%"></i><span>載入中… ${Math.round(this.loadF * 100)}%</span></div><div class="n2o-badge">N2O</div></div>`
+              : `<div class="m-modes">
+                  <button class="m-mode primary" data-act="start" data-id="race"><b>競速賽</b><span>跑完 ${cur.laps} 圈，名次高的贏</span></button>
+                  <button class="m-mode" data-act="start" data-id="elim"><b>淘汰賽</b><span>每 17 秒淘汰最後一名</span></button>
+                </div>`}
+            <div class="m-diff"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="seg ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}">${DIFFICULTY[d].name}</button>`).join('')}</div>
+            <div class="m-links"><button data-act="settings">設定</button><button data-act="help">遊戲按鍵說明</button></div>
+          </div>
+          <div class="m-right">
+            <h3>選擇賽道</h3>
+            <div class="m-tracks">${cards}</div>
+            <div class="m-detail"><b>${cur.name}</b>　${cur.desc}<br /><small>${cur.laps} 圈・最快單圈 ${formatTime(p.bestLaps[p.track] ?? 0)}・電腦：${DIFFICULTY[p.difficulty].desc}</small></div>
+          </div>
         </div>
-        <div class="diffs"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="diffbtn ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}" title="${DIFFICULTY[d].desc}">${DIFFICULTY[d].name}</button>`).join('')}<em>${DIFFICULTY[p.difficulty].desc}</em></div>
-        <div class="row" style="margin-top:0.8em"><button class="btn" data-act="garage">車庫</button><button class="btn" data-act="settings">設定</button></div>
-        <div class="tagline" style="margin:1.1em 0 0">
-          <span class="cash">$${p.cash}</span>　${CARS[p.kart].name}・${PRIMARY[p.primary].name}・${SECONDARY[p.secondary].name}　出賽 ${p.races}　冠軍 ${p.wins}　${cur.name}最快單圈 ${formatTime(p.bestLaps[p.track] ?? 0)}
-        </div>
-        <div class="help">
-          <b>鍵盤</b>　<kbd>↑↓←→</kbd> 駕駛　<kbd>Shift</kbd> 甩尾　<kbd>Ctrl</kbd> N2O　<kbd>Z</kbd> 主武器　<kbd>X</kbd> 副武器　<kbd>C</kbd> 後視　<kbd>R</kbd> 重置　<kbd>Esc</kbd> 暫停<br />
-          <b>手機</b>　自動油門，左下方向鍵、左側中間開火，右下甩尾與 N2O<br />
-          <b>集氣</b>　甩尾最快；打中對手、擊毀（直接送一瓶）、跟在別人正後方吃尾流、飛越跳台、踩加速帶也都會集氣<br />
-          <b>技巧</b>　倒數到 GO 的瞬間才按油門可以起跑衝刺；點一下甩尾並按住方向能拖漂，結束瞬間再按一次 <kbd>↑</kbd> 觸發小噴；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
+        <div class="helpbox hidden" data-act="help">
+          <div>
+            <b>鍵盤</b>　<kbd>↑↓←→</kbd> 駕駛　<kbd>Shift</kbd> 甩尾　<kbd>Ctrl</kbd> N2O　<kbd>Z</kbd> 主武器　<kbd>X</kbd> 副武器　<kbd>C</kbd> 後視　<kbd>R</kbd> 重置　<kbd>Esc</kbd> 暫停<br />
+            <b>手機</b>　自動油門；左手方向鍵（或在設定改成傾斜手機），右手開火、N2O、甩尾，右下角煞車<br />
+            <b>集氣</b>　甩尾最快；打中對手、擊毀（直接送一瓶）、跟在別人正後方吃尾流、飛越跳台、踩加速帶也都會集氣<br />
+            <b>技巧</b>　倒數到 GO 的瞬間按油門可以起跑衝刺；點一下甩尾並按住方向能拖漂，結束瞬間再按一次 <kbd>↑</kbd>（手機按「小噴」）；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
+            <div class="hint">點一下關閉</div>
+          </div>
         </div>
       </div>`;
   }
