@@ -44,6 +44,8 @@ export class GameView {
   private fire = new Particles(1800, true);
   private skid = new SkidMarks();
   private trails = new Trails(16);
+  /** 甩尾時輪胎後方貼著地面的亮白拖痕（跑跑那種一道道白光） */
+  private streaks = new Trails(16, 46, 0.3);
   private scorch = new Scorch(40);
   private debris: Debris | null = null;
   private blast = new BlastFx();
@@ -57,6 +59,7 @@ export class GameView {
   private hazardView: HazardView | null = null;
   private weather: Weather | null = null;
   private groundHint = 0;
+  private driftRoll = 0;
   /** 地雷與集束圓雷：本體與閃燈（閃燈用每個實例的顏色控制亮暗） */
   private mineBody: THREE.InstancedMesh;
   private mineLight: THREE.InstancedMesh;
@@ -120,7 +123,7 @@ export class GameView {
       this.composer.addPass(new OutputPass());
     }
 
-    this.scene.add(this.skid.mesh, this.blast.group, this.smoke.points, this.fire.points, this.trails.mesh, this.scorch.mesh);
+    this.scene.add(this.skid.mesh, this.blast.group, this.smoke.points, this.fire.points, this.trails.mesh, this.streaks.mesh, this.scorch.mesh);
 
     this.tracers = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.1, 0.1, 5.5),
@@ -258,6 +261,7 @@ export class GameView {
     this.fire.clear();
     this.skid.clear();
     this.trails.clear();
+    this.streaks.clear();
     this.scorch.clear();
     this.debris?.clear();
     this.blast.clear();
@@ -490,7 +494,10 @@ export class GameView {
         this.skid.wheel(k, 0, false, 0, 0, 0, 0, 0);
         this.skid.wheel(k, 1, false, 0, 0, 0, 0, 0);
         const g0 = kv.group.position;
-        for (let w = 0; w < 2; w++) this.trails.push(k.id * 2 + w, g0.x, g0.y, g0.z, 0, 0, 0, 0);
+        for (let w = 0; w < 2; w++) {
+          this.trails.push(k.id * 2 + w, g0.x, g0.y, g0.z, 0, 0, 0, 0);
+          this.streaks.push(k.id * 2 + w, g0.x, g0.y, g0.z, 0, 0, 0, 0);
+        }
         continue;
       }
       if (kv.wrecked) kv.endWreck();
@@ -532,16 +539,16 @@ export class GameView {
           f.spawn(k.x + lx * side - fx * 1.6, k.y + 0.6, k.z + lz * side - fz * 1.6, k.vx * 0.4 - fx * 7, R() * 0.6, k.vz * 0.4 - fz * 7, 0.24, 1.2, 0.15, blue ? 0.35 : 1, blue ? 0.75 : 0.6, blue ? 1 : 0.2, 0.5);
         }
       }
-      // 破風氣流：甩尾時白色、N2O 時藍色，從車身兩側往後拖
+      // 破風：N2O 時車身兩側拖出藍色氣流；甩尾時兩個後輪後方拖出貼地的亮白光痕
       {
         const boost = k.boostT > 0;
-        const drift = grounded && k.speed > 18 && (k.drifting ? Math.abs(k.slip) > 0.12 : sliding);
-        const kk = boost ? 1 : drift ? clamp(Math.abs(k.slip) * 2.2 + (k.aiAssist ? 0.5 : 0), 0.3, 0.75) : 0;
+        const drift = grounded && k.speed > 16 && (k.drifting ? Math.abs(k.slip) > 0.1 : sliding);
+        const dk = drift ? clamp(Math.abs(k.slip) * 2.4 + (k.aiAssist ? 0.45 : 0.15), 0.35, 0.95) : 0;
         for (let w = 0; w < 2; w++) {
           const side = w === 0 ? 1 : -1;
-          const ox = side * 1.0, oz = -0.75, oy = boost ? 1.0 : 0.75;
-          if (boost) this.trails.push(k.id * 2 + w, k.x + lx * ox + fx * oz, k.y + oy, k.z + lz * ox + fz * oz, kk, 0.35, 0.8, 1.6);
-          else this.trails.push(k.id * 2 + w, k.x + lx * ox + fx * oz, k.y + oy, k.z + lz * ox + fz * oz, kk, 0.85, 0.9, 1.0);
+          this.trails.push(k.id * 2 + w, k.x + lx * side * 1.0 - fx * 0.75, k.y + 1.0, k.z + lz * side * 1.0 - fz * 0.75, boost ? 1 : 0, 0.35, 0.8, 1.6);
+          const wx = k.x + lx * side * 0.6 - fx * 0.75, wz = k.z + lz * side * 0.6 - fz * 0.75;
+          this.streaks.push(k.id * 2 + w, wx, k.y + 0.06, wz, dk, 0.75, 0.85, 1.05, lx, 0, lz);
         }
       }
       // 火焰發射器：從兩側噴嘴往前噴出火舌
@@ -652,6 +659,7 @@ export class GameView {
     this.hazardView?.update(race, this.time);
 
     this.trails.update();
+    this.streaks.update();
     this.scorch.update(dt);
     this.blast.update(dt);
     this.debris?.update(dt);
@@ -709,7 +717,8 @@ export class GameView {
       k.z - dz * dist + Math.sin(t * 1.3 + 1) * sh,
     );
     this.camera.lookAt(k.x + dx * 6, this.camY + 1.7 + slope * 6, k.z + dz * 6);
-    this.camera.rotateZ(Math.sin(t * 1.1) * sh * 0.05);
+    this.driftRoll += ((k.drifting ? clamp(k.slip, -0.6, 0.6) * 0.09 : 0) - this.driftRoll) * Math.min(1, dt * 5);
+    this.camera.rotateZ(Math.sin(t * 1.1) * sh * 0.05 + this.driftRoll * (lookBack ? -1 : 1));
     const fov = 64 + ratio * 9 + this.boostK * 14;
     this.fov += (fov - this.fov) * Math.min(1, dt * 6);
     if (Math.abs(this.camera.fov - this.fov) > 0.05) {

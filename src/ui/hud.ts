@@ -227,7 +227,7 @@ export class Hud {
     this.wasDrafting = p.drafting;
 
     // 畫面效果：加速時的速度線、受擊時的紅色邊框
-    const sp = Math.round(Math.max(view.boostK, p.drafting ? 0.35 : 0) * 10) / 10;
+    const sp = Math.round(Math.max(view.boostK, p.drafting ? 0.35 : 0, p.drifting ? Math.min(0.4, Math.abs(p.slip) * 0.9) : 0) * 10) / 10;
     if (this.cache.fxs !== sp) {
       this.cache.fxs = sp;
       this.fxSpeed.style.opacity = String(sp);

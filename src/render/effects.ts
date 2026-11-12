@@ -245,20 +245,24 @@ export class BlastFx {
 export class Trails {
   mesh: THREE.Mesh;
   private n: number;
-  private pts = 22;
+  private pts: number;
+  private width: number;
   private pos: Float32Array;
   private col: Float32Array;
-  /** 每條帶子的歷史點：x, y, z, 強度, r, g, b */
+  /** 每條帶子的歷史點：x, y, z, 強度, r, g, b, 寬度方向 ox, oy, oz */
   private hist: Float32Array;
   private head: Int32Array;
   private geo: THREE.BufferGeometry;
 
-  constructor(ribbons: number) {
+  /** pts：每條帶子記錄幾個點（越多越長）；width：最寬處的半寬 */
+  constructor(ribbons: number, pts = 22, width = 0.25) {
     this.n = ribbons;
+    this.pts = pts;
+    this.width = width;
     const P = this.pts;
     this.pos = new Float32Array(ribbons * P * 2 * 3);
     this.col = new Float32Array(ribbons * P * 2 * 3);
-    this.hist = new Float32Array(ribbons * P * 7);
+    this.hist = new Float32Array(ribbons * P * 10);
     this.head = new Int32Array(ribbons);
     const idx: number[] = [];
     for (let r = 0; r < ribbons; r++) {
@@ -278,12 +282,18 @@ export class Trails {
     this.mesh.renderOrder = 3;
   }
 
-  /** 記錄第 r 條帶子這一幀的位置；k = 0 表示沒有在噴（帶子會慢慢消失） */
-  push(r: number, x: number, y: number, z: number, k: number, cr: number, cg: number, cb: number): void {
+  /**
+   * 記錄第 r 條帶子這一幀的位置；k = 0 表示沒有在噴（帶子會慢慢消失）。
+   * (ox, oy, oz) 是帶子寬度的方向：預設垂直，傳入橫向向量就變成平貼地面的帶子。
+   */
+  push(r: number, x: number, y: number, z: number, k: number, cr: number, cg: number, cb: number, ox = 0, oy = 1, oz = 0): void {
     if (r >= this.n) return;
     const P = this.pts;
     const h = (this.head[r] = (this.head[r] + 1) % P);
-    this.hist.set([x, y, z, k, cr, cg, cb], (r * P + h) * 7);
+    const H = this.hist, j = (r * P + h) * 10;
+    H[j] = x; H[j + 1] = y; H[j + 2] = z; H[j + 3] = k;
+    H[j + 4] = cr; H[j + 5] = cg; H[j + 6] = cb;
+    H[j + 7] = ox; H[j + 8] = oy; H[j + 9] = oz;
   }
 
   update(): void {
@@ -292,12 +302,13 @@ export class Trails {
       const h = this.head[r];
       for (let i = 0; i < P; i++) {
         // i = 0 是最新的點
-        const j = (r * P + ((h - i + P) % P)) * 7;
+        const j = (r * P + ((h - i + P) % P)) * 10;
         const fade = 1 - i / (P - 1);
         const k = H[j + 3] * fade;
-        const w = 0.05 + 0.2 * fade;
+        const w = this.width * (0.2 + 0.8 * fade);
+        const ox = H[j + 7] * w, oy = H[j + 8] * w, oz = H[j + 9] * w;
         const v = (r * P + i) * 2;
-        this.pos.set([H[j], H[j + 1] + w, H[j + 2], H[j], H[j + 1] - w, H[j + 2]], v * 3);
+        this.pos.set([H[j] + ox, H[j + 1] + oy, H[j + 2] + oz, H[j] - ox, H[j + 1] - oy, H[j + 2] - oz], v * 3);
         this.col.set([H[j + 4] * k, H[j + 5] * k, H[j + 6] * k, H[j + 4] * k * 0.5, H[j + 5] * k * 0.5, H[j + 6] * k * 0.5], v * 3);
       }
     }

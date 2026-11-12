@@ -73,7 +73,80 @@ const SHELL = new THREE.MeshBasicMaterial({
 });
 const WING_GLOW = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.4, 1.6, 2.6) });
 
-const SHARED_GEOS = new Set<THREE.BufferGeometry>([shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, shadowGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo]);
+// 甩尾時從後輪往外後方噴出的白色破風：好幾道帶鋸齒的弧線
+const sprayTex = [0, 1, 2].map((seed) => {
+  const cv = document.createElement('canvas');
+  cv.width = 256;
+  cv.height = 192;
+  const c = cv.getContext('2d')!;
+  let s = 1234 + seed * 777;
+  const R = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  c.lineCap = 'round';
+  for (let i = 0; i < 22; i++) {
+    // 從左下角（後輪）往右上（外側、後方）扇形散開
+    const ang = 0.15 + R() * 1.1;
+    const len = 120 + R() * 140;
+    let x = 4 + R() * 10, y = 186 - R() * 10;
+    c.strokeStyle = 'rgba(255,255,255,' + (0.35 + R() * 0.6).toFixed(2) + ')';
+    c.lineWidth = 2 + R() * 3.5;
+    c.beginPath();
+    c.moveTo(x, y);
+    const steps = 8;
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps, bend = ang + t * 0.35;
+      const jag = (R() - 0.5) * 9 * t;
+      x += (Math.cos(bend) * len) / steps + jag * Math.sin(bend);
+      y -= (Math.sin(bend) * len) / steps - jag * Math.cos(bend);
+      c.lineTo(x, y);
+    }
+    c.stroke();
+    // 尖刺
+    if (R() < 0.6) {
+      c.fillStyle = 'rgba(255,255,255,0.75)';
+      c.beginPath();
+      c.moveTo(x, y);
+      c.lineTo(x + 14 + R() * 18, y - 4 - R() * 10);
+      c.lineTo(x + 2, y + 3);
+      c.closePath();
+      c.fill();
+    }
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+});
+// 噴花平面：內側前緣（後輪位置）在原點，往外側（+X）與後方（-Z）展開
+const sprayGeo = new THREE.PlaneGeometry(2.3, 3.2).rotateX(-Math.PI / 2).translate(1.15, 0, -1.6);
+// 排氣管的螺旋火環（甩尾集氣時出現）
+const swirlTex = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const c = cv.getContext('2d')!;
+  c.translate(32, 32);
+  c.lineCap = 'round';
+  for (let k = 0; k < 3; k++) {
+    c.strokeStyle = k === 0 ? 'rgba(255,240,170,0.95)' : 'rgba(255,170,40,0.85)';
+    c.lineWidth = k === 0 ? 3 : 4;
+    c.beginPath();
+    for (let a = 0; a < Math.PI * 3.2; a += 0.15) {
+      const r = 4 + a * 2.6 + k;
+      const x = Math.cos(a + k * 2.1) * r, y = Math.sin(a + k * 2.1) * r;
+      if (a === 0) c.moveTo(x, y);
+      else c.lineTo(x, y);
+    }
+    c.stroke();
+  }
+  const g = c.createRadialGradient(0, 0, 0, 0, 0, 30);
+  g.addColorStop(0, 'rgba(255,220,120,0.5)');
+  g.addColorStop(1, 'rgba(255,140,30,0)');
+  c.fillStyle = g;
+  c.fillRect(-32, -32, 64, 64);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+
+const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, shadowGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo]);
 
 /** 模型放大倍率：Kenney 卡丁車原始約 1 m 寬，放大成遊戲中的車體尺寸 */
 const MODEL_SCALE = 1.9;
@@ -122,6 +195,10 @@ export class KartView {
   private spoiler = new THREE.Group();
   private shell: THREE.Mesh;
   private deploy = 0;
+  /** 甩尾的破風噴花（左右各一）與排氣管的螺旋火環 */
+  private sprays: THREE.Mesh[] = [];
+  private swirls: THREE.Sprite[] = [];
+  private sprayT = 0;
   private paint: THREE.MeshLambertMaterial;
   private ownMats: THREE.Material[] = [];
   private hpTex?: THREE.CanvasTexture;
@@ -155,6 +232,7 @@ export class KartView {
     this.addWeapons(look.primary, look.secondary);
     this.shell = new THREE.Mesh(shellGeo, SHELL);
     this.addBoostKit();
+    this.addDriftFx(!!model);
 
     // 噴射火焰
     for (const x of [-0.3, 0.3]) {
@@ -293,6 +371,34 @@ export class KartView {
     b.add(sec);
   }
 
+  /** 甩尾特效：後輪外側往後噴的白色破風，以及排氣管的螺旋火環 */
+  private addDriftFx(fromModel: boolean): void {
+    for (const side of [1, -1]) {
+      const g = new THREE.Group();
+      g.position.set(side * 0.85, 0.12, -0.75);
+      g.scale.x = side;
+      const mat = new THREE.MeshBasicMaterial({ map: sprayTex[0], transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(1.5, 1.6, 1.9) });
+      this.ownMats.push(mat);
+      const m = new THREE.Mesh(sprayGeo, mat);
+      m.rotation.z = 0.32; // 外緣微微翹起，從後方看得到
+      m.renderOrder = 6;
+      g.add(m);
+      g.visible = false;
+      this.group.add(g);
+      this.sprays.push(m);
+    }
+    for (const x of [-0.3, 0.3]) {
+      const sm = new THREE.SpriteMaterial({ map: swirlTex, color: new THREE.Color(2, 1.25, 0.45), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+      this.ownMats.push(sm);
+      const sp = new THREE.Sprite(sm);
+      sp.position.set(x, 0.58, fromModel ? -1.25 : -1.6);
+      sp.scale.setScalar(0.6);
+      sp.visible = false;
+      this.body.add(sp);
+      this.swirls.push(sp);
+    }
+  }
+
   /** N2O 時展開的翼片與尾翼（平常收起來看不到） */
   private addBoostKit(): void {
     const b = this.body;
@@ -344,6 +450,8 @@ export class KartView {
     for (const f of this.fires) f.visible = false;
     for (const bm of this.beams) bm.visible = false;
     for (const w of this.wings) w.visible = false;
+    for (const m of this.sprays) m.parent!.visible = false;
+    for (const sw of this.swirls) sw.visible = false;
     this.spoiler.visible = false;
     this.shell.visible = false;
     this.deploy = 0;
@@ -438,6 +546,37 @@ export class KartView {
 
     const boosting = k.boostT > 0;
     const mini = k.miniT > 0 || k.padT > 0;
+    // 甩尾破風：外側（車尾甩出去的那邊）比較強；電腦沒有真的甩尾，用轉向量代替
+    const sliding = k.air <= 0 && k.speed > 16 && (k.drifting ? Math.abs(k.slip) > 0.1 : k.aiAssist && Math.abs(k.steerVis) > 0.75 && k.speed > 20);
+    const dir = k.drifting ? k.driftDir : Math.sign(k.steerVis);
+    const amt = sliding ? Math.min(1, 0.45 + Math.abs(k.slip) * 1.6 + (k.aiAssist ? 0.2 : 0)) : 0;
+    this.sprayT += dt;
+    const flip = this.sprayT > 0.05;
+    if (flip) this.sprayT = 0;
+    for (let i = 0; i < this.sprays.length; i++) {
+      const m = this.sprays[i], side = i === 0 ? 1 : -1;
+      // 左甩（dir > 0）時車尾往右甩，右側（side = -1）是外側
+      const outer = side === -dir;
+      const target = amt * (outer ? 1 : 0.45);
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.opacity += (target - mat.opacity) * Math.min(1, dt * 12);
+      const vis = mat.opacity > 0.02;
+      m.parent!.visible = vis;
+      if (vis && flip) {
+        mat.map = sprayTex[Math.floor(Math.random() * sprayTex.length)];
+        const sc = 0.8 + Math.random() * 0.4 + (outer ? 0.25 : 0);
+        m.scale.set(sc, 1, 0.85 + Math.random() * 0.35);
+      }
+    }
+    // 螺旋火環：甩尾集氣中或小噴時出現
+    const charging = (k.drifting && k.driftTime > 0.35) || k.miniT > 0 || (k.aiAssist && sliding);
+    for (const sw of this.swirls) {
+      sw.visible = charging && !boosting;
+      if (sw.visible) {
+        (sw.material as THREE.SpriteMaterial).rotation -= dt * 14;
+        sw.scale.setScalar(0.5 + Math.random() * 0.18 + (k.miniT > 0 ? 0.2 : 0));
+      }
+    }
     // N2O 變形：翼片往外展開、尾翼升起；結束後收回
     this.deploy += ((boosting && !k.dead ? 1 : 0) - this.deploy) * Math.min(1, dt * (boosting ? 9 : 4));
     const d = this.deploy * this.deploy * (3 - 2 * this.deploy);
