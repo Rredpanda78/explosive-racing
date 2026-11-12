@@ -273,7 +273,7 @@ export class GameView {
     this.boostK = 0;
     if (!race) return;
     for (const k of race.karts) {
-      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car }, this.shadows);
+      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery] }, this.shadows);
       this.kartViews.set(k, kv);
       this.scene.add(kv.group);
       kv.update(k, 0);

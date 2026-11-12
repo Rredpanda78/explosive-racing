@@ -35,6 +35,12 @@ let slowT = 0;
 /** 這場靠連續擊毀多賺的獎金 */
 let streakCash = 0;
 
+/** 套用手機按鈕樣式 */
+function applyTouchSkin(): void {
+  for (let i = 1; i <= 5; i++) touchRoot.classList.toggle('skin-' + i, profile.touchSkin === i);
+}
+applyTouchSkin();
+
 function setTouchUI(on: boolean): void {
   document.body.classList.toggle('touch', on);
   touchRoot.classList.toggle('hidden', !on || !race || resultsShown);
@@ -110,6 +116,7 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     audio.setMuted(!audio.muted);
     return audio.muted;
   },
+  touchSkin: applyTouchSkin,
 });
 
 input.bindTouch(touchRoot);

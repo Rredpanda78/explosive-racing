@@ -8,7 +8,10 @@ export const KART_MODELS = ['kart-oobi', 'kart-oodi', 'kart-ooli', 'kart-oopi', 
 /** 使用者用 Tripo 生成的車體 */
 export const CAR_MODELS = ['tripo/car1', 'tripo/car2', 'tripo/car3', 'tripo/car4', 'tripo/car5'];
 /** 使用者用 Tripo 生成的地標造景 */
-export const LANDMARK_MODELS = ['tripo/city_a', 'tripo/city_b', 'tripo/windmill_tower', 'tripo/windmill_blades'];
+export const LANDMARK_MODELS = [
+  'tripo/city_a', 'tripo/city_b', 'tripo/windmill_tower', 'tripo/windmill_blades',
+  'tripo/water_tower', 'tripo/ferris_stand', 'tripo/ferris_wheel', 'tripo/highrise',
+];
 export const DEBRIS_MODELS = ['debris-tire', 'debris-plate-a', 'debris-spoiler-a', 'debris-bumper', 'debris-bolt'];
 export const PROP_MODELS = [
   'grandStand', 'grandStandCovered', 'grandStandAwning', 'pitsGarage', 'pitsOffice', 'tent', 'tentLong', 'tentClosed',

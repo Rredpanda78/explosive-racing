@@ -74,22 +74,64 @@ body.touch #speed b { font-size: calc(6 * var(--u)); }
 body.touch #feed { display: none; }
 
 /* ---------- 觸控按鈕 ---------- */
-#touch { position: fixed; inset: 0; pointer-events: none; }
-.tbtn { pointer-events: auto; position: absolute; display: flex; align-items: center; justify-content: center; border-radius: 50%; border: 3px solid rgba(255,255,255,.7); background: rgba(20,22,30,.38); font-weight: 900; font-style: italic; font-size: calc(3.4 * var(--u)); touch-action: none; }
-.tbtn.on { background: rgba(255,210,63,.75); color: #1a1a1a; transform: scale(.94); }
-#t-steer { pointer-events: auto; position: absolute; left: calc(3 * var(--u) + env(safe-area-inset-left)); bottom: calc(5 * var(--u)); width: calc(50 * var(--u)); height: calc(26 * var(--u)); touch-action: none; }
-#t-steer .tbtn { pointer-events: none; width: calc(23 * var(--u)); height: calc(23 * var(--u)); bottom: 0; font-size: calc(7 * var(--u)); border-radius: 26%; }
+/* 左手：方向與後視；右手：主副武器、N2O（甩尾後變成小噴）、甩尾、最右下角的煞車 */
+#touch { position: fixed; inset: 0; pointer-events: none; --sr: env(safe-area-inset-right); --sl: env(safe-area-inset-left); }
+.tbtn { pointer-events: auto; position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(.3 * var(--u)); border-radius: 50%; touch-action: none; font-weight: 900; font-style: italic; color: #fff; transition: transform .06s, background .1s; --c: #fff; }
+.tbtn .ic { display: block; width: 46%; height: 46%; font-style: normal; }
+.tbtn .ic svg { width: 100%; height: 100%; display: block; }
+.tbtn b { font-size: calc(2.4 * var(--u)); line-height: 1; letter-spacing: .02em; }
+.tbtn em { position: absolute; top: 4%; right: 4%; font-style: normal; font-size: calc(2.6 * var(--u)); min-width: 1.5em; text-align: center; border-radius: 1em; background: rgba(0,0,0,.6); color: #fff; padding: 0 .3em; }
+.tbtn em:empty { display: none; }
+.tbtn.on { transform: scale(.92); }
+
+#t-steer { pointer-events: auto; position: absolute; left: calc(3 * var(--u) + var(--sl)); bottom: calc(5 * var(--u)); width: calc(50 * var(--u)); height: calc(26 * var(--u)); touch-action: none; }
+#t-steer .tbtn { pointer-events: none; width: calc(23 * var(--u)); height: calc(23 * var(--u)); bottom: 0; border-radius: 26%; }
+#t-steer .tbtn .ic { width: 58%; height: 58%; }
 .steer-l { left: 0; }
 .steer-r { right: 0; }
-#t-fire { position: absolute; left: calc(3 * var(--u) + env(safe-area-inset-left)); bottom: calc(36 * var(--u)); width: calc(50 * var(--u)); height: calc(19 * var(--u)); }
-#t-fire .tbtn { width: calc(19 * var(--u)); height: calc(19 * var(--u)); font-size: calc(3 * var(--u)); border-color: rgba(255,122,26,.9); }
-#t-fire .tbtn.alt { left: calc(24 * var(--u)); border-color: rgba(255,71,71,.9); }
-#t-fire .tbtn.on { background: rgba(255,122,26,.85); }
-#t-drift { right: calc(4 * var(--u) + env(safe-area-inset-right)); bottom: calc(5 * var(--u)); width: calc(29 * var(--u)); height: calc(29 * var(--u)); font-size: calc(5 * var(--u)); }
-#t-boost { right: calc(34 * var(--u) + env(safe-area-inset-right)); bottom: calc(20 * var(--u)); width: calc(21 * var(--u)); height: calc(21 * var(--u)); border-color: var(--n2o); color: var(--n2o); }
-#t-boost.on { background: rgba(95,212,255,.85); color: #10222c; }
-#t-brake { right: calc(36 * var(--u) + env(safe-area-inset-right)); bottom: calc(3 * var(--u)); width: calc(14 * var(--u)); height: calc(14 * var(--u)); font-size: calc(2.6 * var(--u)); }
-#t-look { right: calc(8 * var(--u) + env(safe-area-inset-right)); bottom: calc(37 * var(--u)); width: calc(13 * var(--u)); height: calc(13 * var(--u)); font-size: calc(2.6 * var(--u)); }
+#t-look { left: calc(3 * var(--u) + var(--sl)); bottom: calc(37 * var(--u)); width: calc(13 * var(--u)); height: calc(13 * var(--u)); }
+#t-look b, #t-brake b { display: none; }
+#t-look .ic { width: 62%; height: 62%; }
+#t-brake { right: calc(2 * var(--u) + var(--sr)); bottom: calc(2 * var(--u)); width: calc(14 * var(--u)); height: calc(14 * var(--u)); --c: #ff5a4d; }
+#t-brake .ic { width: 64%; height: 64%; }
+#t-drift { right: calc(18 * var(--u) + var(--sr)); bottom: calc(3 * var(--u)); width: calc(28 * var(--u)); height: calc(28 * var(--u)); --c: #ffd23f; }
+#t-drift b { font-size: calc(3.4 * var(--u)); }
+#t-boost { right: calc(48 * var(--u) + var(--sr)); bottom: calc(5 * var(--u)); width: calc(21 * var(--u)); height: calc(21 * var(--u)); --c: #5fd4ff; }
+#t-fire1 { right: calc(19 * var(--u) + var(--sr)); bottom: calc(34 * var(--u)); width: calc(20 * var(--u)); height: calc(20 * var(--u)); --c: #ff9a3c; }
+#t-fire2 { right: calc(2 * var(--u) + var(--sr)); bottom: calc(19 * var(--u)); width: calc(15 * var(--u)); height: calc(15 * var(--u)); --c: #ff5a7a; }
+#t-fire2 b { font-size: calc(2 * var(--u)); }
+/* N2O 按鈕的狀態：沒有氣瓶時變暗；甩尾後的小噴時機變成橘色閃電並跳動；噴射中發藍光 */
+#t-boost.empty { opacity: .45; }
+#t-boost.mini { --c: #ffb02e; animation: minipulse .32s ease-in-out infinite alternate; opacity: 1; }
+@keyframes minipulse { from { transform: scale(1); } to { transform: scale(1.14); } }
+
+/* 1. 霓虹：深色半透明底、發光的彩色外框 */
+.skin-1 .tbtn { background: rgba(8,10,22,.45); border: calc(.5 * var(--u)) solid var(--c); color: var(--c); box-shadow: 0 0 calc(1.6 * var(--u)) var(--c), inset 0 0 calc(1.2 * var(--u)) color-mix(in srgb, var(--c) 45%, transparent); text-shadow: 0 0 calc(1 * var(--u)) var(--c); }
+.skin-1 .tbtn.on, .skin-1 #t-boost.boosting { background: var(--c); color: #0b0d18; text-shadow: none; }
+
+/* 2. 街機：實心鮮豔色塊、粗黑框、底部陰影（像卡通賽車遊戲） */
+.skin-2 .tbtn { background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 65%, #fff) 0, var(--c) 45%, color-mix(in srgb, var(--c) 70%, #000) 100%); border: calc(.7 * var(--u)) solid #16171c; box-shadow: 0 calc(1 * var(--u)) 0 #000b; color: #fff; -webkit-text-stroke: calc(.15 * var(--u)) #16171c; }
+.skin-2 .tbtn .ic { filter: drop-shadow(0 calc(.3 * var(--u)) 0 #16171c); }
+.skin-2 #t-steer .tbtn, .skin-2 #t-look { --c: #8a93a6; }
+.skin-2 .tbtn.on { transform: translateY(calc(.8 * var(--u))) scale(.96); box-shadow: 0 calc(.2 * var(--u)) 0 #000b; }
+
+/* 3. 極簡：細白框、幾乎透明、只有圖示 */
+.skin-3 .tbtn { background: rgba(255,255,255,.07); border: 2px solid rgba(255,255,255,.55); color: rgba(255,255,255,.92); }
+.skin-3 .tbtn b { display: none; }
+.skin-3 .tbtn .ic { width: 50%; height: 50%; }
+.skin-3 .tbtn.on { background: rgba(255,255,255,.38); }
+.skin-3 #t-boost.mini { color: #ffb02e; border-color: #ffb02e; }
+
+/* 4. 戰鬥：六角形金屬按鈕、黃黑警示邊 */
+.skin-4 .tbtn { border-radius: 0; clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); border: calc(.9 * var(--u)) solid transparent;
+  background: linear-gradient(160deg, #6a7282, #2a2e37 60%, #1c1f26) padding-box, repeating-linear-gradient(45deg, #ffc93c 0 calc(1 * var(--u)), #17181c calc(1 * var(--u)) calc(2 * var(--u))) border-box; color: var(--c); }
+.skin-4 #t-steer .tbtn { clip-path: polygon(15% 0, 85% 0, 100% 50%, 85% 100%, 15% 100%, 0 50%); }
+.skin-4 .tbtn.on { background: linear-gradient(160deg, var(--c), color-mix(in srgb, var(--c) 55%, #000)) padding-box, repeating-linear-gradient(45deg, #ffc93c 0 calc(1 * var(--u)), #17181c calc(1 * var(--u)) calc(2 * var(--u))) border-box; color: #111; }
+
+/* 5. 玻璃：圓角方形毛玻璃，顏色只在圖示上 */
+.skin-5 .tbtn { border-radius: 30%; background: linear-gradient(160deg, rgba(255,255,255,.28), rgba(255,255,255,.08)); border: 1px solid rgba(255,255,255,.45); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: var(--c); box-shadow: 0 calc(.8 * var(--u)) calc(2 * var(--u)) rgba(0,0,0,.25); }
+.skin-5 .tbtn b { color: #fff; }
+.skin-5 .tbtn.on { background: color-mix(in srgb, var(--c) 55%, transparent); color: #fff; }
 
 /* ---------- 選單畫面 ---------- */
 .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(10,12,18,.35), rgba(10,12,18,.78)); padding: 3vh 4vw; overflow-y: auto; touch-action: pan-y; }
@@ -141,6 +183,17 @@ kbd { background: #343948; border-radius: 4px; padding: .05em .45em; font-family
 #elim:empty { display: none; }
 #elim.warn { background: rgba(255,50,50,.85); animation: blink .5s steps(2) infinite; }
 @keyframes blink { 50% { opacity: .55; } }
+/* 車庫：專屬特性與花色色票 */
+.card .trait { color: var(--accent); font-size: .85em; margin: .2em 0 .4em; }
+.swatches { display: flex; gap: .35em; flex-wrap: wrap; margin-bottom: .5em; }
+.swatch { font: inherit; font-size: .78em; color: #fff; display: inline-flex; align-items: center; gap: .3em; padding: .15em .5em .15em .25em; border-radius: 1em; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.3); cursor: pointer; }
+.swatch span { width: 1em; height: 1em; border-radius: 50%; background: var(--sw); border: 1px solid rgba(255,255,255,.6); }
+.swatch.on { border-color: var(--accent); background: rgba(255,210,63,.18); }
+.swatch:disabled { opacity: .5; cursor: default; }
+/* 只在觸控裝置顯示 */
+.touch-only { display: none !important; }
+@media (pointer: coarse) { .touch-only { display: flex !important; } }
+body.touch .touch-only { display: flex !important; }
 /* 電腦難度選擇 */
 .diffs { display: flex; align-items: center; justify-content: center; gap: .45em; margin-top: 1em; flex-wrap: wrap; }
 .diffs span { font-weight: 700; opacity: .85; margin-right: .3em; }

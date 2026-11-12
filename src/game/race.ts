@@ -179,6 +179,13 @@ export class Race {
       k.handling = car.handling;
       k.ramMul = car.ram;
       k.mass = car.mass;
+      k.spareN2O = !!car.spareN2O;
+      k.miniMul = car.miniMul ?? 1;
+      k.draftMul = car.draftMul ?? 1;
+      k.blastMul = car.blastMul ?? 1;
+      k.afterburn = !!car.afterburn;
+      // 花色：玩家用車庫選的，電腦隨機
+      k.livery = isP ? (profile.livery?.[k.car] ?? 0) : Math.floor(rng() * car.liveries.length);
       this.ais.get(k)!.baseSpeedMul = k.maxSpeedMul;
       this.karts.push(k);
     }
@@ -258,6 +265,7 @@ export class Race {
           k.heat = 0;
           k.overheated = false;
           k.burnT = 0;
+          if (k.spareN2O) k.n2o = Math.max(k.n2o, 1);
           ev.push({ t: 'respawn', k });
         }
         continue;
@@ -431,6 +439,8 @@ export class Race {
   /** 把車撞飛：往 (dx,dz) 方向推、離地、翻滾 */
   private knock(k: Kart, dx: number, dz: number, push: number, lift: number): void {
     if (k.dead || k.invulnT > 0) return;
+    push *= k.blastMul;
+    lift *= 0.4 + 0.6 * k.blastMul;
     k.vx = k.vx * 0.5 + dx * push;
     k.vz = k.vz * 0.5 + dz * push;
     if (k.air <= 0) k.jumped = false;
@@ -455,11 +465,12 @@ export class Race {
       if (!k.dead && !immune) {
         // 衝擊波：往外推、炸離地面、打轉
         const inv = d > 0.01 ? 1 / d : 0;
-        k.vx = k.vx * 0.7 + dx * inv * 9 * f;
-        k.vz = k.vz * 0.7 + dz * inv * 9 * f;
+        const bm = k.blastMul;
+        k.vx = k.vx * 0.7 + dx * inv * 9 * f * bm;
+        k.vz = k.vz * 0.7 + dz * inv * 9 * f * bm;
         if (k.air <= 0) k.jumped = false;
         k.air = Math.max(k.air, 0.05);
-        k.vy = Math.max(k.vy, CFG.blastLift * (0.45 + 0.55 * f));
+        k.vy = Math.max(k.vy, CFG.blastLift * (0.45 + 0.55 * f) * (0.4 + 0.6 * bm));
         k.spinVel += (this.rng() - 0.5) * 5 * f;
         k.tumble = (this.rng() > 0.5 ? 1 : -1) * (4 + 5 * f);
         k.drifting = false;

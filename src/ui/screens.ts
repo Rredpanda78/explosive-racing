@@ -1,6 +1,8 @@
 import { CAR_IDS, CARS, type CarId } from '../game/cars';
 import { KILL_REWARD } from '../game/config';
 import type { Race, RaceMode } from '../game/race';
+import { TOUCH_SKINS } from './touchIcons';
+import { liverySwatch } from '../render/livery';
 import { carIcon, weaponIcon } from '../render/weaponIcons';
 import { DIFFICULTY, DIFFICULTY_IDS, type DifficultyId } from '../game/difficulty';
 import { saveProfile, type Profile } from '../game/save';
@@ -24,6 +26,8 @@ export interface ScreenActions {
   restart(): void;
   toMenu(): void;
   toggleMute(): boolean;
+  /** 套用手機按鈕樣式（profile.touchSkin 已更新） */
+  touchSkin(): void;
 }
 
 /** 一場比賽的結算內容（由 main 計算後交給結算畫面顯示） */
@@ -78,6 +82,12 @@ export class Screens {
     switch (act) {
       case 'start': this.act.start(id as RaceMode | undefined); break;
       case 'track': this.act.selectTrack(Number(id)); break;
+      case 'skin':
+        p.touchSkin = Number(id);
+        saveProfile(p);
+        this.act.touchSkin();
+        this.root.querySelectorAll('.skinbtn').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.id === id));
+        break;
       case 'diff':
         p.difficulty = id as DifficultyId;
         saveProfile(p);
@@ -143,6 +153,16 @@ export class Screens {
         this.garage();
         break;
       }
+      case 'livery': {
+        const [c, i] = (id ?? '').split(':');
+        if (p.karts[c as CarId]) {
+          p.livery = { ...p.livery, [c]: Number(i) };
+          p.kart = c as CarId;
+        }
+        saveProfile(p);
+        this.garage();
+        break;
+      }
       case 'usecar': {
         const c = id as CarId;
         if (p.karts[c]) p.kart = c;
@@ -178,6 +198,7 @@ export class Screens {
           </button>
         </div>
         <div class="diffs"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="diffbtn ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}" title="${DIFFICULTY[d].desc}">${DIFFICULTY[d].name}</button>`).join('')}<em>${DIFFICULTY[p.difficulty].desc}</em></div>
+        ${this.skinRow()}
         <div class="row" style="margin-top:0.8em"><button class="btn" data-act="garage">車庫</button></div>
         <div class="tagline" style="margin:1.1em 0 0">
           <span class="cash">$${p.cash}</span>　${CARS[p.kart].name}・${PRIMARY[p.primary].name}・${SECONDARY[p.secondary].name}　出賽 ${p.races}　冠軍 ${p.wins}　${cur.name}最快單圈 ${formatTime(p.bestLaps[p.track] ?? 0)}
@@ -244,11 +265,15 @@ export class Screens {
     const btn = !owned
       ? `<button class="btn small primary" data-act="buycar" data-id="${id}" ${p.cash < c.price ? 'disabled' : ''}>購買 $${c.price}</button>`
       : `<button class="btn small" data-act="usecar" data-id="${id}" ${using ? 'disabled' : ''}>${using ? '使用中' : '選用'}</button>`;
-    const icon = carIcon(c.model);
+    const lv = p.livery?.[id] ?? 0;
+    const icon = carIcon(c.model, c.liveries[lv]);
+    const swatches = c.liveries.map((l, i) => `<button class="swatch ${i === lv ? 'on' : ''}" data-act="livery" data-id="${id}:${i}" ${owned ? '' : 'disabled'} title="${l.name}" style="--sw:${liverySwatch(l, c.color)}"><span></span>${l.name}</button>`).join('');
     return `<div class="card ${using ? 'equipped' : ''}">
       ${icon ? `<div class="wimg car"><img src="${icon}" alt="" /></div>` : ''}
       <h4>${c.name}<small>${owned ? '已擁有' : '未擁有'}</small></h4>
       <p>${c.desc}</p>
+      <p class="trait">★ ${c.trait}</p>
+      <div class="swatches">${swatches}</div>
       ${stat('極速', (c.speed - 0.94) / 0.12)}
       ${stat('加速', (c.accel - 0.88) / 0.2)}
       ${stat('操控', (c.handling - 0.9) / 0.26)}
@@ -296,12 +321,19 @@ export class Screens {
     if (s) s.scrollTop = scroll;
   }
 
+  /** 手機按鈕樣式的選擇列（只在觸控裝置顯示） */
+  private skinRow(): string {
+    const cur = this.profile.touchSkin;
+    return `<div class="diffs touch-only"><span>手機按鈕</span>${TOUCH_SKINS.map((s) => `<button class="diffbtn skinbtn ${cur === s.id ? 'on' : ''}" data-act="skin" data-id="${s.id}">${s.id}・${s.name}</button>`).join('')}</div>`;
+  }
+
   pause(muted: boolean, missionHtml: string): void {
     this.current = 'pause';
     this.root.innerHTML = `
       <div class="screen">
         <h1 class="title" style="font-size:clamp(28px,7vw,64px)">暫停</h1>
         <div class="missions-box">${missionHtml}</div>
+        ${this.skinRow()}
         <div class="row" style="flex-direction:column;align-items:center">
           <button class="btn primary" data-act="resume">繼續</button>
           <button class="btn" data-act="restart">重新開始</button>

@@ -135,6 +135,14 @@ export class Kart {
   /** 剛被機關打到後的保護時間（避免同一個機關連續判定） */
   hazardCd = 0;
 
+  // 車款專屬特性與花色
+  livery = 0;
+  spareN2O = false;
+  miniMul = 1;
+  draftMul = 1;
+  blastMul = 1;
+  afterburn = false;
+
   // 車款與升級係數
   maxSpeedMul = 1;
   accelMul = 1;
@@ -275,7 +283,7 @@ export class Kart {
 
     // ---- 小噴 / N2O 觸發 ----
     if (this.miniWindowT > 0 && (accelEdge || boostEdge)) {
-      this.miniT = C.miniTime;
+      this.miniT = C.miniTime * this.miniMul;
       this.miniWindowT = 0;
       this.addGauge(C.gaugeMini, emit);
       emit('mini');
@@ -293,7 +301,7 @@ export class Kart {
     if (boosting) vmax *= C.boostSpeedMul;
     else if (padOn) vmax *= C.padSpeedMul;
     else if (this.miniT > 0) vmax *= C.miniSpeedMul;
-    if (this.drafting && !flying) vmax *= C.draftSpeedMul;
+    if (this.drafting && !flying) vmax *= 1 + (C.draftSpeedMul - 1) * this.draftMul;
     const forced = boosting || padOn || this.miniT > 0;
     const throttle = inp.accel < -0.1 ? inp.accel : forced ? 1 : inp.accel;
     const sm0 = this.surface(track);
@@ -312,7 +320,7 @@ export class Kart {
           else if (this.miniT > 0) a = C.miniAccel;
           else {
             const r = Math.max(0, s) / vmax;
-            a = C.accel * this.accelMul * Math.max(0.1, 1 - r * r) + (this.drafting ? C.draftAccel : 0);
+            a = C.accel * this.accelMul * Math.max(0.1, 1 - r * r) + (this.drafting ? C.draftAccel * this.draftMul : 0);
           }
           s = Math.min(vmax, s + a * throttle * dt);
         } else {
@@ -327,7 +335,13 @@ export class Kart {
       }
     }
 
+    const wasBoost = this.boostT > 0;
     this.boostT = Math.max(0, this.boostT - dt);
+    // 後燃器：N2O 噴完接一次小噴
+    if (this.afterburn && wasBoost && this.boostT <= 0) {
+      this.miniT = C.miniTime * this.miniMul;
+      emit('mini');
+    }
     this.miniT = Math.max(0, this.miniT - dt);
     this.miniWindowT = Math.max(0, this.miniWindowT - dt);
     this.padT = Math.max(0, this.padT - dt);
@@ -344,7 +358,7 @@ export class Kart {
     if (this.aiAssist && s > 18) fill += this.aiGauge * Math.abs(inp.steer);
     if (s > 15) fill += C.gaugePassive;
     if (this.drafting) {
-      fill += C.gaugeDraft;
+      fill += C.gaugeDraft * this.draftMul;
       if (!this.finished) this.stats.draftTime += dt;
     }
     if (fill > 0) {

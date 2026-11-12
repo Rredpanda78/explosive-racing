@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Kart } from '../game/kart';
 import type { PrimaryId, SecondaryId } from '../game/weapons';
 import { cloneModel } from './assets';
+import { liveryMaterial, type Livery } from './livery';
 import { buildPrimary, buildSecondary } from './weaponModels';
 
 const DARK = new THREE.MeshLambertMaterial({ color: 0x23262d });
@@ -191,6 +192,8 @@ export interface KartLook {
   /** 車體模型名稱（tripo/… 或 Kenney 卡丁車）；載入失敗時改用 fallback，再不行就用內建幾何車 */
   model: string;
   fallback?: string;
+  /** Tripo 車體的花色 */
+  livery?: Livery;
 }
 
 /** 一台車的畫面：車體模型 + 武器 + 火焰 + 血條。車頭朝 +Z。 */
@@ -319,7 +322,7 @@ export class KartView {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       // 每台車各自一份材質，受擊閃紅與殘骸變黑才不會影響別台
-      const mat = (mesh.material as THREE.MeshLambertMaterial).clone();
+      const mat = liveryMaterial(mesh.material as THREE.Material, look.livery);
       this.ownMats.push(mat);
       mesh.material = mat;
       mesh.userData.own = false;

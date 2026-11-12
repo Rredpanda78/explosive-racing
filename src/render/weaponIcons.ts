@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PRIMARY_IDS, SECONDARY_IDS, type WeaponId } from '../game/weapons';
 import { cloneModel } from './assets';
+import { liveryMaterial, type Livery } from './livery';
 import { buildPrimary, buildSecondary } from './weaponModels';
 
 /** 車庫卡片上的武器圖：第一次需要時用一個小的離屏渲染器把每把武器拍成圖片 */
@@ -63,10 +64,12 @@ function renderIcons(): Partial<Record<WeaponId, string>> {
 /** 車庫的車款圖：模型載入完成後才拍，之後沿用 */
 const carIcons = new Map<string, string>();
 
-export function carIcon(model: string): string | undefined {
-  if (carIcons.has(model)) return carIcons.get(model);
+export function carIcon(model: string, livery?: Livery): string | undefined {
+  const cacheKey = model + '|' + (livery ? livery.name : '');
+  if (carIcons.has(cacheKey)) return carIcons.get(cacheKey);
   const obj = cloneModel(model);
   if (!obj) return undefined;
+  if (livery) obj.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) m.material = liveryMaterial(m.material as THREE.Material, livery); });
   const W = 320, H = 170;
   let renderer: THREE.WebGLRenderer;
   try {
@@ -97,6 +100,6 @@ export function carIcon(model: string): string | undefined {
   const url = renderer.domElement.toDataURL('image/png');
   renderer.dispose();
   renderer.forceContextLoss();
-  carIcons.set(model, url);
+  carIcons.set(cacheKey, url);
   return url;
 }

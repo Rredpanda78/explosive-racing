@@ -682,6 +682,28 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     updaters.push((_dt, time) => { crowdTime.value = time; });
   }
 
+  // 賽博龐克大樓：招牌與螢幕在夜裡發光（貼圖越亮、越鮮豔的地方越亮）
+  const glowMats = new Map<THREE.Material, THREE.Material>();
+  const neon = (m: THREE.Material): THREE.Material => {
+    let out = glowMats.get(m);
+    if (!out) {
+      const c = (m as THREE.MeshLambertMaterial).clone();
+      c.onBeforeCompile = (sh) => {
+        sh.fragmentShader = sh.fragmentShader.replace(
+          '#include <emissivemap_fragment>',
+          `#include <emissivemap_fragment>
+          #ifdef USE_MAP
+            vec3 tcol = texture2D( map, vMapUv ).rgb;
+            float hi = max( max( tcol.r, tcol.g ), tcol.b );
+            float sat = hi - min( min( tcol.r, tcol.g ), tcol.b );
+            totalEmissiveRadiance += tcol * ( 0.18 + 2.4 * smoothstep( 0.35, 0.8, hi ) * smoothstep( 0.12, 0.35, sat ) );
+          #endif`,
+        );
+      };
+      glowMats.set(m, (out = c));
+    }
+    return out;
+  };
   // ---------- Tripo 地標：草原的風車、夜城的大樓 ----------
   /** 在賽道某處的側邊找一塊放得下 radius 大小地標的空地，正面朝向賽道 */
   const spotFor = (dist: number, side: number, radius: number, lats: number[]): { x: number; z: number; yaw: number } | null => {
@@ -726,29 +748,22 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       props.add(tower);
     }
     if (blades.length) updaters.push((dt) => { for (const b of blades) b.rotation.z += dt * 0.55; });
+  } else if (theme.id === 'desert') {
+    // 生鏽的水塔
+    let k = 0;
+    for (const d of [330, 1060, 1640, 1980]) {
+      const H = 19 + rng() * 5;
+      const t = makeLandmark('tripo/water_tower', H);
+      if (!t) break;
+      const sp = spotFor(d, k++ % 2 ? 1 : -1, H * 0.3, [hw + 14, hw + 22, hw + 34]);
+      if (!sp) continue;
+      t.position.set(sp.x, terrainH(sp.x, sp.z) - 0.4, sp.z);
+      t.rotation.y = sp.yaw + rng() * 6;
+      t.userData.radius = H * 0.28;
+      if (shadows) t.traverse((o) => { o.castShadow = true; });
+      props.add(t);
+    }
   } else if (theme.id === 'city') {
-    // 賽博龐克大樓：招牌與螢幕在夜裡發光（貼圖越亮、越鮮豔的地方越亮）
-    const glowMats = new Map<THREE.Material, THREE.Material>();
-    const neon = (m: THREE.Material): THREE.Material => {
-      let out = glowMats.get(m);
-      if (!out) {
-        const c = (m as THREE.MeshLambertMaterial).clone();
-        c.onBeforeCompile = (sh) => {
-          sh.fragmentShader = sh.fragmentShader.replace(
-            '#include <emissivemap_fragment>',
-            `#include <emissivemap_fragment>
-            #ifdef USE_MAP
-              vec3 tcol = texture2D( map, vMapUv ).rgb;
-              float hi = max( max( tcol.r, tcol.g ), tcol.b );
-              float sat = hi - min( min( tcol.r, tcol.g ), tcol.b );
-              totalEmissiveRadiance += tcol * ( 0.18 + 2.4 * smoothstep( 0.35, 0.8, hi ) * smoothstep( 0.12, 0.35, sat ) );
-            #endif`,
-          );
-        };
-        glowMats.set(m, (out = c));
-      }
-      return out;
-    };
     let k = 0;
     for (const d of [60, 330, 560, 820, 1240, 1420, 1700, 1980]) {
       const name = k % 2 ? 'tripo/city_b' : 'tripo/city_a';
@@ -769,6 +784,42 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
         mesh.castShadow = shadows;
       });
       props.add(b);
+    }
+    // 摩天輪：放在海灣（湖）邊，輪面朝向賽道，慢慢轉
+    if (lake) {
+      const FS = 44;
+      let best: { x: number; z: number; d: number } | null = null;
+      for (const ring of [8, 16, 26, 38]) for (let a = 0; a < Math.PI * 2; a += Math.PI / 24) {
+        const x = lake.x + Math.cos(a) * (lake.r + ring), z = lake.z + Math.sin(a) * (lake.r + ring);
+        const d = trackDist(x, z);
+        if (d < hw + 18 || d > 160) continue;
+        if (!best || d < best.d) best = { x, z, d };
+      }
+      const stand = best && makeLandmark('tripo/ferris_stand', FS * 0.72);
+      const wheel = best && makeLandmark('tripo/ferris_wheel', FS);
+      if (best && stand && wheel) {
+        const g = new THREE.Group();
+        g.position.set(best.x, terrainH(best.x, best.z) - 0.5, best.z);
+        // 輪面（模型的 XY 平面）朝向最近的賽道
+        const si = track.locate(best.x, best.z, -1);
+        const s0 = S[si];
+        g.rotation.y = Math.atan2(s0.x - best.x, s0.z - best.z);
+        g.add(stand);
+        const hub = new THREE.Group();
+        hub.position.y = FS * 0.72 * 0.86;
+        wheel.position.y = -FS / 2;
+        hub.add(wheel);
+        g.add(hub);
+        g.userData.radius = FS * 0.5;
+        for (const o of [stand, wheel]) o.traverse((m) => {
+          const mesh = m as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          mesh.material = Array.isArray(mesh.material) ? mesh.material.map(neon) : neon(mesh.material);
+          mesh.castShadow = shadows;
+        });
+        props.add(g);
+        updaters.push((dt) => { hub.rotation.z += dt * 0.08; });
+      }
     }
   }
 
@@ -902,6 +953,28 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       g.addGroup(24, 12, 0);
       return g;
     };
+    // 背景的高樓群：大量複製，一樣讓霓虹發光
+    const towers = scatter(lowDetail ? 7 : 16, 55, 210, 60, 200);
+    const list = towers.map((sp) => {
+      q.setFromAxisAngle(up, Math.floor(rng() * 4) * (Math.PI / 2) + (rng() - 0.5) * 0.4);
+      const s = 0.85 + rng() * 0.45;
+      return new THREE.Matrix4().compose(v.set(sp.x, sp.y - 1, sp.z), q, sc.set(s, s, s));
+    });
+    const hr = makeInstanced('tripo/highrise', 85, list);
+    if (hr) {
+      hr.traverse((m) => {
+        const mesh = m as THREE.Mesh;
+        if (mesh.isMesh) mesh.material = Array.isArray(mesh.material) ? mesh.material.map(neon) : neon(mesh.material);
+      });
+      root.add(hr);
+      // 讓程式產生的方塊大樓避開這些高樓
+      for (const sp of towers) {
+        const marker = new THREE.Object3D();
+        marker.position.set(sp.x, 0, sp.z);
+        marker.userData.radius = 22;
+        props.add(marker);
+      }
+    }
     const classes: [number, number, number][] = [[18, 30, 18], [24, 58, 22], [30, 92, 26]];
     const spots = scatter(lowDetail ? 70 : 150, 40, 250, 30, 230);
     const lists: THREE.Matrix4[][] = [[], [], []];

@@ -22,6 +22,10 @@ export interface Profile {
   weaponsV2?: boolean;
   /** 電腦車手難度 */
   difficulty: DifficultyId;
+  /** 手機按鈕樣式 1~5 */
+  touchSkin: number;
+  /** 每款車選用的花色（0~2） */
+  livery: Partial<Record<CarId, number>>;
 }
 
 const KEY = 'explosive-racing-save-v1';
@@ -43,6 +47,8 @@ export function defaultProfile(): Profile {
     wins: 0,
     weaponsV2: true,
     difficulty: 'normal',
+    touchSkin: 1,
+    livery: {},
   };
 }
 
@@ -83,6 +89,7 @@ export function loadProfile(): Profile {
       lvl: { ...d.lvl, ...p.lvl },
       car: { ...d.car, ...p.car },
       karts: { ...d.karts, ...p.karts },
+      livery: { ...d.livery, ...p.livery },
       bestLaps: { ...(p.bestLap > 0 ? { 'skyline-loop': p.bestLap } : {}), ...p.bestLaps },
     };
   } catch {

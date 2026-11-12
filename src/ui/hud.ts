@@ -5,6 +5,7 @@ import type { Track } from '../game/track';
 import { formatTime } from '../game/util';
 import { PRIMARY, SECONDARY } from '../game/weapons';
 import type { GameView } from '../render/view';
+import { ICONS, primaryIcon, secondaryIcon } from './touchIcons';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -41,6 +42,11 @@ export class Hud {
   private wasDrafting = false;
   /** 傷害數字：同一台車短時間內的傷害合併成一個數字 */
   private dmgLayer = document.createElement('div');
+  /** 手機按鈕 */
+  private tBoost = $('t-boost');
+  private tBoostIc = this.tBoost.querySelector<HTMLElement>('.ic')!;
+  private tBoostLb = this.tBoost.querySelector<HTMLElement>('b')!;
+  private tBoostN = this.tBoost.querySelector<HTMLElement>('em')!;
   private dmgAcc = new Map<Kart, { amt: number; t: number; fatal: boolean; mine: boolean }>();
   private mapBg = document.createElement('canvas');
   private mapT = { s: 1, ox: 0, oz: 0, size: 220 };
@@ -49,6 +55,9 @@ export class Hud {
 
   constructor(track: Track) {
     this.setTrack(track);
+    document.querySelectorAll<HTMLElement>('#touch [data-icon]').forEach((el) => {
+      el.innerHTML = ICONS[el.dataset.icon as keyof typeof ICONS] ?? '';
+    });
     this.dmgLayer.id = 'dmgnums';
     this.root.appendChild(this.dmgLayer);
   }
@@ -66,6 +75,11 @@ export class Hud {
     this.elim.classList.toggle('hidden', !elim);
     this.w1.querySelector('.wname')!.textContent = PRIMARY[race.player.primary].name;
     this.w2.querySelector('.wname')!.textContent = SECONDARY[race.player.secondary].name;
+    // 手機開火鈕：圖示依裝備的武器
+    $('t-fire1').querySelector('.ic')!.innerHTML = primaryIcon(race.player.primary);
+    $('t-fire2').querySelector('.ic')!.innerHTML = secondaryIcon(race.player.secondary);
+    $('t-fire1').querySelector('b')!.textContent = PRIMARY[race.player.primary].name.replace('.50 ', '');
+    $('t-fire2').querySelector('b')!.textContent = SECONDARY[race.player.secondary].name;
     this.feed.innerHTML = '';
     this.popups.innerHTML = '';
     this.dmgLayer.innerHTML = '';
@@ -278,6 +292,24 @@ export class Hud {
 
     this.drawMap(race);
     this.updateDamageNumbers(view, dt);
+    this.updateTouchBoost(race);
+  }
+
+  /** N2O 鈕：甩尾結束的小噴時機變成「小噴」（正在噴 N2O 時不切換），沒有氣瓶時變暗 */
+  private updateTouchBoost(race: Race): void {
+    const p = race.player;
+    const boosting = p.boostT > 0;
+    const mini = p.miniWindowT > 0 && !boosting;
+    const state = mini ? 'mini' : boosting ? 'boosting' : p.n2o > 0 ? 'ready' : 'empty';
+    if (this.cache.tboost !== state) {
+      this.cache.tboost = state;
+      this.tBoost.classList.toggle('mini', mini);
+      this.tBoost.classList.toggle('boosting', boosting);
+      this.tBoost.classList.toggle('empty', state === 'empty');
+      this.tBoostIc.innerHTML = mini ? ICONS.mini : ICONS.n2o;
+      this.tBoostLb.textContent = mini ? '小噴' : 'N2O';
+    }
+    this.set('tboostn', this.tBoostN, mini || p.n2o === 0 ? '' : '×' + p.n2o);
   }
 
   /** 每 0.25 秒把累積的傷害變成一個往上飄的數字，擊毀那一下用金色大字 */
