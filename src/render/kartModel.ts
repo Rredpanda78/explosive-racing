@@ -150,9 +150,26 @@ const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo,
 
 /** 模型放大倍率：Kenney 卡丁車原始約 1 m 寬，放大成遊戲中的車體尺寸 */
 const MODEL_SCALE = 1.9;
-/** 武器掛點（放大後的車體座標） */
-const GUN_X = 0.7, GUN_Y = 0.95, GUN_Z = 0.2;
-const HOOD_Y = 0.66, HOOD_Z = 1.12;
+/** Tripo 車體縮放到這個車長（公尺） */
+const CAR_LENGTH = 2.9;
+
+/** 車上各種配件的位置（車體座標，車頭朝 +Z） */
+interface Mounts {
+  gunX: number; gunY: number; gunZ: number;
+  hoodY: number; hoodZ: number;
+  rearY: number; rearZ: number;
+  /** 車尾（噴射火焰、排氣管火環） */
+  tailZ: number; exhaustY: number;
+  halfW: number; top: number;
+  wingY: number; wingZ: number;
+  spoilerY: number; spoilerZ: number;
+  shellY: number; shellZ: number;
+  sprayZ: number;
+}
+const KART_MOUNTS: Mounts = {
+  gunX: 0.7, gunY: 0.95, gunZ: 0.2, hoodY: 0.66, hoodZ: 1.12, rearY: 0.55, rearZ: -1.2, tailZ: -1.15, exhaustY: 0.58,
+  halfW: 0.85, top: 2.3, wingY: 0.6, wingZ: -0.45, spoilerY: 0.72, spoilerZ: -1.1, shellY: 0.75, shellZ: 0.75, sprayZ: -0.75,
+};
 
 function box(w: number, h: number, l: number, m: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, l), m);
@@ -171,8 +188,9 @@ export interface KartLook {
   primary: PrimaryId;
   secondary: SecondaryId;
   isPlayer: boolean;
-  /** Kenney 卡丁車模型名稱；載入失敗時自動改用內建幾何車 */
+  /** 車體模型名稱（tripo/… 或 Kenney 卡丁車）；載入失敗時改用 fallback，再不行就用內建幾何車 */
   model: string;
+  fallback?: string;
 }
 
 /** 一台車的畫面：車體模型 + 武器 + 火焰 + 血條。車頭朝 +Z。 */
@@ -200,6 +218,9 @@ export class KartView {
   private swirls: THREE.Sprite[] = [];
   private sprayT = 0;
   private paint: THREE.MeshLambertMaterial;
+  /** 翼片等配件的顏色（Kenney 車用車身色，Tripo 車用車手代表色） */
+  private trim: THREE.MeshLambertMaterial;
+  private m: Mounts = { ...KART_MOUNTS };
   private ownMats: THREE.Material[] = [];
   private hpTex?: THREE.CanvasTexture;
   private hpCtx?: CanvasRenderingContext2D;
@@ -223,21 +244,30 @@ export class KartView {
     g.rotation.order = 'YXZ';
     g.add(b);
     this.paint = new THREE.MeshLambertMaterial({ color: look.color });
+    this.trim = this.paint;
     this.ownMats.push(this.paint);
 
-    const model = cloneModel(look.model);
-    if (model) this.buildFromModel(model, look);
-    else this.buildProcedural(look);
+    let model = cloneModel(look.model);
+    if (model && look.model.startsWith('tripo/')) this.buildFromTripo(model, look);
+    else {
+      if (!model && look.fallback) model = cloneModel(look.fallback);
+      if (model) this.buildFromModel(model, look);
+      else {
+        this.buildProcedural(look);
+        this.m.tailZ = -1.5;
+        this.m.top = 1.8;
+      }
+    }
     this.baseColor.copy(this.paint.color);
     this.addWeapons(look.primary, look.secondary);
     this.shell = new THREE.Mesh(shellGeo, SHELL);
     this.addBoostKit();
-    this.addDriftFx(!!model);
+    this.addDriftFx();
 
     // 噴射火焰
     for (const x of [-0.3, 0.3]) {
       const f = new THREE.Mesh(flameGeo, FLAME);
-      f.position.set(x, 0.58, model ? -1.15 : -1.5);
+      f.position.set(x, this.m.exhaustY, this.m.tailZ);
       f.visible = false;
       const core = new THREE.Mesh(flameCoreGeo, FLAME_CORE);
       f.add(core);
@@ -267,10 +297,74 @@ export class KartView {
       this.hpTex = new THREE.CanvasTexture(c);
       this.hpSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.hpTex, depthTest: false, transparent: true }));
       this.hpSprite.scale.set(2.6, 0.32, 1);
-      this.hpSprite.position.y = model ? 3.1 : 2.6;
+      this.hpSprite.position.y = this.m.top + 0.8;
       this.hpSprite.renderOrder = 20;
       g.add(this.hpSprite);
     }
+  }
+
+  /**
+   * Tripo 車體：縮放到固定車長、底部貼地，再用射線量出引擎蓋、車尾、車身側面的位置，
+   * 讓武器與配件自動貼合不同外型的車。貼圖本身就有顏色，所以不染色。
+   */
+  private buildFromTripo(model: THREE.Object3D, look: KartLook): void {
+    const box0 = new THREE.Box3().setFromObject(model);
+    const size = box0.getSize(new THREE.Vector3()), c = box0.getCenter(new THREE.Vector3());
+    const s = CAR_LENGTH / Math.max(size.z, 0.001);
+    model.scale.setScalar(s);
+    model.position.set(-c.x * s, -box0.min.y * s, -c.z * s);
+    this.body.add(model);
+    const meshes: THREE.Mesh[] = [];
+    model.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      // 每台車各自一份材質，受擊閃紅與殘骸變黑才不會影響別台
+      const mat = (mesh.material as THREE.MeshLambertMaterial).clone();
+      this.ownMats.push(mat);
+      mesh.material = mat;
+      mesh.userData.own = false;
+      this.paint = mat;
+      meshes.push(mesh);
+    });
+    this.trim = new THREE.MeshLambertMaterial({ color: look.color });
+    this.ownMats.push(this.trim);
+    this.body.updateMatrixWorld(true);
+    const L = size.z * s, W = size.x * s, H = size.y * s;
+    const rc = new THREE.Raycaster();
+    const o = new THREE.Vector3(), d = new THREE.Vector3();
+    const topAt = (z: number, fb: number) => {
+      rc.set(o.set(0, H + 5, z), d.set(0, -1, 0));
+      const h = rc.intersectObjects(meshes, false)[0];
+      return h ? h.point.y : fb;
+    };
+    const sideAt = (y: number, z: number) => {
+      let x = 0;
+      for (const dir of [1, -1]) {
+        rc.set(o.set(dir * (W + 5), y, z), d.set(-dir, 0, 0));
+        const h = rc.intersectObjects(meshes, false)[0];
+        x = Math.max(x, h ? Math.abs(h.point.x) : W / 2);
+      }
+      return x;
+    };
+    const m = this.m;
+    m.halfW = W / 2;
+    m.top = H;
+    m.gunY = H * 0.5;
+    m.gunZ = 0.15;
+    m.gunX = sideAt(m.gunY, m.gunZ) + 0.12;
+    m.hoodZ = L * 0.3;
+    m.hoodY = topAt(m.hoodZ, H * 0.55);
+    m.rearZ = -L * 0.36;
+    m.rearY = topAt(m.rearZ, H * 0.55) - 0.05;
+    m.tailZ = -L / 2 - 0.05;
+    m.exhaustY = H * 0.28;
+    m.wingY = H * 0.42;
+    m.wingZ = -L * 0.12;
+    m.spoilerZ = -L * 0.43;
+    m.spoilerY = topAt(m.spoilerZ, H * 0.6) - 0.15;
+    m.shellY = H * 0.45;
+    m.shellZ = L * 0.22;
+    m.sprayZ = -L * 0.27;
   }
 
   private buildFromModel(model: THREE.Object3D, look: KartLook): void {
@@ -300,6 +394,7 @@ export class KartView {
       }
       m.material = tinted;
     });
+    this.trim = this.paint;
   }
 
   private buildProcedural(look: KartLook): void {
@@ -337,7 +432,7 @@ export class KartView {
       const parts = buildPrimary(primary, side);
       const g = parts.group;
       g.scale.setScalar(WS);
-      g.position.set(GUN_X * side, GUN_Y - 0.2 * WS, GUN_Z - 0.12);
+      g.position.set(this.m.gunX * side, this.m.gunY - 0.2 * WS, this.m.gunZ - 0.12);
       b.add(g);
       this.vulcanBarrels.push(...parts.spinners);
       const mx = g.position.x, my = g.position.y + parts.muzzle.y * WS, mzz = g.position.z + parts.muzzle.z * WS;
@@ -366,16 +461,16 @@ export class KartView {
     // 副武器：火箭、榴彈、導彈在引擎蓋上；地雷與圓雷的投放器在車尾
     const sec = buildSecondary(secondary);
     sec.scale.setScalar(1.25);
-    if (secondary === 'mine' || secondary === 'cluster') sec.position.set(0, 0.55, -1.2);
-    else sec.position.set(0, HOOD_Y - 0.06, HOOD_Z - 0.12);
+    if (secondary === 'mine' || secondary === 'cluster') sec.position.set(0, this.m.rearY, this.m.rearZ);
+    else sec.position.set(0, this.m.hoodY - 0.06, this.m.hoodZ - 0.12);
     b.add(sec);
   }
 
   /** 甩尾特效：後輪外側往後噴的白色破風，以及排氣管的螺旋火環 */
-  private addDriftFx(fromModel: boolean): void {
+  private addDriftFx(): void {
     for (const side of [1, -1]) {
       const g = new THREE.Group();
-      g.position.set(side * 0.85, 0.12, -0.75);
+      g.position.set(side * this.m.halfW, 0.12, this.m.sprayZ);
       g.scale.x = side;
       const mat = new THREE.MeshBasicMaterial({ map: sprayTex[0], transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, color: new THREE.Color(1.5, 1.6, 1.9) });
       this.ownMats.push(mat);
@@ -391,7 +486,7 @@ export class KartView {
       const sm = new THREE.SpriteMaterial({ map: swirlTex, color: new THREE.Color(2, 1.25, 0.45), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
       this.ownMats.push(sm);
       const sp = new THREE.Sprite(sm);
-      sp.position.set(x, 0.58, fromModel ? -1.25 : -1.6);
+      sp.position.set(x, this.m.exhaustY, this.m.tailZ - 0.1);
       sp.scale.setScalar(0.6);
       sp.visible = false;
       this.body.add(sp);
@@ -402,10 +497,10 @@ export class KartView {
   /** N2O 時展開的翼片與尾翼（平常收起來看不到） */
   private addBoostKit(): void {
     const b = this.body;
-    const paint = this.paint;
+    const paint = this.trim;
     for (const side of [1, -1]) {
       const w = new THREE.Group();
-      w.position.set(side * 0.82, 0.6, -0.45);
+      w.position.set(side * (this.m.halfW - 0.03), this.m.wingY, this.m.wingZ);
       w.add(box(0.95, 0.045, 0.42, paint, side * 0.47, 0, 0));
       w.add(box(0.95, 0.03, 0.05, WING_GLOW, side * 0.47, 0.01, -0.22));
       w.add(box(0.04, 0.24, 0.36, paint, side * 0.93, 0.11, 0));
@@ -414,7 +509,7 @@ export class KartView {
       this.wings.push(w);
     }
     const sp = this.spoiler;
-    sp.position.set(0, 0.8, -1.1);
+    sp.position.set(0, this.m.spoilerY, this.m.spoilerZ);
     for (const x of [-0.36, 0.36]) sp.add(box(0.06, 0.42, 0.09, GUN, x, 0.2, 0));
     sp.add(box(1.5, 0.06, 0.38, paint, 0, 0.42, -0.02));
     sp.add(box(1.5, 0.03, 0.05, WING_GLOW, 0, 0.44, -0.2));
@@ -425,7 +520,7 @@ export class KartView {
     const mat = SHELL.clone();
     this.ownMats.push(mat);
     this.shell.material = mat;
-    this.shell.position.set(0, 0.75, 0.75);
+    this.shell.position.set(0, this.m.shellY, this.m.shellZ);
     this.shell.visible = false;
     this.shell.renderOrder = 5;
     b.add(this.shell);
@@ -534,7 +629,7 @@ export class KartView {
       if (firing) {
         const len = Math.max(1, k.beamLen - 1);
         // 兩道光束收束到命中點
-        bm.rotation.y = Math.atan2(-GUN_X * bm.userData.side, len);
+        bm.rotation.y = Math.atan2(-this.m.gunX * bm.userData.side, len);
         const w = 0.8 + Math.random() * 0.5;
         bm.scale.set(w, w, len);
       }
@@ -588,7 +683,7 @@ export class KartView {
       w.rotation.z = side * (1 - d) * 1.4;
     }
     this.spoiler.visible = show;
-    this.spoiler.position.y = 0.72 + 0.28 * d;
+    this.spoiler.position.y = this.m.spoilerY + 0.28 * d;
     this.spoiler.scale.set(0.35 + 0.65 * d, Math.max(0.01, d), 1);
     this.shell.visible = show;
     if (show) {

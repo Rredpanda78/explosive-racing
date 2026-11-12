@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PRIMARY_IDS, SECONDARY_IDS, type WeaponId } from '../game/weapons';
+import { cloneModel } from './assets';
 import { buildPrimary, buildSecondary } from './weaponModels';
 
 /** 車庫卡片上的武器圖：第一次需要時用一個小的離屏渲染器把每把武器拍成圖片 */
@@ -57,4 +58,45 @@ function renderIcons(): Partial<Record<WeaponId, string>> {
   renderer.dispose();
   renderer.forceContextLoss();
   return out;
+}
+
+/** 車庫的車款圖：模型載入完成後才拍，之後沿用 */
+const carIcons = new Map<string, string>();
+
+export function carIcon(model: string): string | undefined {
+  if (carIcons.has(model)) return carIcons.get(model);
+  const obj = cloneModel(model);
+  if (!obj) return undefined;
+  const W = 320, H = 170;
+  let renderer: THREE.WebGLRenderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  } catch {
+    return undefined;
+  }
+  renderer.setSize(W, H, false);
+  renderer.setPixelRatio(1);
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xeef2ff, 0x3a3430, 2.2));
+  const key = new THREE.DirectionalLight(0xffffff, 2.4);
+  key.position.set(3, 4, 3);
+  scene.add(key, obj);
+  obj.rotation.y = -0.4;
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+  const r = Math.max(size.x * 0.8, size.y * 1.7, size.z * 0.8) * 0.62;
+  const cam = new THREE.PerspectiveCamera(26, W / H, 0.01, 100);
+  const dist = (r / Math.tan((cam.fov * Math.PI) / 360)) * 0.72;
+  cam.position.set(center.x + dist * 0.62, center.y + dist * 0.36, center.z + dist * 0.7);
+  cam.lookAt(center);
+  renderer.render(scene, cam);
+  const url = renderer.domElement.toDataURL('image/png');
+  renderer.dispose();
+  renderer.forceContextLoss();
+  carIcons.set(model, url);
+  return url;
 }

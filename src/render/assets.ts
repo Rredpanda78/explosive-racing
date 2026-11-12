@@ -5,6 +5,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const BASE = import.meta.env.BASE_URL + 'models/';
 
 export const KART_MODELS = ['kart-oobi', 'kart-oodi', 'kart-ooli', 'kart-oopi', 'kart-oozi'];
+/** 使用者用 Tripo 生成的車體 */
+export const CAR_MODELS = ['tripo/car1', 'tripo/car2', 'tripo/car3', 'tripo/car4', 'tripo/car5'];
 export const DEBRIS_MODELS = ['debris-tire', 'debris-plate-a', 'debris-spoiler-a', 'debris-bumper', 'debris-bolt'];
 export const PROP_MODELS = [
   'grandStand', 'grandStandCovered', 'grandStandAwning', 'pitsGarage', 'pitsOffice', 'tent', 'tentLong', 'tentClosed',

@@ -57,5 +57,6 @@ npm run build    # 型別檢查並打包到 dist/
 
 ## 素材來源
 
-- 車輛、零件與場景模型：[Kenney](https://kenney.nl) 的 Car Kit 與 Racing Kit，CC0 授權，放在 `public/models/`。
+- 車體：作者用 Tripo 生成的 Q 版車（`public/models/tripo/`），武器與配件會依車體外型自動對位。
+- 零件、場景與備用卡丁車：[Kenney](https://kenney.nl) 的 Car Kit 與 Racing Kit，CC0 授權，放在 `public/models/`。
 - 賽道、地形、天空、觀眾、特效為程式生成；音效與配樂用 WebAudio 即時合成，沒有使用任何音檔。

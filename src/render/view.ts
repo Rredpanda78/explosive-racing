@@ -7,6 +7,7 @@ import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
 import { clamp, lerpAngle } from '../game/util';
+import { CARS } from '../game/cars';
 import { PRIMARY } from '../game/weapons';
 import { HazardView } from './hazards';
 import { BlastFx, Debris, Scorch, SkidMarks, Trails } from './effects';
@@ -272,7 +273,7 @@ export class GameView {
     this.boostK = 0;
     if (!race) return;
     for (const k of race.karts) {
-      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, isPlayer: k.isPlayer, model: k.car }, this.shadows);
+      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car }, this.shadows);
       this.kartViews.set(k, kv);
       this.scene.add(kv.group);
       kv.update(k, 0);

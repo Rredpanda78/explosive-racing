@@ -1,7 +1,7 @@
 import { CAR_IDS, CARS, type CarId } from '../game/cars';
 import { KILL_REWARD } from '../game/config';
 import type { Race, RaceMode } from '../game/race';
-import { weaponIcon } from '../render/weaponIcons';
+import { carIcon, weaponIcon } from '../render/weaponIcons';
 import { DIFFICULTY, DIFFICULTY_IDS, type DifficultyId } from '../game/difficulty';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
@@ -244,7 +244,9 @@ export class Screens {
     const btn = !owned
       ? `<button class="btn small primary" data-act="buycar" data-id="${id}" ${p.cash < c.price ? 'disabled' : ''}>購買 $${c.price}</button>`
       : `<button class="btn small" data-act="usecar" data-id="${id}" ${using ? 'disabled' : ''}>${using ? '使用中' : '選用'}</button>`;
+    const icon = carIcon(c.model);
     return `<div class="card ${using ? 'equipped' : ''}">
+      ${icon ? `<div class="wimg car"><img src="${icon}" alt="" /></div>` : ''}
       <h4>${c.name}<small>${owned ? '已擁有' : '未擁有'}</small></h4>
       <p>${c.desc}</p>
       ${stat('極速', (c.speed - 0.94) / 0.12)}
