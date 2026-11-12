@@ -17,6 +17,8 @@ export interface Profile {
   bestLaps: Record<string, number>;
   races: number;
   wins: number;
+  /** 已經換成新版武器清單（新存檔一開始就是） */
+  weaponsV2?: boolean;
 }
 
 const KEY = 'explosive-racing-save-v1';
@@ -24,8 +26,8 @@ const KEY = 'explosive-racing-save-v1';
 export function defaultProfile(): Profile {
   return {
     cash: 0,
-    owned: { mg: true, vulcan: false, shotgun: false, rocket: true, howitzer: false, salvo: false },
-    lvl: { mg: 1, vulcan: 1, shotgun: 1, rocket: 1, howitzer: 1, salvo: 1 },
+    owned: { mg: true, vulcan: false, flame: false, laser: false, rocket: true, grenade: false, mine: false, cluster: false, missile: false },
+    lvl: { mg: 1, vulcan: 1, flame: 1, laser: 1, rocket: 1, grenade: 1, mine: 1, cluster: 1, missile: 1 },
     primary: 'mg',
     secondary: 'rocket',
     car: { engine: 0, n2o: 0, armor: 0 },
@@ -36,7 +38,31 @@ export function defaultProfile(): Profile {
     bestLaps: {},
     races: 0,
     wins: 0,
+    weaponsV2: true,
   };
+}
+
+/** 舊版武器：榴彈砲改成榴彈發射器；下架的霰彈槍與多管火箭照購買和升級的花費退款 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function migrateWeapons(p: any): void {
+  if (!p.owned || p.weaponsV2) return;
+  p.lvl = p.lvl || {};
+  // 很早期的存檔把火箭炮叫做 missile；現在 missile 是新的追蹤導彈
+  if (p.owned.missile) { p.owned.rocket = true; p.lvl.rocket = Math.max(p.lvl.rocket || 1, p.lvl.missile || 1); }
+  if (p.owned.howitzer) { p.owned.grenade = true; p.lvl.grenade = p.lvl.howitzer || 1; }
+  const refund = (id: string, price: number, step: number) => {
+    if (!p.owned[id]) return;
+    let sum = price;
+    for (let l = 1; l < (p.lvl[id] || 1); l++) sum += step * l;
+    p.cash = (p.cash || 0) + sum;
+  };
+  refund('shotgun', 2000, 450);
+  refund('salvo', 3500, 550);
+  for (const id of ['shotgun', 'howitzer', 'salvo', 'missile']) { delete p.owned[id]; delete p.lvl[id]; }
+  if (p.primary === 'shotgun') p.primary = 'mg';
+  if (p.secondary === 'howitzer') p.secondary = 'grenade';
+  if (p.secondary === 'salvo' || p.secondary === 'missile') p.secondary = 'rocket';
+  p.weaponsV2 = true;
 }
 
 export function loadProfile(): Profile {
@@ -45,10 +71,7 @@ export function loadProfile(): Profile {
     const raw = localStorage.getItem(KEY);
     if (!raw) return d;
     const p = JSON.parse(raw);
-    // 舊存檔：追蹤飛彈已改為火箭炮
-    if (p.secondary === 'missile') p.secondary = 'rocket';
-    if (p.lvl && p.lvl.missile) { p.lvl.rocket = p.lvl.missile; delete p.lvl.missile; }
-    if (p.owned) delete p.owned.missile;
+    migrateWeapons(p);
     return {
       ...d,
       ...p,

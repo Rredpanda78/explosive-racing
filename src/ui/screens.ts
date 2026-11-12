@@ -4,7 +4,7 @@ import type { Race, RaceMode } from '../game/race';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
 import {
-  CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
+  BURN_DPS, CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
   weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
 } from '../game/weapons';
 
@@ -194,7 +194,10 @@ export class Screens {
     let info: string;
     if (prim) {
       const P = PRIMARY[id];
-      info = `每秒傷害 ${(P.dmg * P.pellets * P.rate * mul).toFixed(0)}　射程 ${P.range} m`;
+      const dps = (P.dmg * P.pellets * P.rate * mul).toFixed(0);
+      info = P.kind === 'flame'
+        ? `每秒傷害 ${dps} + 燃燒 ${BURN_DPS}/秒　射程 ${P.range} m`
+        : `每秒傷害 ${dps}　射程 ${P.range} m${P.kind === 'laser' ? '（瞬間命中）' : ''}`;
     } else {
       const S = SECONDARY[id as SecondaryId];
       info = `傷害 ${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}　冷卻 ${S.cooldown} 秒`;

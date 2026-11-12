@@ -32,6 +32,8 @@ export function makeTerrain(track: Track): Terrain {
   const baseY = minY - ROAD_ABOVE_TERRAIN - 2;
   const coarse: Sample[] = [];
   for (let i = 0; i < S.length; i += 3) coarse.push(S[i]);
+  // 捷徑也是路面：地形同樣要壓在它下方
+  for (const b of track.branches) for (let i = 0; i < b.n; i += 3) coarse.push(b.samples[i]);
 
   const height = (x: number, z: number): number => {
     let num = 0, den = 0, dmin = Infinity;

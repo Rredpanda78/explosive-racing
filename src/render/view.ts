@@ -7,6 +7,8 @@ import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
 import { clamp, lerpAngle } from '../game/util';
+import { PRIMARY } from '../game/weapons';
+import { HazardView } from './hazards';
 import { BlastFx, Debris, SkidMarks } from './effects';
 import { KartView } from './kartModel';
 import { Particles } from './particles';
@@ -15,6 +17,8 @@ import { buildWorld, type World } from './world';
 
 const MAX_TRACERS = 320;
 const POOL = 16;
+const MAX_MINES = 64;
+const MAX_CLUSTER = 80;
 
 export class GameView {
   renderer: THREE.WebGLRenderer;
@@ -43,6 +47,13 @@ export class GameView {
   private barrelGeo: THREE.BufferGeometry;
   private barrelMat: THREE.MeshLambertMaterial;
   private barrelHot: THREE.MeshBasicMaterial;
+  private hazardView: HazardView | null = null;
+  /** 地雷與集束圓雷：本體與閃燈（閃燈用每個實例的顏色控制亮暗） */
+  private mineBody: THREE.InstancedMesh;
+  private mineLight: THREE.InstancedMesh;
+  private clusterBody: THREE.InstancedMesh;
+  private clusterLight: THREE.InstancedMesh;
+  private col = new THREE.Color();
   private sun: THREE.DirectionalLight;
   private hemi: THREE.HemisphereLight;
   private sunDir = new THREE.Vector3(0.6, 0.5, 0.4).normalize();
@@ -155,6 +166,23 @@ export class GameView {
     this.barrelGeo = new THREE.CylinderGeometry(0.78, 0.78, 1.6, 14).translate(0, 0.8, 0);
     this.barrelMat = new THREE.MeshLambertMaterial({ map: btex });
     this.barrelHot = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 2.4, 1.2) });
+
+    const inst = (geo: THREE.BufferGeometry, mat: THREE.Material, n: number, colors: boolean) => {
+      const m = new THREE.InstancedMesh(geo, mat, n);
+      m.count = 0;
+      m.frustumCulled = false;
+      if (colors) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+      this.scene.add(m);
+      return m;
+    };
+    this.mineBody = inst(
+      new THREE.CylinderGeometry(0.55, 0.62, 0.24, 14).translate(0, 0.12, 0),
+      new THREE.MeshLambertMaterial({ color: 0x3a3f48 }), MAX_MINES, false,
+    );
+    this.mineLight = inst(new THREE.SphereGeometry(0.15, 8, 6).translate(0, 0.28, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_MINES, true);
+    this.clusterBody = inst(new THREE.IcosahedronGeometry(0.34, 1).translate(0, 0.34, 0), new THREE.MeshLambertMaterial({ color: 0x2b2e35, flatShading: true }), MAX_CLUSTER, false);
+    this.clusterLight = inst(new THREE.TorusGeometry(0.34, 0.06, 6, 14).rotateX(Math.PI / 2).translate(0, 0.34, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_CLUSTER, true);
+    this.mineBody.castShadow = this.clusterBody.castShadow = this.shadows;
     this.resize();
   }
 
@@ -201,6 +229,12 @@ export class GameView {
     this.kartViews.clear();
     for (const b of this.barrels) this.scene.remove(b);
     this.barrels = [];
+    if (this.hazardView) {
+      this.scene.remove(this.hazardView.group);
+      this.hazardView.dispose();
+      this.hazardView = null;
+    }
+    this.mineBody.count = this.mineLight.count = this.clusterBody.count = this.clusterLight.count = 0;
     this.smoke.clear();
     this.fire.clear();
     this.skid.clear();
@@ -218,6 +252,8 @@ export class GameView {
       this.scene.add(kv.group);
       kv.update(k, 0);
     }
+    this.hazardView = new HazardView(race, race.track, this.theme, this.shadows);
+    this.scene.add(this.hazardView.group);
     for (const b of race.barrels) {
       const m = new THREE.Mesh(this.barrelGeo, this.barrelMat);
       m.position.set(b.x, b.y, b.z);
@@ -279,10 +315,36 @@ export class GameView {
         f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.06, 2.2, 0.8, 1, 0.8, 0.35, 0.9);
         break;
       case 'hit':
+        if (e.w === 'flame') {
+          if (e.k === p) this.addShake(0.03);
+          break;
+        }
+        if (e.w === 'laser') {
+          if (R() < 0.5) this.sparks(e.x, e.y, e.z, 2, 10, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
+          f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.06, 1.6, 0.5, 1, 0.4, 0.5, 0.9);
+          if (e.k === p) this.addShake(0.04);
+          break;
+        }
         this.sparks(e.x, e.y, e.z, 4, 16, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
         f.spawn(e.x, e.y, e.z, 0, 0, 0, 0.07, 2.4, 0.6, 1, 0.9, 0.6, 0.9);
         if (e.k === p) this.addShake(0.1);
         break;
+      case 'hazard':
+        this.sparks(e.x, e.y, e.z, 14, 16, e.k.y);
+        this.debris?.burst(e.x, e.y, e.z, e.k.y, 2, 9);
+        if (e.k === p) this.addShake(0.75);
+        break;
+      case 'rock': {
+        // 碎石與塵土
+        this.debris?.burst(e.x, e.y, e.z, e.y - e.r, 6, 12);
+        for (let i = 0; i < 18; i++) {
+          const a = R() * Math.PI * 2, sp = 2 + R() * 6;
+          sm.spawn(e.x, e.y, e.z, Math.cos(a) * sp, 1 + R() * 3, Math.sin(a) * sp, 1 + R(), 2, 6, 0.72, 0.6, 0.48, 0.6, -0.4, 1.2);
+        }
+        const d = Math.hypot(e.x - p.x, e.z - p.z);
+        this.addShake(clamp(1 - d / 50, 0, 1) * 0.4);
+        break;
+      }
       case 'blast': {
         const big = e.kart ? 1.5 : 1;
         // 火球碎片
@@ -317,9 +379,14 @@ export class GameView {
       }
       case 'launch': {
         const fx = Math.sin(e.k.heading), fz = Math.cos(e.k.heading);
+        if (e.kind === 'mine' || e.kind === 'cluster') {
+          for (let i = 0; i < 6; i++) sm.spawn(e.k.x - fx * 1.8, e.k.y + 0.6, e.k.z - fz * 1.8, (R() - 0.5) * 3, 1 + R(), (R() - 0.5) * 3, 0.5, 0.8, 2.2, 0.8, 0.8, 0.8, 0.45);
+          if (e.k === p) this.addShake(0.06);
+          break;
+        }
         for (let i = 0; i < 6; i++) sm.spawn(e.k.x + fx * 1.4, e.k.y + 1, e.k.z + fz * 1.4, e.k.vx + (R() - 0.5) * 4, 1 + R() * 2, e.k.vz + (R() - 0.5) * 4, 0.5, 0.8, 2.6, 0.85, 0.85, 0.85, 0.5);
         f.spawn(e.k.x + fx * 1.6, e.k.y + 1, e.k.z + fz * 1.6, e.k.vx, 0, e.k.vz, 0.1, 3.2, 1, 1, 0.75, 0.35, 1);
-        if (e.k === p) this.addShake(e.kind === 'howitzer' ? 0.3 : 0.14);
+        if (e.k === p) this.addShake(e.kind === 'grenade' ? 0.3 : 0.14);
         break;
       }
       case 'start': {
@@ -384,7 +451,7 @@ export class GameView {
         if (k.out && kv.wreckT > 4) {
           kv.group.visible = false;
         } else {
-          kv.updateWreck(dt, track.samples[k.idx].y);
+          kv.updateWreck(dt, k.surface(track).y);
           const g = kv.group.position;
           if (R() < dt * 40) sm.spawn(g.x, g.y + 0.6, g.z, (R() - 0.5) * 2, 2 + R() * 2, (R() - 0.5) * 2, 1.1, 1.2, 4.2, 0.09, 0.09, 0.09, 0.65, -1, 0.8);
           if (R() < dt * 45) f.spawn(g.x + (R() - 0.5), g.y + 0.5, g.z + (R() - 0.5), 0, 2 + R() * 3, 0, 0.35, 1.8, 0.3, 1, 0.5, 0.1, 0.9);
@@ -416,8 +483,8 @@ export class GameView {
         }
       }
       // 貼著護欄磨：持續噴火花
-      if (grounded && Math.abs(k.lat) > wallLat && Math.abs(k.speed) > 10) {
-        const sm0 = track.samples[k.idx];
+      if (grounded && Math.abs(k.lat) > (k.branch ? k.branch.halfWidth - 1.05 : wallLat) && Math.abs(k.speed) > 10) {
+        const sm0 = k.surface(track);
         const sg = Math.sign(k.lat);
         const cx = k.x + sm0.nx * sg * 1.0, cz = k.z + sm0.nz * sg * 1.0;
         const cnt = Math.min(4, Math.round(dt * 150));
@@ -431,6 +498,21 @@ export class GameView {
           const side = R() > 0.5 ? 0.3 : -0.3;
           f.spawn(k.x + lx * side - fx * 1.6, k.y + 0.6, k.z + lz * side - fz * 1.6, k.vx * 0.4 - fx * 7, R() * 0.6, k.vz * 0.4 - fz * 7, 0.24, 1.2, 0.15, blue ? 0.35 : 1, blue ? 0.75 : 0.6, blue ? 1 : 0.2, 0.5);
         }
+      }
+      // 火焰發射器：從兩側噴嘴往前噴出火舌
+      if (k.firing > 0 && PRIMARY[k.primary].kind === 'flame') {
+        const cnt = this.mobile ? 2 : 4;
+        for (let i = 0; i < cnt; i++) {
+          const side = i % 2 ? 0.7 : -0.7;
+          const a = (R() - 0.5) * 0.36, sp = 24 + R() * 10;
+          const dx = Math.sin(k.heading + a), dz = Math.cos(k.heading + a);
+          f.spawn(k.x + lx * side + fx * 2.1, k.y + 0.97, k.z + lz * side + fz * 2.1, k.vx + dx * sp, 1 + R() * 2, k.vz + dz * sp, 0.45 + R() * 0.3, 0.6, 3.2, 1, 0.45 + R() * 0.3, 0.1, 0.85, -2, 2.2, k.y);
+        }
+        if (R() < dt * 20) sm.spawn(k.x + fx * 14, k.y + 1.5, k.z + fz * 14, k.vx * 0.6, 2, k.vz * 0.6, 0.9, 1.5, 4, 0.15, 0.13, 0.12, 0.45, -1, 1);
+      }
+      // 著火：車身冒火
+      if (k.burnT > 0 && R() < dt * 40) {
+        f.spawn(k.x + (R() - 0.5) * 1.4, k.y + 0.8, k.z + (R() - 0.5) * 1.4, k.vx * 0.7, 2 + R() * 2, k.vz * 0.7, 0.4, 1.2, 0.3, 1, 0.5, 0.1, 0.9);
       }
       // 尾流：白色氣流線從車身兩側往後流
       if (k.drafting && k === p) {
@@ -480,6 +562,8 @@ export class GameView {
       if (m) {
         mm.position.set(m.x, m.y, m.z);
         mm.rotation.set(0, m.a, this.time * 9);
+        mm.scale.setScalar(m.homing ? 1.35 : 1);
+        if (m.homing && R() < 0.6) f.spawn(m.x, m.y, m.z, 0, 0, 0, 0.12, 1.2, 0.2, 1, 0.25, 0.2, 1);
         const bx = Math.sin(m.a), bz = Math.cos(m.a);
         for (let j = 0; j < 2; j++) sm.spawn(m.x - bx * (0.8 + j), m.y, m.z - bz * (0.8 + j), (R() - 0.5) * 1.5, R(), (R() - 0.5) * 1.5, 0.6, 0.6, 2.1, 0.92, 0.92, 0.92, 0.5);
         f.spawn(m.x - bx * 0.9, m.y, m.z - bz * 0.9, 0, 0, 0, 0.09, 1.8, 0.5, 1, 0.62, 0.2, 1);
@@ -493,6 +577,34 @@ export class GameView {
         if (R() < 0.5) f.spawn(s.x, s.gy + s.y, s.z, 0, 0, 0, 0.1, 1, 0.3, 1, 0.5, 0.15, 0.8);
       }
     }
+
+    // 地雷：還沒啟動時亮黃燈，啟動後紅燈閃爍；集束圓雷快爆炸時閃得更快
+    let nm = 0, nc = 0;
+    for (const m of race.mines) {
+      const blink = m.armT > 0 ? 1 : (m.kind === 'cluster' && m.life < 1.6 ? Math.floor(this.time * 12) : Math.floor(this.time * 4 + m.x)) % 2;
+      if (m.armT > 0) this.col.setRGB(1.5, 1.1, 0.1);
+      else if (blink) this.col.setRGB(2.2, 0.06, 0.04);
+      else this.col.setRGB(0.25, 0.04, 0.03);
+      this.m4.makeTranslation(m.x, m.y + 0.02, m.z);
+      if (m.kind === 'mine' && nm < MAX_MINES) {
+        this.mineBody.setMatrixAt(nm, this.m4);
+        this.mineLight.setMatrixAt(nm, this.m4);
+        this.mineLight.setColorAt(nm, this.col);
+        nm++;
+      } else if (m.kind === 'cluster' && nc < MAX_CLUSTER) {
+        this.clusterBody.setMatrixAt(nc, this.m4);
+        this.clusterLight.setMatrixAt(nc, this.m4);
+        this.clusterLight.setColorAt(nc, this.col);
+        nc++;
+      }
+    }
+    this.mineBody.count = this.mineLight.count = nm;
+    this.clusterBody.count = this.clusterLight.count = nc;
+    for (const im of [this.mineBody, this.mineLight, this.clusterBody, this.clusterLight]) {
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    }
+    this.hazardView?.update(race, this.time);
 
     this.blast.update(dt);
     this.debris?.update(dt);

@@ -142,6 +142,15 @@ export class Hud {
       case 'hit':
         if (e.by === p) this.hitMarkT = 0.12;
         break;
+      case 'shortcut':
+        if (e.k === p) this.popup('捷徑！', 'gold');
+        break;
+      case 'hazard':
+        if (e.k === p) this.popup(e.kind === 'hammer' ? '被鐵鎚砸飛！' : e.kind === 'tram' ? '被電車撞飛！' : '被落石撞到！', 'warn');
+        break;
+      case 'lock':
+        if (e.k === p) this.popup('被追蹤導彈鎖定！', 'warn');
+        break;
       case 'ram':
         if ((e.a === p || e.b === p) && e.power > 5) {
           const fast = p.boostT > 0 || p.padT > 0;
@@ -153,7 +162,6 @@ export class Hud {
         if (e.e === 'jump') this.popup('飛越！');
         else if (e.e === 'n2o') this.popup('N2O +1', 'blue');
         else if (e.e === 'mini') this.popup('小噴！', 'gold');
-        else if (e.e === 'driftFail') this.popup('撞牆！這次甩尾的集氣歸零', 'warn');
         break;
       case 'kill': {
         const d = document.createElement('div');
@@ -220,6 +228,7 @@ export class Hud {
     if (p.dead) { sub = p.out ? '' : '車輛重生中…'; subCls = 'warn'; }
     else if (p.finished) sub = '';
     else if (p.wrongWayT > 1) { sub = '逆向行駛！'; subCls = 'warn'; }
+    else if (p.lockT > 0) { sub = '⚠ 導彈來襲：急轉可以甩掉'; subCls = 'warn'; }
     else if (p.overheated) { sub = '武器過熱'; subCls = 'warn'; }
     else if (p.miniWindowT > 0) { sub = '小噴！'; subCls = 'mini'; }
     else if (race.state === 'countdown' && race.countdown < 1.4) { sub = document.body.classList.contains('touch') ? '抓準 GO 的瞬間按 N2O' : '抓準 GO 的瞬間按油門'; }
@@ -294,6 +303,34 @@ export class Hud {
     c.strokeStyle = 'rgba(255,255,255,0.9)';
     c.lineWidth = 5;
     c.stroke();
+    // 捷徑：黃色虛線
+    for (const b of track.branches) {
+      c.beginPath();
+      b.samples.forEach((s, i) => {
+        const [x, y] = this.mapXY(s.x, s.z);
+        if (i === 0) c.moveTo(x, y);
+        else c.lineTo(x, y);
+      });
+      c.setLineDash([]);
+      c.strokeStyle = 'rgba(0,0,0,0.55)';
+      c.lineWidth = 5;
+      c.stroke();
+      c.setLineDash([4, 3]);
+      c.strokeStyle = '#ffd23f';
+      c.lineWidth = 3;
+      c.stroke();
+      c.setLineDash([]);
+    }
+    // 機關：紅色三角形
+    c.fillStyle = '#ff4d4d';
+    for (const h of track.def.hazards ?? []) {
+      const s = track.samples[track.wrap(Math.round(h.dist / track.spacing))];
+      const [x, y] = this.mapXY(s.x, s.z);
+      c.beginPath();
+      c.moveTo(x, y - 5); c.lineTo(x + 4.5, y + 3.5); c.lineTo(x - 4.5, y + 3.5);
+      c.closePath();
+      c.fill();
+    }
     const s0 = track.samples[0];
     const [sx, sy] = this.mapXY(s0.x, s0.z);
     c.fillStyle = '#ff4747';

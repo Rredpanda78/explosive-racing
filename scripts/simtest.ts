@@ -8,6 +8,7 @@ import { Race } from '../src/game/race';
 import { defaultProfile } from '../src/game/save';
 import { makeTerrain } from '../src/game/terrain';
 import { Track, TRACKS } from '../src/game/track';
+import { PRIMARY_IDS, SECONDARY_IDS } from '../src/game/weapons';
 
 for (const def of TRACKS) {
 const track = new Track(def);
@@ -27,6 +28,10 @@ console.log(`=== ${def.id}: length ${track.length.toFixed(0)} m, samples ${track
       worst = Math.min(worst, gap);
     }
   }
+  for (const b of track.branches) {
+    for (const s of b.samples) for (const lat of [0, -b.halfWidth, b.halfWidth]) worst = Math.min(worst, s.y - terrain.height(s.x + s.nx * lat, s.z + s.nz * lat));
+  }
+  console.log(`shortcuts: ${track.branches.map((b) => `${b.def.from}-${b.def.to} m: ${b.length.toFixed(0)} m (saves ${(b.def.to - b.def.from - b.length).toFixed(0)} m)`).join(', ') || 'none'}`);
   console.log(`terrain: road is at least ${worst.toFixed(2)} m above grass; far plane at ${terrain.baseY.toFixed(1)}, lowest road ${minY.toFixed(1)}`);
   if (worst < 0.4) throw new Error('terrain pokes through the road');
   if (terrain.baseY > minY - 1) throw new Error('far ground plane would cover the lowest part of the track');
@@ -36,6 +41,11 @@ function runAll(mode: 'race' | 'elim', seed: number): void {
   const race = new Race(track, defaultProfile(), mode, seed);
   race.autoPlayer = true;
   race.player.aiAssist = true;
+  // 每種武器都要有人用到
+  race.karts.forEach((k, i) => {
+    k.primary = PRIMARY_IDS[(i + seed) % PRIMARY_IDS.length];
+    k.secondary = SECONDARY_IDS[(i + seed) % SECONDARY_IDS.length];
+  });
   const dt = 1 / 60;
   const count: Record<string, number> = {};
   let t = 0;
@@ -62,6 +72,8 @@ function runAll(mode: 'race' | 'elim', seed: number): void {
   }
   if (!done()) throw new Error(`${mode} did not end`);
   if (!count['kart:jump']) throw new Error('nobody used a ramp');
+  if (mode === 'race' && track.branches.length && !count.shortcut) throw new Error('nobody took the shortcut');
+  if (mode === 'race' && (def.hazards ?? []).length && !count.hazard) throw new Error('hazards never hit anyone');
 }
 runAll('race', 12345);
 runAll('elim', 777);

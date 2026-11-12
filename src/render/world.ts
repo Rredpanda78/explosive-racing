@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CFG } from '../game/config';
+import { TRAM } from '../game/race';
 import { makeTerrain } from '../game/terrain';
-import { PAD_HALF_WIDTH, PAD_LENGTH, type Sample, type SceneRange, type Track } from '../game/track';
+import { PAD_HALF_WIDTH, PAD_LENGTH, type Branch, type Sample, type SceneRange, type Track } from '../game/track';
 import { mulberry32 } from '../game/util';
 import { makeInstanced, makeProp } from './assets';
 import type { Theme } from './themes';
@@ -52,13 +53,17 @@ interface StripOpt {
   liftA?: boolean;
 }
 
-function strip(track: Track, o: StripOpt): THREE.BufferGeometry {
+/** 主線（封閉）或捷徑（不封閉）都可以拿來鋪路面 */
+type Path = Track | Branch;
+
+function strip(track: Path, o: StripOpt): THREE.BufferGeometry {
   const n = track.n;
-  const pos = new Float32Array((n + 1) * 6);
-  const uv = new Float32Array((n + 1) * 4);
+  const cnt = track.closed ? n + 1 : n;
+  const pos = new Float32Array(cnt * 6);
+  const uv = new Float32Array(cnt * 4);
   const idx: number[] = [];
   const ok: boolean[] = [];
-  for (let i = 0; i <= n; i++) {
+  for (let i = 0; i < cnt; i++) {
     const s = track.samples[i % n];
     const la = latClamp(s, o.latA), lb = latClamp(s, o.latB);
     const lift = o.lift ? o.lift(s, i % n) : 0;
@@ -71,7 +76,7 @@ function strip(track: Track, o: StripOpt): THREE.BufferGeometry {
     else uv.set([0, d, 1, d], i * 4);
     ok.push(!o.when || o.when(s, i % n));
   }
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < cnt - 1; i++) {
     if (!ok[i] || !ok[i + 1]) continue;
     const a = i * 2;
     idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
@@ -283,12 +288,104 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     : new THREE.MeshLambertMaterial({ map: wallTex, side: THREE.DoubleSide });
   const capMat: THREE.Material = night ? new THREE.MeshBasicMaterial({ color: glow(0xffffff, 0.9) }) : new THREE.MeshLambertMaterial({ color: 0xf4f4f4 });
   const WH = 1.5;
+  // 捷徑經過的地方，主線護欄要留缺口（和車輛碰撞的判定一致）
+  const BR = track.branches;
+  const inBranch = (x: number, z: number, margin: number): boolean => {
+    for (const b of BR) {
+      if (!b.inBox(x, z)) continue;
+      b.locate(x, z);
+      if (b.inside() && Math.abs(b.lat) < b.halfWidth + margin) return true;
+    }
+    return false;
+  };
+  const gap = { 1: [] as boolean[], [-1]: [] as boolean[] } as Record<number, boolean[]>;
+  // 電車平交道：兩側護欄開口讓電車進出（車輛一樣出不去）
+  const trams = (track.def.hazards ?? []).filter((h) => h.kind === 'tram');
+  for (let i = 0; i < n; i++) {
+    const s = S[i];
+    const tramGap = trams.some((h) => Math.abs(relDist(s, h.dist)) < TRAM.width * 2 + 0.6);
+    for (const sg of [1, -1]) gap[sg].push(tramGap || (BR.length > 0 && inBranch(s.x + s.nx * sg * (hw + 0.6), s.z + s.nz * sg * (hw + 0.6), -0.4)));
+  }
+  const wallOn = (sg: number) => (_s: Sample, i: number) => !gap[sg][i];
   for (const sg of [1, -1]) {
     const inner = sg * (hw + 0.35), outer = sg * (hw + 0.95);
-    const wIn = addMesh(strip(track, { latA: inner, yA: WH, latB: inner, yB: -0.4, scale: 12, uAlong: true }), wallMat);
-    const wOut = addMesh(strip(track, { latA: outer, yA: WH, latB: outer, yB: -0.6, scale: 12, uAlong: true }), wallMat);
+    const when = wallOn(sg);
+    const wIn = addMesh(strip(track, { latA: inner, yA: WH, latB: inner, yB: -0.4, scale: 12, uAlong: true, when }), wallMat);
+    const wOut = addMesh(strip(track, { latA: outer, yA: WH, latB: outer, yB: -0.6, scale: 12, uAlong: true, when }), wallMat);
     wIn.castShadow = wOut.castShadow = shadows;
-    addMesh(strip(track, sg > 0 ? { latA: outer, yA: WH, latB: inner, yB: WH, scale: 10 } : { latA: inner, yA: WH, latB: outer, yB: WH, scale: 10 }), capMat, !night);
+    addMesh(strip(track, sg > 0 ? { latA: outer, yA: WH, latB: inner, yB: WH, scale: 10, when } : { latA: inner, yA: WH, latB: outer, yB: WH, scale: 10, when }), capMat, !night);
+  }
+
+  // ---------- 捷徑：較窄的小路，有自己的護欄與路肩 ----------
+  if (BR.length) {
+    const dirt = night ? theme.road : theme.vegetation === 'desert' ? '#b98f5e' : '#9a7a52';
+    const scTex = canvasTex(256, 256, (c) => {
+      c.fillStyle = dirt;
+      c.fillRect(0, 0, 256, 256);
+      const r = mulberry32(5);
+      for (let i = 0; i < 3000; i++) {
+        const v = r();
+        c.fillStyle = v < 0.5 ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.1)';
+        c.fillRect(r() * 256, r() * 256, 1 + r() * 3, 1 + r() * 3);
+      }
+      // 兩條車轍
+      for (const x of [70, 186]) {
+        const g = c.createLinearGradient(x - 22, 0, x + 22, 0);
+        g.addColorStop(0, 'rgba(30,20,10,0)');
+        g.addColorStop(0.5, 'rgba(30,20,10,0.28)');
+        g.addColorStop(1, 'rgba(30,20,10,0)');
+        c.fillStyle = g;
+        c.fillRect(x - 22, 0, 44, 256);
+      }
+      // 黃黑警示邊線
+      for (const x of [0, 248]) for (let y = 0; y < 256; y += 32) {
+        c.fillStyle = '#ffd23f';
+        c.fillRect(x, y, 8, 16);
+        c.fillStyle = '#1a1a1a';
+        c.fillRect(x, y + 16, 8, 16);
+      }
+    });
+    const scMat = new THREE.MeshLambertMaterial({ map: scTex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const mainLat = (x: number, z: number) => { track.locate(x, z, -1); return Math.abs(track.lat); };
+    for (const b of BR) {
+      const hb = b.halfWidth;
+      const outFlag = b.samples.map((s) => mainLat(s.x, s.z) > hw - hb + 0.3);
+      addMesh(strip(b, { latA: hb, yA: 0.03, latB: -hb, yB: 0.03, scale: 9, when: (_s, i) => outFlag[i] }), scMat);
+      for (const sg of [1, -1]) {
+        const wallFlag = b.samples.map((s) => mainLat(s.x + s.nx * sg * (hb + 0.6), s.z + s.nz * sg * (hb + 0.6)) > hw + 0.4);
+        const when = (_s: Sample, i: number) => wallFlag[i];
+        const inner = sg * (hb + 0.35), outer = sg * (hb + 0.95);
+        const wIn = addMesh(strip(b, { latA: inner, yA: WH, latB: inner, yB: -0.4, scale: 12, uAlong: true, when }), wallMat);
+        const wOut = addMesh(strip(b, { latA: outer, yA: WH, latB: outer, yB: -0.6, scale: 12, uAlong: true, when }), wallMat);
+        wIn.castShadow = wOut.castShadow = shadows;
+        addMesh(strip(b, sg > 0 ? { latA: outer, yA: WH, latB: inner, yB: WH, scale: 10, when } : { latA: inner, yA: WH, latB: outer, yB: WH, scale: 10, when }), capMat, !night);
+        if (night) {
+          const neon = new THREE.MeshBasicMaterial({ color: glow(sg > 0 ? 0x39ffb0 : 0xffe14d, 1.9) });
+          addMesh(strip(b, sg > 0 ? { latA: hb - 0.1, yA: 0.07, latB: hb - 0.45, yB: 0.07, scale: 10, when } : { latA: -(hb - 0.45), yA: 0.07, latB: -(hb - 0.1), yB: 0.07, scale: 10, when }), neon, false);
+        }
+      }
+      const shMat = new THREE.MeshLambertMaterial({ map: grassTex, color: theme.shoulder });
+      addMesh(strip(b, { latA: hb + 9, yA: -3.2, latB: hb + 0.95, yB: -0.02, scale: 7 }), shMat);
+      addMesh(strip(b, { latA: -(hb + 0.95), yA: -0.02, latB: -(hb + 9), yB: -3.2, scale: 7 }), shMat);
+      // 入口的指示牌：在主線上快到分岔點時就看得到
+      const arrowSide = Math.sign(b.def.lat) || 1;
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 2.1), new THREE.MeshBasicMaterial({ map: canvasTex(128, 64, (c) => {
+        c.fillStyle = '#15161a';
+        c.fillRect(0, 0, 128, 64);
+        c.fillStyle = '#ffd23f';
+        c.font = 'bold 26px "Segoe UI", Arial, sans-serif';
+        c.textAlign = 'center';
+        c.fillText(arrowSide > 0 ? '◀ 捷徑' : '捷徑 ▶', 64, 42);
+      }, false), color: glow(0xffffff, night ? 1.6 : 1.15), side: THREE.DoubleSide }));
+      const sp = track.pointAt(b.def.from - 25);
+      const ox = sp.nx * arrowSide * (hw + 2.4), oz = sp.nz * arrowSide * (hw + 2.4);
+      sign.position.set(sp.x + ox, sp.y + 3.4, sp.z + oz);
+      sign.rotation.y = Math.atan2(sp.tx, sp.tz) + Math.PI;
+      root.add(sign);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.25, 3.4, 0.25), new THREE.MeshLambertMaterial({ color: 0x3a3d45 }));
+      post.position.set(sp.x + ox, sp.y + 1.7 - 0.6, sp.z + oz);
+      root.add(post);
+    }
   }
 
   // 急彎外側的方向指示牌
@@ -308,7 +405,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     // 左彎（curv > 0）的外側在右邊（lat < 0），反之亦然
     const when = (s: Sample, i: number) => {
       const a = S[(i + 6) % n].curv, b = S[(i - 6 + n) % n].curv;
-      return s.curv * sg < -0.02 && a * sg < -0.014 && b * sg < -0.014;
+      return s.curv * sg < -0.02 && a * sg < -0.014 && b * sg < -0.014 && !gap[sg][i];
     };
     const lat = sg * (hw + 0.4);
     addMesh(strip(track, { latA: lat, yA: WH + 2.1, latB: lat, yB: WH + 0.15, scale: 4, uAlong: true, when }), arrowMat, false);

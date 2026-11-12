@@ -1,6 +1,6 @@
 import type { CarId } from './cars';
 import { CFG } from './config';
-import type { Track } from './track';
+import type { Branch, Sample, Track } from './track';
 import { clamp, lerp, wrapAngle } from './util';
 import type { PrimaryId, SecondaryId } from './weapons';
 
@@ -92,6 +92,10 @@ export class Kart {
   // 賽道進度
   idx = 0;
   lat = 0;
+  /** 目前開在哪一條捷徑上（null = 主線）、捷徑上的取樣點，以及換算成主線進度的小數部分 */
+  branch: Branch | null = null;
+  bIdx = 0;
+  branchFrac = 0;
   /** 累積前進的取樣點數（一圈 = track.n） */
   prog = 0;
   /** 含小數的進度：排名用，避免兩台車落在同一個取樣點時分不出先後 */
@@ -116,9 +120,17 @@ export class Kart {
   secCd = 0;
   gunSide = 1;
   dmgMul = 1;
-  /** 多管火箭尚未射出的枚數 */
-  salvoLeft = 0;
-  salvoT = 0;
+  /** 火焰／雷射正在發射（畫面用），以及雷射光束的長度與是否打中車 */
+  firing = 0;
+  beamLen = 0;
+  beamHit = false;
+  /** 燃燒剩餘秒數與點火的人 */
+  burnT = 0;
+  burnBy: Kart | null = null;
+  /** 被追蹤導彈鎖定的警告時間 */
+  lockT = 0;
+  /** 剛被機關打到後的保護時間（避免同一個機關連續判定） */
+  hazardCd = 0;
 
   // 車款與升級係數
   maxSpeedMul = 1;
@@ -129,7 +141,7 @@ export class Kart {
   ramMul = 1;
 
   /** 本場統計（任務判定用） */
-  stats = { n2oUsed: 0, driftTime: 0, barrels: 0, airTime: 0, draftTime: 0, damage: 0, bestStreak: 0, perfectStart: false, jumps: 0 };
+  stats = { n2oUsed: 0, driftTime: 0, barrels: 0, airTime: 0, draftTime: 0, damage: 0, bestStreak: 0, perfectStart: false, jumps: 0, shortcuts: 0 };
 
   /** 倒數時按下油門的時間點（距 GO 還剩幾秒），-1 表示沒按著 */
   launchT = -1;
@@ -281,7 +293,7 @@ export class Kart {
     if (this.drafting && !flying) vmax *= C.draftSpeedMul;
     const forced = boosting || padOn || this.miniT > 0;
     const throttle = inp.accel < -0.1 ? inp.accel : forced ? 1 : inp.accel;
-    const sm0 = track.samples[this.idx];
+    const sm0 = this.surface(track);
     if (flying) {
       // 空中：引擎使不上力，只有 N2O 還能推
       if (boosting && s < vmax) s = Math.min(vmax, s + C.boostAccel * 0.5 * dt);
@@ -348,51 +360,12 @@ export class Kart {
       if (this.driftTime > C.miniMinDrift) this.miniWindowT = C.miniWindow;
     }
 
-    // ---- 護欄碰撞 ----
-    this.idx = track.locate(this.x, this.z, this.idx);
-    this.lat = track.lat;
-    const lim = track.halfWidth - C.kartRadius * 0.8;
-    if (Math.abs(this.lat) > lim) {
-      const sgn = Math.sign(this.lat);
-      const sm = track.samples[this.idx];
-      const nx = sm.nx * sgn, nz = sm.nz * sgn;
-      const over = Math.abs(this.lat) - lim;
-      this.x -= nx * over;
-      this.z -= nz * over;
-      this.lat = sgn * lim;
-      const fxh = Math.sin(this.heading), fzh = Math.cos(this.heading);
-      const tanA = Math.atan2(sm.tx, sm.tz) + (fxh * sm.tx + fzh * sm.tz < 0 ? Math.PI : 0);
-      // 車頭朝向護欄時，逐漸轉回賽道方向，避免頂著牆動不了
-      if (fxh * nx + fzh * nz > 0) {
-        this.heading = wrapAngle(this.heading + wrapAngle(tanA - this.heading) * Math.min(1, dt * 4));
-      }
-      const vn = this.vx * nx + this.vz * nz;
-      if (vn > 0) {
-        this.vx -= nx * vn * 1.3;
-        this.vz -= nz * vn * 1.3;
-        const k = Math.min(1, vn / 14);
-        const loss = C.wallLoss * k;
-        this.vx *= 1 - loss;
-        this.vz *= 1 - loss;
-        this.heading = wrapAngle(this.heading + wrapAngle(tanA - this.heading) * k * 0.4);
-        if (vn > 4) {
-          if (this.drifting && this.driftGain > 0.001) {
-            // 把這次甩尾集到的氣扣回去（包含已經換成整瓶的部分）
-            const total = Math.max(0, this.n2o + this.gauge - this.driftGain);
-            this.n2o = Math.min(C.maxN2O, Math.floor(total + 1e-6));
-            this.gauge = Math.min(1, Math.max(0, total - this.n2o));
-            emit('driftFail');
-          }
-          this.driftGain = 0;
-          this.drifting = false;
-          emit('wall');
-        }
-      }
-    }
+    // ---- 護欄碰撞（主線與捷徑） ----
+    this.collideWalls(dt, track, emit);
 
     // ---- 高度：路面 + 跳台斜坡 + 滯空 ----
-    const sm = track.samples[this.idx];
-    const ground = track.heightAt(this.idx, this.x, this.z);
+    const sm = this.surface(track);
+    const ground = this.branch ? this.branch.heightAt(this.bIdx, this.x, this.z) : track.heightAt(this.idx, this.x, this.z);
     const along = Math.sin(this.heading) * sm.tx + Math.cos(this.heading) * sm.tz;
     let lift = 0;
     let basePitch = Math.atan(sm.slope) * along;
@@ -414,7 +387,7 @@ export class Kart {
         emit('land');
       }
     } else {
-      const rp = track.rampProgress(this.idx, C.rampLength);
+      const rp = this.branch ? -1 : track.rampProgress(this.idx, C.rampLength);
       if (rp >= 0 && along > 0.5) {
         lift = rp * C.rampHeight;
         basePitch += Math.atan(C.rampHeight / C.rampLength);
@@ -434,12 +407,104 @@ export class Kart {
 
     // ---- 加速帶 ----
     // 要先離開加速帶才能再次觸發，停在上面不會一直重複加速
-    const onPad = this.air <= 0 && track.onPad(this.idx, this.lat);
+    const onPad = this.air <= 0 && !this.branch && track.onPad(this.idx, this.lat);
     if (onPad && !this.wasOnPad) {
       this.padT = C.padTime;
       this.addGauge(C.gaugePad, emit);
       emit('pad');
     }
     this.wasOnPad = onPad;
+  }
+
+  /** 目前腳下路面的取樣點（主線或捷徑） */
+  surface(track: Track): Sample {
+    return this.branch ? this.branch.samples[this.bIdx] : track.samples[this.idx];
+  }
+
+  /**
+   * 路面是主線與捷徑的聯集：在任何一條路的範圍內都可以自由行駛，
+   * 兩條都超出時才撞牆，推回比較近的那一條。
+   */
+  private collideWalls(dt: number, track: Track, emit: (e: KartEvent) => void): void {
+    const C = CFG;
+    const lim = track.halfWidth - C.kartRadius * 0.8;
+    const br = this.branch;
+    if (br) {
+      const bi = br.locate(this.x, this.z);
+      const blat = br.lat, inside = br.inside();
+      const prog = br.progress(bi, br.along);
+      const hint = track.wrap(br.fromIdx + Math.floor(prog));
+      const mi = track.locate(this.x, this.z, hint, 40);
+      const onMain = Math.abs(track.lat) <= lim && Math.abs(track.along) < track.spacing * 1.5;
+      if (onMain || !inside) {
+        this.branch = null;
+        this.idx = mi;
+        this.lat = track.lat;
+        if (!onMain) this.pushWall(track.samples[mi], track.lat, lim, dt, emit);
+        return;
+      }
+      this.bIdx = bi;
+      this.idx = hint;
+      this.branchFrac = prog - Math.floor(prog);
+      this.lat = blat;
+      const limB = br.halfWidth - C.kartRadius * 0.8;
+      if (Math.abs(blat) > limB) this.pushWall(br.samples[bi], blat, limB, dt, emit);
+      return;
+    }
+    this.idx = track.locate(this.x, this.z, this.idx);
+    this.lat = track.lat;
+    if (Math.abs(this.lat) <= lim) return;
+    // 超出主線：如果正好進入捷徑的範圍就切換過去
+    const b = track.branchNear(this.x, this.z);
+    if (b) {
+      const bi = b.locate(this.x, this.z);
+      if (b.inside() && Math.abs(b.lat) <= b.halfWidth - C.kartRadius * 0.8) {
+        this.branch = b;
+        this.bIdx = bi;
+        const prog = b.progress(bi, b.along);
+        this.idx = track.wrap(b.fromIdx + Math.floor(prog));
+        this.branchFrac = prog - Math.floor(prog);
+        this.lat = b.lat;
+        return;
+      }
+    }
+    this.pushWall(track.samples[this.idx], this.lat, lim, dt, emit);
+  }
+
+  private pushWall(sm: Sample, lat: number, lim: number, dt: number, emit: (e: KartEvent) => void): void {
+    const C = CFG;
+    const sgn = Math.sign(lat);
+    const nx = sm.nx * sgn, nz = sm.nz * sgn;
+    const over = Math.abs(lat) - lim;
+    this.x -= nx * over;
+    this.z -= nz * over;
+    this.lat = sgn * lim;
+    const fxh = Math.sin(this.heading), fzh = Math.cos(this.heading);
+    const tanA = Math.atan2(sm.tx, sm.tz) + (fxh * sm.tx + fzh * sm.tz < 0 ? Math.PI : 0);
+    // 車頭朝向護欄時，逐漸轉回賽道方向，避免頂著牆動不了
+    if (fxh * nx + fzh * nz > 0) {
+      this.heading = wrapAngle(this.heading + wrapAngle(tanA - this.heading) * Math.min(1, dt * 4));
+    }
+    const vn = this.vx * nx + this.vz * nz;
+    if (vn <= 0) return;
+    this.vx -= nx * vn * 1.3;
+    this.vz -= nz * vn * 1.3;
+    const k = Math.min(1, vn / 14);
+    const loss = C.wallLoss * k;
+    this.vx *= 1 - loss;
+    this.vz *= 1 - loss;
+    this.heading = wrapAngle(this.heading + wrapAngle(tanA - this.heading) * k * 0.4);
+    if (vn > 4) {
+      if (this.drifting && this.driftGain > 0.001) {
+        // 把這次甩尾集到的氣扣回去（包含已經換成整瓶的部分）
+        const total = Math.max(0, this.n2o + this.gauge - this.driftGain);
+        this.n2o = Math.min(C.maxN2O, Math.floor(total + 1e-6));
+        this.gauge = Math.min(1, Math.max(0, total - this.n2o));
+        emit('driftFail');
+      }
+      this.driftGain = 0;
+      this.drifting = false;
+      emit('wall');
+    }
   }
 }

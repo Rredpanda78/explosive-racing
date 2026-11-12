@@ -25,6 +25,7 @@ const POOL: Mission[] = [
   { id: 'drift20', text: '累積甩尾 20 秒', reward: 250, ...count((p) => p.stats.driftTime, 20) },
   { id: 'draft6', text: '累積尾流 6 秒', reward: 250, ...count((p) => p.stats.draftTime, 6) },
   { id: 'barrel3', text: '引爆 3 個爆炸桶', reward: 200, ...count((p) => p.stats.barrels, 3) },
+  { id: 'cut2', text: '走捷徑 2 次', reward: 250, ...count((p) => p.stats.shortcuts, 2) },
   { id: 'jump3', text: '飛越跳台 3 次', reward: 200, ...count((p) => p.stats.jumps, 3) },
   { id: 'dmg200', text: '造成 200 點傷害', reward: 300, ...count((p) => p.stats.damage, 200) },
   { id: 'start', text: '完成起跑衝刺', reward: 150, progress: (p) => (p.stats.perfectStart ? '完成' : '未完成'), done: (p) => p.stats.perfectStart },

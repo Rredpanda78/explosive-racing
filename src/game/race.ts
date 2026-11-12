@@ -4,26 +4,62 @@ import { CFG } from './config';
 import { Kart, type KartEvent, type KartInput } from './kart';
 import { pickMissions, type Mission } from './missions';
 import type { Profile } from './save';
-import type { Track } from './track';
+import type { HazardDef, Track } from './track';
 import { clamp, mulberry32, wrapAngle } from './util';
-import { PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, weaponLvlMul } from './weapons';
+import { BURN_DPS, BURN_TIME, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
 
 export type RaceMode = 'race' | 'elim';
 
 export interface Bullet { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; dmg: number; owner: Kart }
-/** 火箭：不追蹤，沿發射方向直線飛行 */
-export interface Missile { x: number; y: number; z: number; a: number; idx: number; speed: number; life: number; dmg: number; radius: number; owner: Kart }
+/** 火箭與追蹤導彈：homing 為 true 時會轉向 target */
+export interface Missile {
+  x: number; y: number; z: number; a: number; idx: number; speed: number; life: number; dmg: number; radius: number; owner: Kart;
+  homing: boolean; target: Kart | null; age: number;
+}
 /** y 為離地高度，gy 為砲彈下方的路面高度 */
 export interface Shell { x: number; y: number; z: number; gy: number; idx: number; vx: number; vy: number; vz: number; dmg: number; radius: number; owner: Kart }
 /** 爆炸桶：respawnT > 0 表示已引爆等待重生；fuse > 0 表示被旁邊的爆炸波及、即將連鎖引爆 */
 export interface Barrel { x: number; y: number; z: number; respawnT: number; fuse: number; by: Kart | null }
+/**
+ * 地雷：armT 倒數完才會被觸發（放的人自己不會觸發）。
+ * 集束圓雷的 life 倒數到 0 會自己引爆；一般地雷到時間就失效。
+ */
+export interface Mine {
+  x: number; y: number; z: number; vx: number; vz: number; idx: number; owner: Kart; by: Kart;
+  kind: 'mine' | 'cluster'; armT: number; life: number; fuse: number; dmg: number; radius: number; trigger: number; dead: boolean;
+}
+/** 滾石：沿賽道往前滾，d 是在賽道上的距離 */
+export interface Boulder {
+  d: number; lat: number; lat0: number; lat1: number; x: number; y: number; z: number; v: number; r: number; hp: number;
+  enterT: number; roll: number; end: number; dead: boolean;
+}
+/** 機關的即時狀態（畫面依這些值擺放模型） */
+export interface HazardState {
+  def: HazardDef;
+  /** 機關所在位置的主線座標 */
+  x: number; y: number; z: number; tx: number; tz: number; nx: number; nz: number;
+  /** 鐵鎚：擺角、鎚頭的橫向位置與離地高度、橫向速度 */
+  theta: number; lat: number; hy: number; vlat: number;
+  /** 電車：中心的橫向位置、方向、是否正在警示、是否正在通過 */
+  c: number; dir: number; warn: boolean; moving: boolean;
+  /** 滾石：距離下一顆的秒數 */
+  spawnT: number;
+  cycle: number;
+}
+
+export type HitWeapon = 'gun' | 'flame' | 'laser';
 
 export type RaceEvent =
   | { t: 'shot'; k: Kart; x: number; y: number; z: number; side: number }
-  | { t: 'hit'; k: Kart; by: Kart; x: number; y: number; z: number }
+  | { t: 'hit'; k: Kart; by: Kart; x: number; y: number; z: number; w: HitWeapon }
   | { t: 'blast'; x: number; y: number; z: number; r: number; gy: number; kart: boolean }
   | { t: 'kill'; killer: Kart | null; victim: Kart; streak: number }
-  | { t: 'launch'; k: Kart; kind: string }
+  | { t: 'launch'; k: Kart; kind: SecondaryId }
+  | { t: 'lock'; k: Kart; by: Kart }
+  | { t: 'hazard'; k: Kart; kind: HazardDef['kind']; x: number; y: number; z: number }
+  | { t: 'rock'; x: number; y: number; z: number; r: number }
+  | { t: 'tram'; x: number; y: number; z: number }
+  | { t: 'shortcut'; k: Kart }
   | { t: 'kart'; k: Kart; e: KartEvent }
   | { t: 'lap'; k: Kart; lap: number; time: number }
   | { t: 'finish'; k: Kart }
@@ -40,6 +76,14 @@ export const PLAYER_COLOR = 0xffd400;
 
 const SHELL_GRAVITY = 28;
 const SHELL_VY = 13;
+/** 追蹤導彈的轉向速度（弧度／秒）：比急轉彎的車慢，所以甩得掉 */
+const HOMING_TURN = 2.3;
+const MAX_MINES = 3;
+
+// 機關的尺寸與威力
+export const HAMMER = { pivot: 11, arm: 9.5, amp: 1.15, headR: 1.3, headHalf: 1.8, dmg: 22 };
+export const TRAM = { half: 8, width: 1.6, speed: 24, warn: 2.5, reach: 38, dmg: 40 };
+export const BOULDER = { r: 2.2, hp: 50, dmg: 28, enter: 0.9 };
 
 /** 一場比賽的完整模擬。不依賴畫面，之後連線對戰可直接由主機端跑這份。 */
 export class Race {
@@ -52,11 +96,16 @@ export class Race {
   missiles: Missile[] = [];
   shells: Shell[] = [];
   barrels: Barrel[] = [];
+  mines: Mine[] = [];
+  boulders: Boulder[] = [];
+  hazards: HazardState[] = [];
   missions: Mission[];
   events: RaceEvent[] = [];
   state: 'countdown' | 'racing' | 'finished' = 'countdown';
   countdown = 3.4;
   time = 0;
+  /** 包含倒數在內的時鐘（機關照這個動） */
+  clock = 0;
   /** 淘汰賽：距離下一次淘汰的秒數 */
   elimT = CFG.elimFirst;
   /** 測試用：玩家也交給 AI 開 */
@@ -129,6 +178,17 @@ export class Race {
       const s = track.samples[track.wrap(Math.round(b.dist / track.spacing))];
       this.barrels.push({ x: s.x + s.nx * b.lat, y: s.y, z: s.z + s.nz * b.lat, respawnT: 0, fuse: 0, by: null });
     }
+    // 機關
+    for (const def of track.def.hazards ?? []) {
+      const p = track.pointAt(def.dist);
+      this.hazards.push({
+        def, x: p.x, y: p.y, z: p.z, tx: p.tx, tz: p.tz, nx: p.nx, nz: p.nz,
+        theta: 0, lat: 0, hy: HAMMER.pivot - HAMMER.arm, vlat: 0,
+        c: -TRAM.reach, dir: 1, warn: false, moving: false,
+        spawnT: 1 + rng() * def.period, cycle: -1,
+      });
+    }
+    this.updateHazards(0);
     this.missions = pickMissions(rng, mode);
   }
 
@@ -136,6 +196,7 @@ export class Race {
     const ev = this.events;
     const track = this.track;
     const n = track.n;
+    this.clock += dt;
 
     if (this.state === 'countdown') {
       this.countdown -= dt;
@@ -170,6 +231,9 @@ export class Race {
       const ai = this.ais.get(k)!;
       const useAI = !k.isPlayer || k.finished || this.autoPlayer;
       if (!k.isPlayer) ai.rubberBand(k, this.player, this);
+      k.firing = Math.max(0, k.firing - dt);
+      k.lockT = Math.max(0, k.lockT - dt);
+      k.hazardCd = Math.max(0, k.hazardCd - dt);
       if (k.dead) {
         k.respawnT -= dt;
         if (k.respawnT <= 0) {
@@ -182,7 +246,7 @@ export class Race {
           k.secCd = 0;
           k.heat = 0;
           k.overheated = false;
-          k.salvoLeft = 0;
+          k.burnT = 0;
           ev.push({ t: 'respawn', k });
         }
         continue;
@@ -190,19 +254,34 @@ export class Race {
       if (!k.finished) k.invulnT = Math.max(0, k.invulnT - dt);
       k.sinceDamage += dt;
       if (k.sinceDamage > CFG.regenDelay && k.hp < k.maxHp) k.hp = Math.min(k.maxHp, k.hp + CFG.regenRate * dt);
+      // 燃燒：持續扣血，算在點火的人頭上
+      if (k.burnT > 0) {
+        k.burnT -= dt;
+        this.damage(k, BURN_DPS * dt, k.burnBy, true);
+        if (k.dead) continue;
+      }
       if (!racing) continue;
 
       const inp = useAI ? ai.think(k, this, dt) : pin;
       const prevIdx = k.idx;
+      const wasBranch = k.branch;
       k.update(dt, inp, track, (e) => ev.push({ t: 'kart', k, e }));
+      if (k.branch && !wasBranch) {
+        if (!k.finished) k.stats.shortcuts++;
+        ev.push({ t: 'shortcut', k });
+      }
 
       // 進度與圈數
       let d = k.idx - prevIdx;
       if (d > n / 2) d -= n;
       else if (d < -n / 2) d += n;
       k.prog += d;
-      const sp = track.samples[k.idx];
-      k.progFine = k.prog + ((k.x - sp.x) * sp.tx + (k.z - sp.z) * sp.tz) / track.spacing;
+      if (k.branch) {
+        k.progFine = k.prog + k.branchFrac;
+      } else {
+        const sp = track.samples[k.idx];
+        k.progFine = k.prog + ((k.x - sp.x) * sp.tx + (k.z - sp.z) * sp.tz) / track.spacing;
+      }
       const lc = Math.floor(k.prog / n);
       if (lc > k.lapCount && !k.finished) {
         if (k.lapCount >= 0) {
@@ -214,13 +293,14 @@ export class Race {
         k.lapStart = this.time;
         if (this.mode === 'race' && lc >= track.laps && !k.finished) this.finish(k);
       }
-      const sm = track.samples[k.idx];
+      const sm = k.surface(track);
       if (k.vx * sm.tx + k.vz * sm.tz < -3) k.wrongWayT += dt;
       else k.wrongWayT = 0;
 
       if (!k.finished) this.updateWeapons(k, inp, dt);
     }
 
+    this.updateHazards(dt);
     if (racing) {
       this.collideKarts();
       this.updateDraft(dt);
@@ -228,6 +308,8 @@ export class Race {
       this.updateBullets(dt);
       this.updateMissiles(dt);
       this.updateShells(dt);
+      this.updateMines(dt);
+      this.updateBoulders(dt);
       if (this.mode === 'elim' && this.state === 'racing') this.updateElimination(dt);
     }
     // 第一台完賽後 30 秒還沒跑完的，直接依目前進度排名（避免比賽永遠不結束）
@@ -248,21 +330,22 @@ export class Race {
     k.aiAssist = true;
     k.drifting = false;
     k.invulnT = 1e9;
-    k.salvoLeft = 0;
+    k.burnT = 0;
     if (this.firstFinishT < 0) this.firstFinishT = this.time;
     this.events.push({ t: 'finish', k });
   }
 
   /** 找車頭前方圓錐內最近的車。只給 AI 判斷開火時機用，武器本身不會自動瞄準 */
-  pickTarget(k: Kart, cone: number, range: number, minDist = 2): Kart | null {
+  pickTarget(k: Kart, cone: number, range: number, minDist = 2, back = false): Kart | null {
     let best: Kart | null = null;
     let bs = Infinity;
+    const dir = k.heading + (back ? Math.PI : 0);
     for (const o of this.karts) {
       if (o === k || o.dead || o.out || o.invulnT > 0) continue;
       const dx = o.x - k.x, dz = o.z - k.z;
       const d = Math.hypot(dx, dz);
       if (d > range || d < minDist) continue;
-      const ang = Math.abs(wrapAngle(Math.atan2(dx, dz) - k.heading));
+      const ang = Math.abs(wrapAngle(Math.atan2(dx, dz) - dir));
       if (ang > cone) continue;
       const score = d * (1 + (ang / cone) * 1.5);
       if (score < bs) { bs = score; best = o; }
@@ -272,6 +355,7 @@ export class Race {
 
   resetToTrack(k: Kart): void {
     const s = this.track.samples[k.idx];
+    k.branch = null;
     k.x = s.x;
     k.z = s.z;
     k.y = s.y;
@@ -288,14 +372,15 @@ export class Race {
     k.padT = 0;
   }
 
-  damage(v: Kart, amount: number, attacker: Kart | null): void {
+  /** dot = true 表示持續傷害（燃燒），不算進「打中人集氣」 */
+  damage(v: Kart, amount: number, attacker: Kart | null, dot = false): void {
     if (v.dead || v.out || v.invulnT > 0 || this.state === 'countdown' || amount <= 0) return;
     v.hp -= amount;
     v.sinceDamage = 0;
     if (attacker && attacker !== v) {
       attacker.stats.damage += amount;
       // 打中人也會集氣
-      attacker.addGauge(amount * CFG.gaugePerDamage, (e) => this.events.push({ t: 'kart', k: attacker, e }));
+      if (!dot) attacker.addGauge(amount * CFG.gaugePerDamage, (e) => this.events.push({ t: 'kart', k: attacker, e }));
     }
     if (v.hp <= 0) this.destroy(v, attacker);
   }
@@ -310,7 +395,7 @@ export class Race {
     v.boostT = 0;
     v.spinVel = 0;
     v.tumble = 0;
-    v.salvoLeft = 0;
+    v.burnT = 0;
     const gy = v.y - v.air;
     v.air = 0;
     v.vy = 0;
@@ -328,6 +413,19 @@ export class Race {
     }
     this.events.push({ t: 'blast', x: v.x, y: v.y + 1, z: v.z, r: 8, gy, kart: true });
     this.events.push({ t: 'kill', killer: attacker, victim: v, streak });
+  }
+
+  /** 把車撞飛：往 (dx,dz) 方向推、離地、翻滾 */
+  private knock(k: Kart, dx: number, dz: number, push: number, lift: number): void {
+    if (k.dead || k.invulnT > 0) return;
+    k.vx = k.vx * 0.5 + dx * push;
+    k.vz = k.vz * 0.5 + dz * push;
+    if (k.air <= 0) k.jumped = false;
+    k.air = Math.max(k.air, 0.05);
+    k.vy = Math.max(k.vy, lift);
+    k.spinVel += (this.rng() - 0.5) * 6;
+    k.tumble = (this.rng() > 0.5 ? 1 : -1) * 6;
+    k.drifting = false;
   }
 
   /** owner 為 null 表示沒有人該被算擊毀（例如自己撞到爆炸桶），這時所有人都會受傷 */
@@ -354,14 +452,28 @@ export class Race {
         k.drifting = false;
       }
     }
-    // 波及附近的爆炸桶：延遲一點點引爆，形成連鎖
+    const r2 = (radius + 1.5) * (radius + 1.5);
+    // 波及附近的爆炸桶與地雷：延遲一點點引爆，形成連鎖
     for (const b of this.barrels) {
       if (b.respawnT > 0 || b.fuse > 0) continue;
       const dx = b.x - x, dz = b.z - z;
-      if (dx * dx + dz * dz < (radius + 1.5) * (radius + 1.5)) {
+      if (dx * dx + dz * dz < r2) {
         b.fuse = 0.12 + this.rng() * 0.1;
         b.by = owner;
       }
+    }
+    for (const m of this.mines) {
+      if (m.dead || m.fuse > 0) continue;
+      const dx = m.x - x, dz = m.z - z;
+      if (dx * dx + dz * dz < r2) {
+        m.fuse = 0.1 + this.rng() * 0.12;
+        if (owner) m.by = owner;
+      }
+    }
+    for (const b of this.boulders) {
+      if (b.dead) continue;
+      const dx = b.x - x, dz = b.z - z;
+      if (dx * dx + dz * dz < (radius + b.r) * (radius + b.r)) this.hurtBoulder(b, dmg, owner);
     }
   }
 
@@ -405,7 +517,7 @@ export class Race {
     victim.dead = true;
     victim.speed = 0;
     victim.vx = victim.vz = 0;
-    victim.salvoLeft = 0;
+    victim.burnT = 0;
     const gy = victim.y - victim.air;
     victim.air = 0;
     victim.vy = 0;
@@ -471,14 +583,24 @@ export class Race {
     }
   }
 
-  /** 子彈或火箭打到爆炸桶：回傳被打中的桶 */
-  private barrelAt(x: number, z: number, r: number): Barrel | null {
+  /** 打到爆炸桶、地雷或滾石：回傳 true 表示被擋下 */
+  private hitObject(x: number, z: number, r: number, by: Kart, dmg: number): boolean {
     for (const b of this.barrels) {
       if (b.respawnT > 0 || b.fuse > 0) continue;
       const dx = b.x - x, dz = b.z - z;
-      if (dx * dx + dz * dz < r * r) return b;
+      if (dx * dx + dz * dz < (r + 0.8) * (r + 0.8)) { this.detonate(b, by); return true; }
     }
-    return null;
+    for (const m of this.mines) {
+      if (m.dead || m.fuse > 0) continue;
+      const dx = m.x - x, dz = m.z - z;
+      if (dx * dx + dz * dz < (r + 0.5) * (r + 0.5)) { m.by = by; this.explodeMine(m); return true; }
+    }
+    for (const b of this.boulders) {
+      if (b.dead || b.enterT > 0.45) continue;
+      const dx = b.x - x, dz = b.z - z;
+      if (dx * dx + dz * dz < (r + b.r) * (r + b.r)) { this.hurtBoulder(b, dmg, by); return true; }
+    }
+    return false;
   }
 
   private updateWeapons(k: Kart, inp: KartInput, dt: number): void {
@@ -490,10 +612,11 @@ export class Race {
     if (canFire) {
       let guard = 0;
       while (k.fireCd <= 0 && guard++ < 4) {
-        this.firePrimary(k);
+        this.firePrimary(k, P);
         k.fireCd += 1 / P.rate;
         k.heat += P.heat;
       }
+      if (P.kind !== 'gun') k.firing = 0.1;
     } else if (k.fireCd < 0) {
       k.fireCd = 0;
     }
@@ -502,50 +625,38 @@ export class Race {
     if (k.overheated && k.heat < 0.35) k.overheated = false;
 
     k.secCd = Math.max(0, k.secCd - dt);
-    if (inp.fireSecondary && k.secCd <= 0 && k.salvoLeft <= 0) {
+    if (inp.fireSecondary && k.secCd <= 0) {
       const S = SECONDARY[k.secondary];
       k.secCd = S.cooldown;
-      if (k.secondary === 'howitzer') {
-        this.fireShell(k);
-        this.events.push({ t: 'launch', k, kind: 'howitzer' });
-      } else {
-        k.salvoLeft = S.count;
-        k.salvoT = 0;
+      switch (k.secondary) {
+        case 'rocket': this.fireRocket(k); break;
+        case 'grenade': this.fireShell(k); break;
+        case 'mine': this.dropMine(k); break;
+        case 'cluster': this.dropCluster(k); break;
+        case 'missile': this.fireHoming(k); break;
       }
-    }
-    // 火箭：單發或連射
-    if (k.salvoLeft > 0) {
-      k.salvoT -= dt;
-      while (k.salvoLeft > 0 && k.salvoT <= 0) {
-        const S = SECONDARY[k.secondary];
-        const i = S.count - k.salvoLeft;
-        // 多管火箭左右交錯、略微散開
-        const off = S.count > 1 ? (i - (S.count - 1) / 2) * 0.035 : 0;
-        this.fireRocket(k, off, i);
-        this.events.push({ t: 'launch', k, kind: 'rocket' });
-        k.salvoLeft--;
-        k.salvoT += 0.11;
-      }
+      this.events.push({ t: 'launch', k, kind: k.secondary });
     }
   }
 
-  private dmgScale(k: Kart): number {
-    return k.dmgMul;
+  private secDmg(k: Kart): number {
+    return SECONDARY[k.secondary].dmg * weaponLvlMul(k.secondaryLvl) * k.dmgMul;
   }
 
-  /** 主武器：沿車頭方向直射（只有武器本身的散布，沒有輔助瞄準） */
-  private firePrimary(k: Kart): void {
-    const P = PRIMARY[k.primary];
+  /** 主武器：全部沿車頭方向（沒有輔助瞄準） */
+  private firePrimary(k: Kart, P: PrimaryDef): void {
+    const dmg = P.dmg * weaponLvlMul(k.primaryLvl) * k.dmgMul;
+    if (P.kind === 'flame') return this.fireFlame(k, P, dmg);
+    if (P.kind === 'laser') return this.fireLaser(k, P, dmg);
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
     const lx = fz, lz = -fx;
     k.gunSide = -k.gunSide;
     const ox = k.x + lx * 0.7 * k.gunSide + fx * 1.2;
     const oz = k.z + lz * 0.7 * k.gunSide + fz * 1.2;
     const oy = k.y + 0.95;
-    const dmg = P.dmg * weaponLvlMul(k.primaryLvl) * this.dmgScale(k);
     for (let i = 0; i < P.pellets; i++) {
       const a = k.heading + (this.rng() * 2 - 1) * P.spread;
-      const sp = CFG.bulletSpeed * (P.pellets > 1 ? 0.8 + this.rng() * 0.3 : 1);
+      const sp = CFG.bulletSpeed;
       this.bullets.push({
         x: ox, y: oy, z: oz,
         vx: Math.sin(a) * sp, vy: Math.tan(k.pitch) * sp, vz: Math.cos(a) * sp,
@@ -555,29 +666,204 @@ export class Race {
     this.events.push({ t: 'shot', k, x: ox, y: oy, z: oz, side: k.gunSide });
   }
 
-  /** 火箭：朝正前方直線飛行。angle 為相對車頭的偏角，n 是連射中的第幾枚 */
-  private fireRocket(k: Kart, angle: number, n: number): void {
-    const S = SECONDARY[k.secondary];
-    const a = k.heading + angle;
+  /** 火焰：車頭前方扇形範圍內的車、油桶、地雷、滾石都會被燒到 */
+  private fireFlame(k: Kart, P: PrimaryDef, dmg: number): void {
+    const h = k.heading;
+    const inCone = (x: number, z: number, y: number, w: number): number => {
+      const dx = x - k.x, dz = z - k.z;
+      const d = Math.hypot(dx, dz);
+      if (d > P.range || d < 0.3 || Math.abs(y - k.y) > 2.6) return -1;
+      if (dx * Math.sin(h) + dz * Math.cos(h) <= 0) return -1;
+      const ang = Math.abs(wrapAngle(Math.atan2(dx, dz) - h));
+      return ang <= P.spread + Math.atan2(w, d) ? d : -1;
+    };
+    for (const o of this.karts) {
+      if (o === k || o.dead || o.out || o.invulnT > 0) continue;
+      const d = inCone(o.x, o.z, o.y, 1.1);
+      if (d < 0) continue;
+      this.damage(o, dmg * (1 - 0.4 * (d / P.range)), k);
+      o.burnT = BURN_TIME;
+      o.burnBy = k;
+      this.events.push({ t: 'hit', k: o, by: k, x: o.x, y: o.y + 0.9, z: o.z, w: 'flame' });
+    }
+    for (const b of this.barrels) if (b.respawnT <= 0 && b.fuse <= 0 && inCone(b.x, b.z, b.y, 0.8) >= 0) { b.fuse = 0.15; b.by = k; }
+    for (const m of this.mines) if (!m.dead && m.fuse <= 0 && inCone(m.x, m.z, m.y, 0.5) >= 0) { m.fuse = 0.15; m.by = k; }
+    for (const b of this.boulders) if (!b.dead && b.enterT <= 0.45 && inCone(b.x, b.z, b.y - b.r, b.r) >= 0) this.hurtBoulder(b, dmg, k);
+  }
+
+  /** 雷射：沿車頭方向的光束，打到第一個目標或離開路面就停住 */
+  private fireLaser(k: Kart, P: PrimaryDef, dmg: number): void {
+    const track = this.track;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
-    const side = S.count > 1 ? (n % 2 ? 0.25 : -0.25) : 0;
+    const ox = k.x + fx * 1.3, oz = k.z + fz * 1.3, oy = k.y + 0.95;
+    const tp = Math.tan(k.pitch);
+    // 先找光束離開路面（打到護欄或坡面）的距離
+    let len = P.range;
+    let hint = k.idx;
+    for (let t = 4; t < P.range; t += 4) {
+      const x = ox + fx * t, z = oz + fz * t;
+      hint = track.probe(x, z, hint, 0.6);
+      if (!track.probeOn || oy + tp * t < track.probeY - 0.2) { len = Math.max(2, t - 2); break; }
+    }
+    let best = len;
+    let hitK: Kart | null = null;
+    let obj: (() => void) | null = null;
+    const ray = (x: number, z: number, w: number): number => {
+      const dx = x - ox, dz = z - oz;
+      const t = dx * fx + dz * fz;
+      if (t < 0 || t > best) return -1;
+      return Math.abs(dx * fz - dz * fx) < w ? t : -1;
+    };
+    for (const o of this.karts) {
+      if (o === k || o.dead || o.out || o.invulnT > 0) continue;
+      const t = ray(o.x, o.z, 1.3);
+      if (t >= 0 && Math.abs(o.y + 0.9 - (oy + tp * t)) < 2) { best = t; hitK = o; obj = null; }
+    }
+    for (const b of this.barrels) {
+      if (b.respawnT > 0 || b.fuse > 0) continue;
+      const t = ray(b.x, b.z, 0.9);
+      if (t >= 0) { best = t; hitK = null; obj = () => this.detonate(b, k); }
+    }
+    for (const m of this.mines) {
+      if (m.dead || m.fuse > 0) continue;
+      const t = ray(m.x, m.z, 0.7);
+      if (t >= 0) { best = t; hitK = null; obj = () => { m.by = k; this.explodeMine(m); }; }
+    }
+    for (const b of this.boulders) {
+      if (b.dead || b.enterT > 0.45) continue;
+      const t = ray(b.x, b.z, b.r);
+      if (t >= 0) { best = t; hitK = null; obj = () => this.hurtBoulder(b, dmg, k); }
+    }
+    k.beamLen = best + 1.3;
+    k.beamHit = !!hitK || !!obj;
+    if (hitK) {
+      this.damage(hitK, dmg, k);
+      this.events.push({ t: 'hit', k: hitK, by: k, x: ox + fx * best, y: oy + tp * best, z: oz + fz * best, w: 'laser' });
+    } else if (obj) obj();
+  }
+
+  /** 火箭：朝正前方直線飛行 */
+  private fireRocket(k: Kart): void {
+    const S = SECONDARY.rocket;
+    const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
     this.missiles.push({
-      x: k.x + fx * 1.6 + fz * side, y: k.y + 0.95, z: k.z + fz * 1.6 - fx * side, a, idx: k.idx,
-      speed: Math.max(30, k.speed) + 25, life: 3.5,
-      dmg: S.dmg * weaponLvlMul(k.secondaryLvl) * this.dmgScale(k), radius: S.radius,
-      owner: k,
+      x: k.x + fx * 1.6, y: k.y + 0.95, z: k.z + fz * 1.6, a: k.heading, idx: k.idx,
+      speed: Math.max(30, k.speed) + 25, life: 3.5, dmg: this.secDmg(k), radius: S.radius, owner: k,
+      homing: false, target: null, age: 0,
     });
   }
 
-  /** 榴彈砲：固定仰角朝前拋射，落點約在車前 45 公尺（隨車速往前帶） */
+  /** 追蹤導彈：從附近的對手裡隨機挑一台鎖定 */
+  private fireHoming(k: Kart): void {
+    const S = SECONDARY.missile;
+    const cands = this.karts.filter((o) => o !== k && !o.dead && !o.out && !o.finished && Math.hypot(o.x - k.x, o.z - k.z) < 260);
+    const target = cands.length ? cands[Math.floor(this.rng() * cands.length)] : null;
+    const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
+    this.missiles.push({
+      x: k.x + fx * 1.6, y: k.y + 1.2, z: k.z + fz * 1.6, a: k.heading, idx: k.idx,
+      speed: Math.max(30, k.speed) + 12, life: 6, dmg: this.secDmg(k), radius: S.radius, owner: k,
+      homing: true, target, age: 0,
+    });
+    if (target) {
+      target.lockT = 2;
+      this.events.push({ t: 'lock', k: target, by: k });
+    }
+  }
+
+  /** 榴彈發射器：固定仰角朝前拋射，落點約在車前 45 公尺（隨車速往前帶） */
   private fireShell(k: Kart): void {
-    const S = SECONDARY.howitzer;
+    const S = SECONDARY.grenade;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
     const hv = Math.max(0, k.speed) + 46;
     this.shells.push({
       x: k.x + fx * 1.4, y: 1 + k.air, z: k.z + fz * 1.4, gy: k.y - k.air, idx: k.idx, vx: fx * hv, vy: SHELL_VY, vz: fz * hv,
-      dmg: S.dmg * weaponLvlMul(k.secondaryLvl) * this.dmgScale(k), radius: S.radius, owner: k,
+      dmg: this.secDmg(k), radius: S.radius, owner: k,
     });
+  }
+
+  private newMine(k: Kart, kind: 'mine' | 'cluster', x: number, z: number, vx: number, vz: number): Mine {
+    const S = SECONDARY[kind];
+    const idx = this.track.probe(x, z, k.idx);
+    return {
+      x, y: this.track.probeY, z, vx, vz, idx, owner: k, by: k, kind,
+      armT: kind === 'mine' ? 0.8 : 0.35, life: kind === 'mine' ? 45 : 6 + this.rng() * 0.8, fuse: 0,
+      dmg: this.secDmg(k), radius: S.radius, trigger: kind === 'mine' ? 2.6 : 2.1, dead: false,
+    };
+  }
+
+  /** 地雷：放在車尾後方；同一個人最多同時留 3 顆，超過就收回最舊的 */
+  private dropMine(k: Kart): void {
+    const own = this.mines.filter((m) => !m.dead && m.owner === k && m.kind === 'mine');
+    if (own.length >= MAX_MINES) own[0].dead = true;
+    const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
+    this.mines.push(this.newMine(k, 'mine', k.x - fx * 2.4, k.z - fz * 2.4, k.vx * 0.12, k.vz * 0.12));
+  }
+
+  /** 集束圓雷：往車尾扇形撒出 5 顆，會在路面上滾一小段 */
+  private dropCluster(k: Kart): void {
+    const S = SECONDARY.cluster;
+    const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
+    for (let i = 0; i < S.count; i++) {
+      const a = k.heading + Math.PI + (i - (S.count - 1) / 2) * 0.36;
+      const sp = 9 + this.rng() * 5;
+      this.mines.push(this.newMine(k, 'cluster', k.x - fx * 2, k.z - fz * 2, k.vx * 0.42 + Math.sin(a) * sp, k.vz * 0.42 + Math.cos(a) * sp));
+    }
+  }
+
+  private explodeMine(m: Mine): void {
+    if (m.dead) return;
+    m.dead = true;
+    this.explodeAt(m.x, m.y + 0.5, m.z, m.y, m.radius, m.dmg, m.by);
+  }
+
+  private updateMines(dt: number): void {
+    const track = this.track;
+    const lim = track.halfWidth - 0.6;
+    for (const m of this.mines) {
+      if (m.dead) continue;
+      // 滑動與停下，不會滾出護欄
+      if (m.vx !== 0 || m.vz !== 0) {
+        m.x += m.vx * dt;
+        m.z += m.vz * dt;
+        const f = Math.exp(-3.2 * dt);
+        m.vx *= f;
+        m.vz *= f;
+        if (m.vx * m.vx + m.vz * m.vz < 0.04) m.vx = m.vz = 0;
+        m.idx = track.probe(m.x, m.z, m.idx);
+        if (!track.probeOn && Math.abs(track.lat) > lim) {
+          const s = track.samples[m.idx];
+          const sg = Math.sign(track.lat);
+          m.x -= s.nx * sg * (Math.abs(track.lat) - lim);
+          m.z -= s.nz * sg * (Math.abs(track.lat) - lim);
+          m.vx = m.vz = 0;
+          m.idx = track.probe(m.x, m.z, m.idx);
+        }
+        m.y = track.probeY;
+      }
+      m.armT -= dt;
+      m.life -= dt;
+      if (m.fuse > 0) {
+        m.fuse -= dt;
+        if (m.fuse <= 0) this.explodeMine(m);
+        continue;
+      }
+      if (m.life <= 0) {
+        // 集束圓雷時間到自己引爆；一般地雷失效消失
+        if (m.kind === 'cluster') this.explodeMine(m);
+        else m.dead = true;
+        continue;
+      }
+      if (m.armT > 0) continue;
+      for (const k of this.karts) {
+        if (k === m.owner || k.dead || k.out || k.air > 1.2) continue;
+        const dx = k.x - m.x, dz = k.z - m.z;
+        if (dx * dx + dz * dz < m.trigger * m.trigger) {
+          this.explodeMine(m);
+          break;
+        }
+      }
+    }
+    if (this.mines.some((m) => m.dead)) this.mines = this.mines.filter((m) => !m.dead);
   }
 
   /**
@@ -649,15 +935,13 @@ export class Race {
         const cx = b.x + sx * t - k.x, cz = b.z + sz * t - k.z;
         if (cx * cx + cz * cz < 2.1 && t < ht && Math.abs(b.y - (k.y + 0.9)) < 2.2) { ht = t; hit = k; }
       }
-      const barrel = hit ? null : this.barrelAt(b.x + sx, b.z + sz, 1.25);
-      if (barrel) {
-        this.detonate(barrel, b.owner);
+      if (!hit && this.hitObject(b.x + sx, b.z + sz, 0.45, b.owner, b.dmg)) {
         B[i] = B[B.length - 1];
         B.pop();
         continue;
       }
       if (hit) {
-        this.events.push({ t: 'hit', k: hit, by: b.owner, x: b.x + sx * ht, y: b.y + b.vy * dt * ht, z: b.z + sz * ht });
+        this.events.push({ t: 'hit', k: hit, by: b.owner, x: b.x + sx * ht, y: b.y + b.vy * dt * ht, z: b.z + sz * ht, w: 'gun' });
         this.damage(hit, b.dmg, b.owner);
         B[i] = B[B.length - 1];
         B.pop();
@@ -676,25 +960,48 @@ export class Race {
 
   private updateMissiles(dt: number): void {
     const M = this.missiles;
-    const wallLat = this.track.halfWidth + 0.4;
+    const track = this.track;
     for (let i = M.length - 1; i >= 0; i--) {
       const m = M[i];
-      m.speed = Math.min(95, m.speed + 70 * dt);
+      m.age += dt;
+      m.idx = track.probe(m.x, m.z, m.idx);
+      const roadY = track.probeY;
+      let boom = false;
+      if (m.homing) {
+        m.speed = Math.min(80, m.speed + 50 * dt);
+        const tg = m.target;
+        if (tg && (tg.dead || tg.out)) m.target = null;
+        let wantY = roadY + 2.2;
+        if (m.target && m.age > 0.25) {
+          const t = m.target;
+          const want = Math.atan2(t.x - m.x, t.z - m.z);
+          m.a += clamp(wrapAngle(want - m.a), -HOMING_TURN * dt, HOMING_TURN * dt);
+          t.lockT = Math.max(t.lockT, 0.3);
+          const d = Math.hypot(t.x - m.x, t.z - m.z);
+          if (d < 18) wantY = t.y + 0.9;
+          if (d < 2.6 && Math.abs(t.y + 0.9 - m.y) < 2.5) boom = true;
+        }
+        m.y += (wantY - m.y) * Math.min(1, dt * 6);
+      } else {
+        m.speed = Math.min(95, m.speed + 70 * dt);
+        // 火箭貼著路面飛，飛出護欄就爆炸
+        m.y += (roadY + 0.95 - m.y) * Math.min(1, dt * 8);
+        if (!track.probeOn) boom = true;
+      }
       m.x += Math.sin(m.a) * m.speed * dt;
       m.z += Math.cos(m.a) * m.speed * dt;
-      // 高度貼著附近的路面；飛出護欄就爆炸
-      m.idx = this.track.locate(m.x, m.z, m.idx, 45);
-      const hitWall = Math.abs(this.track.lat) > wallLat;
-      m.y += (this.track.samples[m.idx].y + 0.95 - m.y) * Math.min(1, dt * 8);
       m.life -= dt;
-      let boom = m.life <= 0 || hitWall || !!this.barrelAt(m.x, m.z, 1.8);
-      for (const k of this.karts) {
-        if (k === m.owner || k.dead || k.out) continue;
-        const dx = k.x - m.x, dz = k.z - m.z;
-        if (dx * dx + dz * dz < 6.5) { boom = true; break; }
+      if (m.life <= 0) boom = true;
+      if (!boom) {
+        for (const k of this.karts) {
+          if (k === m.owner || k.dead || k.out) continue;
+          const dx = k.x - m.x, dz = k.z - m.z;
+          if (dx * dx + dz * dz < 6.5 && Math.abs(k.y + 0.9 - m.y) < 2.5) { boom = true; break; }
+        }
       }
+      if (!boom && this.hitObject(m.x, m.z, 0.9, m.owner, m.dmg)) boom = true;
       if (boom) {
-        this.explodeAt(m.x, m.y, m.z, this.track.samples[m.idx].y, m.radius, m.dmg, m.owner);
+        this.explodeAt(m.x, m.y, m.z, roadY, m.radius, m.dmg, m.owner);
         M[i] = M[M.length - 1];
         M.pop();
       }
@@ -707,8 +1014,8 @@ export class Race {
       const s = S[i];
       s.vy -= SHELL_GRAVITY * dt;
       // 參考地面高度跟著砲彈下方的路面走
-      s.idx = this.track.locate(s.x, s.z, s.idx, 45);
-      s.gy += (this.track.samples[s.idx].y - s.gy) * Math.min(1, dt * 10);
+      s.idx = this.track.probe(s.x, s.z, s.idx);
+      s.gy += (this.track.probeY - s.gy) * Math.min(1, dt * 10);
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
@@ -726,5 +1033,142 @@ export class Race {
         S.pop();
       }
     }
+  }
+
+  // ------------------------------------------------------------------
+  // 機關
+
+  private updateHazards(dt: number): void {
+    const t = this.clock;
+    for (const h of this.hazards) {
+      const P = h.def.period;
+      const ph = t / P + (h.def.phase ?? 0);
+      if (h.def.kind === 'hammer') {
+        const w = (Math.PI * 2) / P;
+        h.theta = HAMMER.amp * Math.sin(ph * Math.PI * 2);
+        const om = HAMMER.amp * w * Math.cos(ph * Math.PI * 2);
+        h.lat = HAMMER.arm * Math.sin(h.theta);
+        h.vlat = HAMMER.arm * Math.cos(h.theta) * om;
+        h.hy = HAMMER.pivot - HAMMER.arm * Math.cos(h.theta);
+        if (dt > 0) this.hammerHits(h);
+      } else if (h.def.kind === 'tram') {
+        const cycle = Math.floor(ph);
+        const tau = (ph - cycle) * P;
+        const T = (2 * TRAM.reach) / TRAM.speed;
+        h.dir = cycle % 2 ? 1 : -1;
+        h.moving = tau >= TRAM.warn && tau < TRAM.warn + T;
+        h.warn = tau < TRAM.warn + T;
+        h.c = h.dir * (h.moving ? -TRAM.reach + TRAM.speed * (tau - TRAM.warn) : -TRAM.reach);
+        if (cycle !== h.cycle) {
+          if (h.cycle >= 0) this.events.push({ t: 'tram', x: h.x, y: h.y, z: h.z });
+          h.cycle = cycle;
+        }
+        if (dt > 0 && h.moving) this.tramHits(h);
+      } else if (dt > 0 && this.state !== 'countdown') {
+        h.spawnT -= dt;
+        if (h.spawnT <= 0) {
+          h.spawnT = P * (0.75 + this.rng() * 0.5);
+          this.spawnBoulder(h);
+        }
+      }
+    }
+  }
+
+  /** 機關撞到車：沒有人得分 */
+  private hazardHit(k: Kart, kind: HazardDef['kind'], dmg: number): void {
+    k.hazardCd = 1.1;
+    this.events.push({ t: 'hazard', k, kind, x: k.x, y: k.y + 1, z: k.z });
+    this.damage(k, dmg, null);
+  }
+
+  private hammerHits(h: HazardState): void {
+    const bottom = h.hy - HAMMER.headR;
+    for (const k of this.karts) {
+      if (k.dead || k.out || k.hazardCd > 0 || k.invulnT > 0) continue;
+      const dx = k.x - h.x, dz = k.z - h.z;
+      const along = dx * h.tx + dz * h.tz;
+      const lat = dx * h.nx + dz * h.nz;
+      if (Math.abs(along) > HAMMER.headR + 1.1 || Math.abs(lat - h.lat) > HAMMER.headHalf + 1.1) continue;
+      if (bottom > k.air + 1.4) continue;
+      const dir = Math.abs(h.vlat) > 1 ? Math.sign(h.vlat) : Math.sign(lat - h.lat) || 1;
+      this.knock(k, h.nx * dir, h.nz * dir, 12 + Math.abs(h.vlat) * 0.6, 8);
+      this.hazardHit(k, 'hammer', HAMMER.dmg);
+    }
+  }
+
+  private tramHits(h: HazardState): void {
+    for (const k of this.karts) {
+      if (k.dead || k.out || k.hazardCd > 0 || k.invulnT > 0 || k.air > 3) continue;
+      const dx = k.x - h.x, dz = k.z - h.z;
+      const along = dx * h.tx + dz * h.tz;
+      const lat = dx * h.nx + dz * h.nz;
+      if (Math.abs(along) > TRAM.width + 1.1 || Math.abs(lat - h.c) > TRAM.half + 1.1) continue;
+      this.knock(k, h.nx * h.dir, h.nz * h.dir, TRAM.speed * 1.1, 10);
+      this.hazardHit(k, 'tram', TRAM.dmg);
+    }
+  }
+
+  private spawnBoulder(h: HazardState): void {
+    const hw = this.track.halfWidth;
+    const side = this.rng() < 0.5 ? 1 : -1;
+    this.boulders.push({
+      d: h.def.dist + this.rng() * 25, lat: side * (hw + 5), lat0: side * (hw + 5), lat1: (this.rng() * 2 - 1) * (hw - 3.2),
+      x: 0, y: 0, z: 0, v: 13 + this.rng() * 5, r: BOULDER.r, hp: BOULDER.hp, enterT: BOULDER.enter, roll: 0,
+      end: h.def.dist + (h.def.len ?? 250), dead: false,
+    });
+  }
+
+  private hurtBoulder(b: Boulder, dmg: number, by: Kart | null): void {
+    if (b.dead) return;
+    b.hp -= dmg;
+    if (b.hp > 0) return;
+    b.dead = true;
+    this.events.push({ t: 'rock', x: b.x, y: b.y, z: b.z, r: b.r });
+    if (by) by.addGauge(0.06, (e) => this.events.push({ t: 'kart', k: by, e }));
+  }
+
+  private updateBoulders(dt: number): void {
+    const track = this.track;
+    for (const b of this.boulders) {
+      if (b.dead) continue;
+      // 沿下坡越滾越快
+      const sl = track.samples[track.wrap(Math.round(b.d / track.spacing))].slope;
+      b.v = clamp(b.v - 9.8 * 0.5 * sl * dt, 10, 24);
+      b.d += b.v * dt;
+      b.roll += (b.v / b.r) * dt;
+      let hop = 0;
+      if (b.enterT > 0) {
+        b.enterT = Math.max(0, b.enterT - dt);
+        const u = 1 - b.enterT / BOULDER.enter;
+        b.lat = b.lat0 + (b.lat1 - b.lat0) * u;
+        hop = Math.sin(Math.PI * u) * 3.2 + (1 - u) * 2;
+      }
+      const p = track.pointAt(b.d);
+      b.x = p.x + p.nx * b.lat;
+      b.z = p.z + p.nz * b.lat;
+      b.y = p.y + b.r + hop;
+      if (b.d > b.end) {
+        b.dead = true;
+        this.events.push({ t: 'rock', x: b.x, y: b.y, z: b.z, r: b.r });
+        continue;
+      }
+      if (b.enterT > 0.35) continue;
+      for (const k of this.karts) {
+        if (k.dead || k.out || k.hazardCd > 0 || k.invulnT > 0) continue;
+        const dx = k.x - b.x, dz = k.z - b.z;
+        const d = Math.hypot(dx, dz);
+        if (d > b.r + 1.1 || k.y + 0.6 > b.y + b.r) continue;
+        if (k.boostT > 0) {
+          // 開著 N2O 直接撞碎
+          this.hurtBoulder(b, 999, k);
+          k.spinVel += (this.rng() - 0.5) * 2;
+          break;
+        }
+        const inv = d > 0.01 ? 1 / d : 0;
+        this.knock(k, dx * inv + p.tx * 0.6, dz * inv + p.tz * 0.6, 11 + b.v * 0.3, 9);
+        this.hazardHit(k, 'boulder', BOULDER.dmg);
+      }
+    }
+    if (this.boulders.some((b) => b.dead)) this.boulders = this.boulders.filter((b) => !b.dead);
   }
 }

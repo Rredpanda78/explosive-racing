@@ -1,3 +1,4 @@
+import { PRIMARY } from './game/weapons';
 import type { Race, RaceEvent } from './game/race';
 import { clamp } from './game/util';
 
@@ -104,6 +105,20 @@ export class GameAudio {
 
     this.skidGain = this.loopNoise('bandpass', 1900, 3, 0);
     this.boostGain = this.loopNoise('bandpass', 700, 0.8, 0);
+    // 火焰發射器的低沉呼嘯與雷射的高頻嗡嗡聲
+    this.flameGain = this.loopNoise('lowpass', 520, 0.7, 0);
+    const lz = ctx.createOscillator();
+    lz.type = 'sawtooth';
+    lz.frequency.value = 940;
+    const lzf = ctx.createBiquadFilter();
+    lzf.type = 'bandpass';
+    lzf.frequency.value = 1900;
+    lzf.Q.value = 2;
+    this.laserGain = ctx.createGain();
+    this.laserGain.gain.value = 0;
+    lz.connect(lzf).connect(this.laserGain).connect(this.sfx);
+    lz.start();
+    this.laserOsc = lz;
     if (this.mode !== 'off') this.startScheduler();
   }
 
@@ -283,7 +298,19 @@ export class GameAudio {
       this.engGain.gain.setTargetAtTime(0, t, 0.08);
       this.skidGain.gain.setTargetAtTime(0, t, 0.05);
       this.boostGain.gain.setTargetAtTime(0, t, 0.05);
+      this.flameGain.gain.setTargetAtTime(0, t, 0.05);
+      this.laserGain.gain.setTargetAtTime(0, t, 0.03);
       return;
+    }
+    const kind = PRIMARY[p.primary].kind;
+    const firing = p.firing > 0;
+    this.flameGain.gain.setTargetAtTime(firing && kind === 'flame' ? 0.34 : 0, t, 0.05);
+    this.laserGain.gain.setTargetAtTime(firing && kind === 'laser' ? 0.06 : 0, t, 0.03);
+    if (firing && kind === 'laser') this.laserOsc.frequency.setTargetAtTime(p.beamHit ? 1180 : 940, t, 0.03);
+    // 被導彈鎖定：急促的警告嗶聲
+    if (p.lockT > 0 && t - this.lastLock > 0.2) {
+      this.lastLock = t;
+      this.beep(1760, 0.06, 0.1);
     }
     const r = clamp(Math.abs(p.speed) / p.topSpeed, 0, 1.5);
     const f = 55 + r * 150;
@@ -295,6 +322,11 @@ export class GameAudio {
     this.skidGain.gain.setTargetAtTime(skid, t, 0.04);
     this.boostGain.gain.setTargetAtTime(p.boostT > 0 ? 0.3 : p.padT > 0 || p.miniT > 0 ? 0.18 : 0, t, 0.06);
   }
+
+  private flameGain!: GainNode;
+  private laserGain!: GainNode;
+  private laserOsc!: OscillatorNode;
+  private lastLock = 0;
 
   private burst(freq: number, q: number, dur: number, vol: number, type: BiquadFilterType = 'bandpass', sweepTo = 0): void {
     const ctx = this.ctx;
@@ -362,9 +394,36 @@ export class GameAudio {
         this.burst(e.k.primary === 'vulcan' ? 2400 : 1300, 1.2, 0.07, vol);
         break;
       }
-      case 'hit':
+      case 'hit': {
+        // 火焰與雷射是連續判定，命中聲要稀疏一點
+        if (e.w !== 'gun' && Math.random() > 0.25) break;
         if (e.k === p) this.burst(3200, 4, 0.05, 0.18);
         else if (e.by === p) this.burst(4200, 6, 0.04, 0.1);
+        break;
+      }
+      case 'hazard': {
+        const v = e.k === p ? 1 : near(e.x, e.z, 80);
+        this.thump(v * 0.85);
+        this.burst(1800, 1.2, 0.25, v * 0.4);
+        break;
+      }
+      case 'rock': {
+        const v = near(e.x, e.z, 120);
+        this.burst(350, 0.7, 0.5, v * 0.5, 'lowpass', 90);
+        this.thump(v * 0.4);
+        break;
+      }
+      case 'tram': {
+        // 平交道的叮噹聲
+        const v = near(e.x, e.z, 160) * 0.16;
+        if (v > 0.01) for (let i = 0; i < 4; i++) setTimeout(() => this.beep(i % 2 ? 1046 : 1318, 0.18, v), i * 260);
+        break;
+      }
+      case 'lock':
+        if (e.k === p) { this.beep(1320, 0.1, 0.18); setTimeout(() => this.beep(1760, 0.14, 0.18), 110); }
+        break;
+      case 'shortcut':
+        if (e.k === p) this.beep(990, 0.08, 0.14);
         break;
       case 'blast': {
         const v = near(e.x, e.z, 150);
@@ -387,9 +446,19 @@ export class GameAudio {
         this.beep(330, 0.25, 0.2);
         setTimeout(() => this.beep(247, 0.4, 0.2), 180);
         break;
-      case 'launch':
-        this.burst(500, 0.8, 0.35, e.k === p ? 0.35 : near(e.k.x, e.k.z, 80) * 0.2, 'bandpass', 1800);
+      case 'launch': {
+        const v = e.k === p ? 1 : near(e.k.x, e.k.z, 80) * 0.55;
+        if (e.kind === 'mine' || e.kind === 'cluster') {
+          this.burst(1500, 3, 0.08, v * 0.3);
+          this.beep(e.kind === 'mine' ? 330 : 520, 0.06, v * 0.12);
+        } else if (e.kind === 'grenade') {
+          this.burst(260, 1, 0.22, v * 0.45, 'lowpass');
+          this.thump(v * 0.3);
+        } else {
+          this.burst(500, 0.8, e.kind === 'missile' ? 0.55 : 0.35, v * 0.35, 'bandpass', 1800);
+        }
         break;
+      }
       case 'kart':
         if (e.k !== p) break;
         if (e.e === 'boost') this.burst(400, 0.7, 0.5, 0.4, 'bandpass', 2400);
