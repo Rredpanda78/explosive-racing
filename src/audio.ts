@@ -2,80 +2,13 @@ import { PRIMARY } from './game/weapons';
 import type { Race, RaceEvent } from './game/race';
 import { clamp } from './game/util';
 
+import { MusicEngine, type MusicStyle } from './music';
+
+export { MUSIC_STYLES } from './music';
+export type { MusicStyle } from './music';
+
 type MusicMode = 'off' | 'menu' | 'race';
 
-const midi = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
-
-// ---- 原創配樂：A 小調，8 小節循環 ----
-// 每小節的和弦：低音根音（MIDI）與琶音用的和弦音
-const CHORDS: { bass: number; tones: number[] }[] = [
-  { bass: 45, tones: [57, 60, 64, 69] }, // Am
-  { bass: 41, tones: [53, 57, 60, 65] }, // F
-  { bass: 48, tones: [55, 60, 64, 67] }, // C
-  { bass: 43, tones: [55, 59, 62, 67] }, // G
-  { bass: 45, tones: [57, 60, 64, 69] }, // Am
-  { bass: 41, tones: [53, 57, 60, 65] }, // F
-  { bass: 43, tones: [55, 59, 62, 67] }, // G
-  { bass: 40, tones: [56, 59, 64, 68] }, // E
-];
-// 主旋律：[十六分音符位置, 音高, 長度]
-const LEAD: [number, number, number][][] = [
-  [[0, 76, 3], [3, 72, 1], [4, 69, 2], [6, 72, 2], [8, 76, 2], [10, 81, 4], [14, 79, 2]],
-  [[0, 77, 3], [3, 72, 1], [4, 69, 2], [6, 72, 2], [8, 77, 2], [10, 81, 4], [14, 79, 2]],
-  [[0, 79, 3], [3, 76, 1], [4, 72, 2], [6, 76, 2], [8, 79, 2], [10, 84, 4], [14, 83, 2]],
-  [[0, 83, 2], [2, 79, 2], [4, 74, 2], [6, 79, 2], [8, 83, 4], [12, 81, 2], [14, 79, 2]],
-  [[0, 81, 3], [3, 76, 1], [4, 72, 2], [6, 76, 2], [8, 81, 2], [10, 84, 4], [14, 83, 2]],
-  [[0, 84, 3], [3, 81, 1], [4, 77, 2], [6, 81, 2], [8, 84, 2], [10, 88, 4], [14, 86, 2]],
-  [[0, 86, 2], [2, 83, 2], [4, 79, 2], [6, 83, 2], [8, 86, 2], [10, 83, 2], [12, 79, 2], [14, 74, 2]],
-  [[0, 76, 2], [2, 80, 2], [4, 83, 2], [6, 88, 4], [10, 86, 2], [12, 83, 2], [14, 80, 2]],
-];
-const BASS_PATTERN = [0, 0, 12, 0, 0, 12, 0, 7]; // 八分音符，相對根音的半音數
-
-/** 比賽配樂的風格 */
-export type MusicStyle = 'synth' | 'lofi' | 'hiphop' | 'metal' | 'chip';
-export const MUSIC_STYLES: { id: MusicStyle; name: string }[] = [
-  { id: 'synth', name: '電子' },
-  { id: 'lofi', name: 'Lo-fi' },
-  { id: 'hiphop', name: '嘻哈' },
-  { id: 'metal', name: '金屬' },
-  { id: 'chip', name: '8-bit' },
-];
-const STYLE_TEMPO: Record<MusicStyle, number> = { synth: 152, lofi: 80, hiphop: 90, metal: 168, chip: 160 };
-
-// Lo-fi：Dm9 → G13 → Cmaj9 → Am9 的爵士進行
-const LOFI: { bass: number; tones: number[] }[] = [
-  { bass: 50, tones: [53, 57, 60, 64] },
-  { bass: 43, tones: [53, 59, 64, 65] },
-  { bass: 48, tones: [52, 55, 59, 62] },
-  { bass: 45, tones: [55, 60, 64, 71] },
-];
-// 嘻哈：Am7 → Fmaj7 → Dm7 → E7
-const HIPHOP: { bass: number; tones: number[] }[] = [
-  { bass: 45, tones: [57, 60, 64, 67] },
-  { bass: 41, tones: [57, 60, 64, 65] },
-  { bass: 38, tones: [57, 60, 62, 65] },
-  { bass: 40, tones: [56, 59, 62, 64] },
-];
-// 鐘聲旋律：每小節 16 格，-1 = 休息
-const R = -1;
-const HIPHOP_BELL: number[][] = [
-  [64, R, R, 67, R, R, 69, R, 67, R, 64, R, R, 62, R, R],
-  [65, R, R, 64, R, R, 60, R, 64, R, R, R, 57, R, R, R],
-  [62, R, R, 65, R, R, 69, R, 72, R, 69, R, 65, R, R, R],
-  [64, R, 68, R, 71, R, R, R, 74, R, 71, R, 68, R, 64, R],
-];
-// 金屬：E 小調，低音弦的根音、悶音節奏（1 = 悶音、2 = 長音）與主奏旋律（八分音符）
-const METAL_ROOTS = [40, 40, 43, 41, 40, 40, 45, 43];
-const METAL_RIFF = [
-  [2, 0, 0, 1, 1, 1, 2, 0, 0, 1, 1, 1, 1, 0, 1, 1],
-  [1, 1, 0, 1, 1, 0, 1, 1, 2, 0, 0, 1, 2, 0, 1, 1],
-];
-const METAL_LEAD = [
-  [64, 67, 71, 67, 76, 74, 71, 67], [64, 67, 71, 74, 76, 79, 76, 74], [67, 71, 74, 71, 79, 78, 74, 71], [65, 69, 72, 69, 77, 76, 72, 69],
-  [64, 67, 71, 67, 76, 74, 71, 67], [76, 74, 71, 74, 79, 76, 74, 71], [69, 72, 76, 72, 81, 79, 76, 72], [71, 74, 78, 74, 83, 81, 79, 78],
-];
-
-/** 音效與配樂全部用 WebAudio 即時合成，不需要任何音檔 */
 export class GameAudio {
   private ctx?: AudioContext;
   private master!: GainNode;
@@ -92,11 +25,10 @@ export class GameAudio {
   muted = false;
 
   private mode: MusicMode = 'off';
+  /** 配樂引擎（src/music.ts）與驅動它排程的計時器 */
+  private engine?: MusicEngine;
   private timer = 0;
-  private nextT = 0;
-  private step = 0;
-  private tempo = 150;
-  private tempoMul = 1;
+  private rush = false;
 
   /** 必須在使用者點擊後呼叫（瀏覽器限制） */
   init(): void {
@@ -171,7 +103,12 @@ export class GameAudio {
     lz.connect(lzf).connect(this.laserGain).connect(this.sfx);
     lz.start();
     this.laserOsc = lz;
-    if (this.mode !== 'off') this.startScheduler();
+    // 配樂：每 25 毫秒排好接下來 0.15 秒的音符（用音訊時鐘，畫面卡頓也不會亂拍）
+    this.engine = new MusicEngine(ctx, this.music);
+    this.engine.setStyle(this.musicStyle);
+    this.engine.setMode(this.mode);
+    this.engine.setRush(this.rush);
+    this.timer = window.setInterval(() => this.engine?.tick(), 25);
     this.unlockTick();
   }
 
@@ -213,49 +150,22 @@ export class GameAudio {
   setMusic(mode: MusicMode): void {
     if (mode === this.mode) return;
     this.mode = mode;
-    this.step = 0;
-    this.tempo = mode === 'menu' ? 112 : STYLE_TEMPO[this.musicStyle];
-    this.tempoMul = 1;
-    if (this.ctx) {
-      this.nextT = this.ctx.currentTime + 0.08;
-      if (mode === 'off') this.stopScheduler();
-      else this.startScheduler();
-    }
+    this.rush = false;
+    this.engine?.setRush(false);
+    this.engine?.setMode(mode);
   }
 
-  /** 最後一圈加快節奏 */
+  /** 最後一圈：加快節奏、升調、加打擊樂 */
   setMusicRush(on: boolean): void {
-    this.tempoMul = on ? 1.12 : 1;
-  }
-
-  private startScheduler(): void {
-    if (this.timer || !this.ctx) return;
-    this.nextT = this.ctx.currentTime + 0.08;
-    // 用音訊時鐘排程（提前 150ms 排好），避免畫面卡頓時節奏飄掉
-    this.timer = window.setInterval(() => this.schedule(), 30);
-  }
-
-  private stopScheduler(): void {
-    if (this.timer) window.clearInterval(this.timer);
-    this.timer = 0;
-  }
-
-  private schedule(): void {
-    const ctx = this.ctx;
-    if (!ctx || this.mode === 'off') return;
-    if (this.nextT < ctx.currentTime - 0.3) this.nextT = ctx.currentTime + 0.05; // 分頁被暫停後重新對齊
-    while (this.nextT < ctx.currentTime + 0.15) {
-      this.playStep(this.step, this.nextT);
-      this.nextT += 60 / (this.tempo * this.tempoMul) / 4;
-      this.step++;
-    }
+    if (on === this.rush) return;
+    this.rush = on;
+    this.engine?.setRush(on);
   }
 
   /** 比賽配樂的風格 */
   musicStyle: MusicStyle = 'synth';
   private musicVol = 0.8;
   private sfxVol = 0.9;
-  private guitarIn?: GainNode;
 
   setVolumes(music: number, sfx: number): void {
     this.musicVol = music;
@@ -268,222 +178,7 @@ export class GameAudio {
   /** 換配樂風格；正在播比賽配樂就從頭開始 */
   setStyle(style: MusicStyle): void {
     this.musicStyle = style;
-    this.tempo = this.mode === 'menu' ? 112 : STYLE_TEMPO[style];
-    this.step = 0;
-  }
-
-  private playStep(step: number, t: number): void {
-    const s16 = 60 / (this.tempo * this.tempoMul) / 4;
-    const s = step % 16;
-    const bar = Math.floor(step / 16) % 8;
-    const loop = Math.floor(step / 128);
-    if (this.mode !== 'race') return this.menuStep(s, bar, t, s16);
-    switch (this.musicStyle) {
-      case 'lofi': return this.lofiStep(s, bar, t, s16);
-      case 'hiphop': return this.hiphopStep(s, bar, loop, t, s16);
-      case 'metal': return this.metalStep(s, bar, loop, t, s16);
-      case 'chip': return this.chipStep(s, bar, loop, t, s16);
-      default: return this.synthStep(s, bar, loop, t, s16);
-    }
-  }
-
-  private menuStep(s: number, bar: number, t: number, s16: number): void {
-    const ch = CHORDS[bar];
-    if (s === 0) for (const n of ch.tones.slice(0, 3)) this.note('sawtooth', midi(n), t, s16 * 16, 0.05, 0.08, 900, 7);
-    if (s === 0 || s === 8) this.kick(t, 0.5);
-    if (s % 4 === 2) this.hat(t, 0.08);
-    if (s % 2 === 0) this.note('triangle', midi(ch.tones[[0, 1, 2, 3, 2, 1, 2, 3][s / 2]] + 12), t, s16 * 2.4, 0.09, 0.01, 3000);
-    if (s === 0) this.note('triangle', midi(ch.bass - 12), t, s16 * 14, 0.2, 0.02, 500);
-  }
-
-  /** 電子（原本的配樂）：四拍大鼓、八分音符低音、琶音與主旋律 */
-  private synthStep(s: number, bar: number, loop: number, t: number, s16: number): void {
-    const ch = CHORDS[bar];
-    if (s === 0) for (const n of ch.tones.slice(0, 3)) this.note('sawtooth', midi(n), t, s16 * 16, 0.035, 0.08, 900, 7);
-    if (s % 4 === 0) this.kick(t, 0.9);
-    if (s === 10 && bar % 2 === 1) this.kick(t, 0.6);
-    if (s === 4 || s === 12) this.snare(t, 0.5);
-    if (bar === 7 && s >= 12) this.snare(t, 0.32);
-    if (s % 2 === 0) this.hat(t, s % 4 === 2 ? 0.2 : 0.1);
-    if (s % 2 === 0) this.note('sawtooth', midi(ch.bass - 12 + BASS_PATTERN[s / 2]), t, s16 * 1.7, 0.2, 0.005, 420);
-    this.note('square', midi(ch.tones[[0, 2, 1, 3][s % 4]] + 12), t, s16 * 0.9, 0.035, 0.004, 2600);
-    if (loop % 3 !== 0) for (const [at, n, len] of LEAD[bar]) if (at === s) this.note('square', midi(n), t, s16 * len * 0.92, 0.085, 0.01, 3200, 5);
-  }
-
-  /** Lo-fi：慢速搖擺節奏、爵士七和弦的電鋼琴、悶悶的鼓、黑膠底噪 */
-  private lofiStep(s: number, bar: number, t: number, s16: number): void {
-    const ch = LOFI[bar % 4];
-    const sw = s % 4 === 2 ? s16 * 0.34 : 0; // 搖擺
-    const tt = t + sw;
-    if (s === 0 || (s === 8 && bar % 2 === 1)) for (const n of ch.tones) this.note('sine', midi(n), t + Math.random() * 0.02, s16 * 7.5, 0.05, 0.03, 1400);
-    if (s === 0) for (const n of ch.tones) this.note('triangle', midi(n + 12), t, s16 * 5, 0.012, 0.02, 1800);
-    if (s === 0 || s === 7 || s === 10) this.kick(tt, s === 0 ? 0.55 : 0.4);
-    if (s === 4 || s === 12) this.noiseHit(t, 0.12, 0.16, 'bandpass', 1300);
-    if (s % 2 === 0) this.hat(tt, s % 4 === 0 ? 0.05 : 0.08);
-    if (s === 0 || s === 10) this.note('sine', midi(ch.bass - 12), tt, s16 * 5, 0.24, 0.01, 300);
-    // 偶爾一小段旋律
-    if (bar % 2 === 1 && (s === 2 || s === 6 || s === 11)) this.note('sine', midi(ch.tones[(s >> 2) % ch.tones.length] + 12), tt, s16 * 2.5, 0.05, 0.01, 2200);
-    // 黑膠的劈啪聲
-    if (Math.random() < 0.35) this.noiseHit(t + Math.random() * s16, 0.015, 0.025 + Math.random() * 0.03, 'highpass', 3500);
-  }
-
-  /** 嘻哈：重拍大鼓、拍手小鼓、三連音踩鈸、會滑音的 808 低音與鐘聲旋律 */
-  private hiphopStep(s: number, bar: number, loop: number, t: number, s16: number): void {
-    const ch = HIPHOP[bar % 4];
-    if ([0, 3, 7, 10].includes(s) && !(s === 7 && bar % 2 === 0)) this.kick(t, 1);
-    if (s === 4 || s === 12) { this.snare(t, 0.45); this.noiseHit(t + 0.012, 0.09, 0.3, 'bandpass', 1500); }
-    // 踩鈸：大部分八分音符，偶爾一串連打
-    if (bar % 4 === 3 && s >= 12) { for (let k = 0; k < 3; k++) this.hat(t + (k * s16) / 3, 0.09); }
-    else if (s % 2 === 0) this.hat(t, 0.11);
-    if (s === 0 || s === 7 || s === 10) this.bass808(midi(ch.bass - 12 + (s === 10 ? 7 : 0)), t, s16 * (s === 0 ? 6 : 3));
-    if (s === 0) for (const n of ch.tones) this.note('triangle', midi(n), t, s16 * 3, 0.04, 0.005, 2000);
-    if (loop % 2 === 1 && HIPHOP_BELL[bar % 4][s] >= 0) this.note('sine', midi(HIPHOP_BELL[bar % 4][s] + 24), t, s16 * 2.2, 0.06, 0.002, 6000);
-  }
-
-  /** 金屬：失真吉他的悶音重複段、雙踏大鼓、鈸、偶爾的主奏吉他 */
-  private metalStep(s: number, bar: number, loop: number, t: number, s16: number): void {
-    const root = METAL_ROOTS[bar];
-    this.kick(t, 0.75); // 雙踏：每個十六分音符都踩
-    if (s === 4 || s === 12) this.snare(t, 0.6);
-    if (s === 0 && bar % 2 === 0) this.noiseHit(t, 0.9, 0.22, 'highpass', 5000);
-    if (s % 2 === 0) this.noiseHit(t, 0.05, 0.07, 'highpass', 9000);
-    // 節奏吉他：根音加五度的強力和弦，十六分音符悶音
-    const pattern = METAL_RIFF[bar % 2];
-    if (pattern[s]) {
-      const long = pattern[s] === 2;
-      this.guitar(midi(root), t, s16 * (long ? 3.5 : 0.8), long ? 0.16 : 0.12);
-      this.guitar(midi(root + 7), t, s16 * (long ? 3.5 : 0.8), long ? 0.1 : 0.07);
-    }
-    this.note('sawtooth', midi(root - 12), t, s16 * 0.9, 0.12, 0.003, 300);
-    if (loop % 2 === 1 && s % 2 === 0) this.guitar(midi(METAL_LEAD[bar][s / 2] + 12), t, s16 * 1.8, 0.07);
-  }
-
-  /** 8-bit 晶片：方波主旋律、三角波低音、雜訊鼓 */
-  private chipStep(s: number, bar: number, loop: number, t: number, s16: number): void {
-    const ch = CHORDS[bar];
-    if (s % 4 === 0) this.noiseHit(t, 0.06, 0.35, 'lowpass', 400);
-    if (s === 4 || s === 12) this.noiseHit(t, 0.08, 0.28, 'bandpass', 2500);
-    if (s % 2 === 1) this.noiseHit(t, 0.02, 0.08, 'highpass', 8000);
-    if (s % 2 === 0) this.note('triangle', midi(ch.bass - 12 + BASS_PATTERN[s / 2]), t, s16 * 1.8, 0.3, 0.002, 4000);
-    this.note('square', midi(ch.tones[s % 4] + 24), t, s16 * 0.6, 0.025, 0.001, 8000);
-    for (const [at, n, len] of LEAD[bar]) if (at === s && loop % 4 !== 0) this.note('square', midi(n + 12), t, s16 * len * 0.85, 0.06, 0.001, 8000);
-  }
-
-  /** 808 低音：從高一點滑到目標音、長長的尾音 */
-  private bass808(freq: number, t: number, dur: number): void {
-    const ctx = this.ctx!;
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(freq * 1.5, t);
-    o.frequency.exponentialRampToValueAtTime(freq, t + 0.06);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.42, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(this.music);
-    o.start(t);
-    o.stop(t + dur + 0.02);
-  }
-
-  /** 失真吉他：兩個略微失諧的鋸齒波，經過共用的失真與音箱濾波 */
-  private guitar(freq: number, t: number, dur: number, vol: number): void {
-    const ctx = this.ctx!;
-    if (!this.guitarIn) {
-      const shaper = ctx.createWaveShaper();
-      const curve = new Float32Array(1024);
-      for (let i = 0; i < 1024; i++) {
-        const x = (i / 1023) * 2 - 1;
-        curve[i] = Math.tanh(x * 9) * 0.9;
-      }
-      shaper.curve = curve;
-      shaper.oversample = '2x';
-      const cab = ctx.createBiquadFilter();
-      cab.type = 'lowpass';
-      cab.frequency.value = 3200;
-      const low = ctx.createBiquadFilter();
-      low.type = 'highpass';
-      low.frequency.value = 90;
-      const out = ctx.createGain();
-      out.gain.value = 0.32;
-      this.guitarIn = ctx.createGain();
-      this.guitarIn.connect(shaper).connect(low).connect(cab).connect(out).connect(this.music);
-    }
-    for (const det of [-6, 6]) {
-      const o = ctx.createOscillator();
-      o.type = 'sawtooth';
-      o.frequency.value = freq;
-      o.detune.value = det;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(vol, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g).connect(this.guitarIn);
-      o.start(t);
-      o.stop(t + dur + 0.02);
-    }
-  }
-
-  private note(type: OscillatorType, freq: number, t: number, dur: number, vol: number, attack: number, cutoff: number, detune = 0): void {
-    const ctx = this.ctx!;
-    const o = ctx.createOscillator();
-    o.type = type;
-    o.frequency.value = freq;
-    const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.value = cutoff;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(vol, t + attack);
-    g.gain.setValueAtTime(vol, t + Math.max(attack, dur * 0.7));
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(f).connect(g).connect(this.music);
-    o.start(t);
-    o.stop(t + dur + 0.02);
-    if (detune) {
-      const o2 = ctx.createOscillator();
-      o2.type = type;
-      o2.frequency.value = freq;
-      o2.detune.value = detune * 2;
-      o2.connect(f);
-      o2.start(t);
-      o2.stop(t + dur + 0.02);
-    }
-  }
-
-  private kick(t: number, vol: number): void {
-    const ctx = this.ctx!;
-    const o = ctx.createOscillator();
-    o.frequency.setValueAtTime(150, t);
-    o.frequency.exponentialRampToValueAtTime(42, t + 0.13);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-    o.connect(g).connect(this.music);
-    o.start(t);
-    o.stop(t + 0.22);
-  }
-
-  private noiseHit(t: number, dur: number, vol: number, type: BiquadFilterType, freq: number): void {
-    const ctx = this.ctx!;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const f = ctx.createBiquadFilter();
-    f.type = type;
-    f.frequency.value = freq;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(f).connect(g).connect(this.music);
-    src.start(t, Math.random() * 0.5);
-    src.stop(t + dur + 0.02);
-  }
-
-  private snare(t: number, vol: number): void {
-    this.noiseHit(t, 0.14, vol, 'bandpass', 1900);
-    this.note('triangle', 190, t, 0.09, vol * 0.5, 0.002, 1200);
-  }
-
-  private hat(t: number, vol: number): void {
-    this.noiseHit(t, 0.04, vol, 'highpass', 7500);
+    this.engine?.setStyle(style);
   }
 
   // ------------------------------------------------------------------
