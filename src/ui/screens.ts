@@ -1,10 +1,12 @@
 import { CAR_IDS, CARS, type CarId } from '../game/cars';
 import { KILL_REWARD } from '../game/config';
 import type { Race, RaceMode } from '../game/race';
+import { weaponIcon } from '../render/weaponIcons';
+import { DIFFICULTY, DIFFICULTY_IDS, type DifficultyId } from '../game/difficulty';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
 import {
-  BURN_DPS, CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
+  BURN_DPS, PERK_LVL3, PERK_LVL5, CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
   weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
 } from '../game/weapons';
 
@@ -76,6 +78,11 @@ export class Screens {
     switch (act) {
       case 'start': this.act.start(id as RaceMode | undefined); break;
       case 'track': this.act.selectTrack(Number(id)); break;
+      case 'diff':
+        p.difficulty = id as DifficultyId;
+        saveProfile(p);
+        this.menu(this.loading);
+        break;
       case 'resume': this.act.resume(); break;
       case 'restart': this.act.restart(); break;
       case 'menu': this.act.toMenu(); break;
@@ -170,7 +177,8 @@ export class Screens {
             <b>${loading ? '載入中…' : '淘汰賽'}</b><span>每 ${17} 秒淘汰最後一名，撐到最後</span>
           </button>
         </div>
-        <div class="row" style="margin-top:1em"><button class="btn" data-act="garage">車庫</button></div>
+        <div class="diffs"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="diffbtn ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}" title="${DIFFICULTY[d].desc}">${DIFFICULTY[d].name}</button>`).join('')}<em>${DIFFICULTY[p.difficulty].desc}</em></div>
+        <div class="row" style="margin-top:0.8em"><button class="btn" data-act="garage">車庫</button></div>
         <div class="tagline" style="margin:1.1em 0 0">
           <span class="cash">$${p.cash}</span>　${CARS[p.kart].name}・${PRIMARY[p.primary].name}・${SECONDARY[p.secondary].name}　出賽 ${p.races}　冠軍 ${p.wins}　${cur.name}最快單圈 ${formatTime(p.bestLaps[p.track] ?? 0)}
         </div>
@@ -202,6 +210,12 @@ export class Screens {
       const S = SECONDARY[id as SecondaryId];
       info = `傷害 ${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}　冷卻 ${S.cooldown} 秒`;
     }
+    const lv = owned ? lvl : 0;
+    const perks = `<div class="perks">
+      <div class="${lv >= PERK_LVL3 ? 'on' : ''}"><b>Lv.${PERK_LVL3}</b> ${prim ? '過熱變慢 15%' : '冷卻縮短 15%'}</div>
+      <div class="${lv >= PERK_LVL5 ? 'on' : ''}"><b>Lv.${PERK_LVL5}</b> ${def.perk}</div>
+    </div>`;
+    const icon = weaponIcon(id);
     let btns: string;
     if (!owned) {
       btns = `<button class="btn small primary" data-act="buy" data-id="${id}" ${p.cash < def.price ? 'disabled' : ''}>購買 $${def.price}</button>`;
@@ -213,9 +227,11 @@ export class Screens {
         : `<button class="btn small" disabled>已滿級</button>`;
     }
     return `<div class="card ${equipped ? 'equipped' : ''}">
+      ${icon ? `<div class="wimg"><img src="${icon}" alt="" /></div>` : ''}
       <h4>${def.name}<small>${owned ? 'Lv.' + lvl : '未擁有'}</small></h4>
       <p>${def.desc}</p>
       <div class="stat">${info}　${pips(owned ? lvl : 0, MAX_WEAPON_LVL)}</div>
+      ${perks}
       <div class="row">${btns}</div>
     </div>`;
   }

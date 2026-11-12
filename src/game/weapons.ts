@@ -22,6 +22,8 @@ export interface PrimaryDef {
   /** 預熱秒數（六管機槍） */
   spinUp: number;
   price: number;
+  /** 升到 Lv.5 解鎖的特性 */
+  perk: string;
 }
 
 export interface SecondaryDef {
@@ -34,14 +36,16 @@ export interface SecondaryDef {
   /** 一次發射的枚數（集束圓雷 > 1） */
   count: number;
   price: number;
+  /** 升到 Lv.5 解鎖的特性 */
+  perk: string;
 }
 
 /** 主武器：裝在車身兩側。全部朝車頭正前方，沒有輔助瞄準。 */
 export const PRIMARY: Record<PrimaryId, PrimaryDef> = {
-  mg: { id: 'mg', kind: 'gun', name: '.50 機槍', desc: '射速穩定、準度高、不易過熱', rate: 9, pellets: 1, dmg: 3.6, spread: 0.012, heat: 0.034, range: 150, spinUp: 0, price: 0 },
-  vulcan: { id: 'vulcan', kind: 'gun', name: '六管機槍', desc: '六根槍管旋轉射擊：要先預熱，火力最猛但容易過熱', rate: 28, pellets: 1, dmg: 1.7, spread: 0.03, heat: 0.0165, range: 130, spinUp: 0.45, price: 2500 },
-  flame: { id: 'flame', kind: 'flame', name: '火焰發射器', desc: '近距離扇形噴火，被燒到會持續燃燒；也能引燃油桶', rate: 15, pellets: 1, dmg: 2.3, spread: 0.2, heat: 0.028, range: 26, spinUp: 0, price: 2800 },
-  laser: { id: 'laser', kind: 'laser', name: '雷射槍', desc: '光束瞬間命中正前方第一個目標，射程最遠，要持續照住才有傷害', rate: 20, pellets: 1, dmg: 1.35, spread: 0, heat: 0.021, range: 180, spinUp: 0, price: 3200 },
+  mg: { id: 'mg', kind: 'gun', name: '.50 機槍', desc: '射速穩定、準度高、不易過熱', rate: 9, pellets: 1, dmg: 3.6, spread: 0.012, heat: 0.034, range: 150, spinUp: 0, price: 0, perk: '穿甲彈：子彈打穿第一台車後繼續飛' },
+  vulcan: { id: 'vulcan', kind: 'gun', name: '六管機槍', desc: '六根槍管旋轉射擊：要先預熱，火力最猛但容易過熱', rate: 28, pellets: 1, dmg: 1.7, spread: 0.03, heat: 0.0165, range: 130, spinUp: 0.45, price: 2500, perk: '快速預熱：幾乎不用等，過熱再慢 20%' },
+  flame: { id: 'flame', kind: 'flame', name: '火焰發射器', desc: '近距離扇形噴火，被燒到會持續燃燒；也能引燃油桶', rate: 15, pellets: 1, dmg: 2.3, spread: 0.2, heat: 0.028, range: 26, spinUp: 0, price: 2800, perk: '烈焰：射程 +30%，燃燒時間變成 4 秒' },
+  laser: { id: 'laser', kind: 'laser', name: '雷射槍', desc: '光束瞬間命中正前方第一個目標，射程最遠，要持續照住才有傷害', rate: 20, pellets: 1, dmg: 1.35, spread: 0, heat: 0.021, range: 180, spinUp: 0, price: 3200, perk: '貫穿光束：打穿第一台車，連後面的車一起燒' },
 };
 
 /** 被火焰燒到後每秒的燃燒傷害與持續秒數 */
@@ -50,11 +54,11 @@ export const BURN_TIME = 2.5;
 
 /** 副武器：裝在引擎蓋上（地雷類從車尾放出） */
 export const SECONDARY: Record<SecondaryId, SecondaryDef> = {
-  rocket: { id: 'rocket', name: '火箭炮', desc: '朝正前方直線飛行，命中或撞牆時爆炸', dmg: 38, radius: 5.5, cooldown: 3.2, count: 1, price: 0 },
-  grenade: { id: 'grenade', name: '榴彈發射器', desc: '朝前方拋射，落地或碰到車就大範圍爆炸並震退敵車', dmg: 42, radius: 8, cooldown: 3.0, count: 1, price: 2500 },
-  mine: { id: 'mine', name: '地雷', desc: '往車尾放下地雷，啟動後有車經過就爆炸（最多同時 3 顆）', dmg: 44, radius: 6, cooldown: 2.6, count: 1, price: 2200 },
-  cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆', dmg: 22, radius: 4.5, cooldown: 6, count: 5, price: 3000 },
-  missile: { id: 'missile', name: '追蹤導彈', desc: '隨機鎖定一台對手並追蹤；被鎖定的人會收到警告，急轉可以甩掉', dmg: 36, radius: 5.5, cooldown: 6.5, count: 1, price: 4000 },
+  rocket: { id: 'rocket', name: '火箭炮', desc: '朝正前方直線飛行，命中或撞牆時爆炸', dmg: 38, radius: 5.5, cooldown: 3.2, count: 1, price: 0, perk: '雙聯裝：一次射出兩枚火箭' },
+  grenade: { id: 'grenade', name: '榴彈發射器', desc: '朝前方拋射，落地或碰到車就大範圍爆炸並震退敵車', dmg: 42, radius: 8, cooldown: 3.0, count: 1, price: 2500, perk: '子母彈：爆炸後再彈出 3 顆小榴彈' },
+  mine: { id: 'mine', name: '地雷', desc: '往車尾放下地雷，啟動後有車經過就爆炸（最多同時 3 顆）', dmg: 44, radius: 6, cooldown: 2.6, count: 1, price: 2200, perk: '重型地雷：爆炸範圍 +40%，可以同時留 5 顆' },
+  cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆', dmg: 22, radius: 4.5, cooldown: 6, count: 5, price: 3000, perk: '加量：一次撒出 7 顆' },
+  missile: { id: 'missile', name: '追蹤導彈', desc: '隨機鎖定一台對手並追蹤；被鎖定的人會收到警告，急轉可以甩掉', dmg: 36, radius: 5.5, cooldown: 6.5, count: 1, price: 4000, perk: '雙彈頭：同時射出兩枚，分別鎖定不同對手' },
 };
 
 export const PRIMARY_IDS = Object.keys(PRIMARY) as PrimaryId[];
@@ -66,6 +70,10 @@ export const MAX_CAR_LVL = 5;
 export const isPrimary = (id: WeaponId): id is PrimaryId => id in PRIMARY;
 export const weaponDef = (id: WeaponId) => (isPrimary(id) ? PRIMARY[id] : SECONDARY[id as SecondaryId]);
 export const weaponLvlMul = (lvl: number) => 1 + 0.15 * (lvl - 1);
+/** Lv.3 起：主武器過熱慢 15%、副武器冷卻快 15% */
+export const PERK_LVL3 = 3;
+export const PERK_LVL5 = 5;
+export const lvl3Mul = (lvl: number) => (lvl >= PERK_LVL3 ? 0.85 : 1);
 /** 從 lvl 升到 lvl+1 的費用 */
 export const weaponUpgradeCost = (id: WeaponId, lvl: number) => (isPrimary(id) ? 450 : 550) * lvl;
 

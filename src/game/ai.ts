@@ -1,3 +1,5 @@
+import { CFG } from './config';
+import type { Difficulty } from './difficulty';
 import type { Kart, KartInput } from './kart';
 import type { Race } from './race';
 import type { Branch } from './track';
@@ -20,13 +22,17 @@ export class AIController {
   baseSpeedMul = 1;
   /** 這次接近捷徑時決定要不要走 */
   private plan: Branch | null = null;
+  private D: Difficulty;
+  /** 上一幀是否在彎道中（出彎時給小噴） */
+  private inCorner = false;
   private planned: Branch | null = null;
   private rng: () => number;
   private inp: KartInput = { steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false };
 
-  constructor(rng: () => number, skill: number) {
+  constructor(rng: () => number, skill: number, D: Difficulty) {
     this.rng = rng;
     this.skill = skill;
+    this.D = D;
     this.lane = 0;
     this.laneTarget = 0;
     this.boostDelay = 1 + rng() * 3;
@@ -65,7 +71,7 @@ export class AIController {
       const ahead = this.ahead(k.idx, b.fromIdx, n);
       if (ahead > 0 && ahead < 110 / tr.spacing && this.planned !== b) {
         this.planned = b;
-        this.plan = this.rng() < 0.25 + (this.skill - 0.88) * 3 ? b : null;
+        this.plan = this.rng() < this.D.shortcut ? b : null;
       }
       // 已經過了接回點，或錯過入口太遠：放棄這次的計畫
       if (this.planned === b && !k.branch && (this.ahead(k.idx, b.fromIdx + b.span, n) < 0 || this.ahead(k.idx, b.fromIdx, n) < -40 / tr.spacing)) {
@@ -116,7 +122,16 @@ export class AIController {
       const c = Math.abs(curvAhead(i));
       if (c > kmax) kmax = c;
     }
-    const vT = 1.3 / (kmax + 1e-4);
+    const vT = this.D.corner / (kmax + 1e-4);
+    // 出彎小噴：模擬玩家甩尾後的加速
+    const here = Math.abs(curvAhead(0));
+    if (this.D.miniBoost && !k.isPlayer) {
+      if (here > 0.02) this.inCorner = true;
+      else if (this.inCorner && here < 0.008) {
+        this.inCorner = false;
+        if (sp > 15) k.miniT = Math.max(k.miniT, CFG.miniTime);
+      }
+    }
     inp.accel = sp < vT ? 1 : sp > vT + 4 ? -1 : 0;
     if (Math.abs(err) > 1.4 && sp > 8) inp.accel = 0;
     // 電車正在通過或快要通過：在平交道前減速
@@ -134,7 +149,7 @@ export class AIController {
       this.boostDelay -= dt;
       if (this.boostDelay <= 0) {
         inp.boost = true;
-        this.boostDelay = 1 + this.rng() * 4;
+        this.boostDelay = this.D.boostDelay[0] + this.rng() * (this.D.boostDelay[1] - this.D.boostDelay[0]);
       }
     }
 
@@ -143,8 +158,8 @@ export class AIController {
     const target = P.kind === 'flame' ? race.pickTarget(k, 0.24, P.range - 2) : race.pickTarget(k, 0.07, P.kind === 'laser' ? 140 : 95);
     this.burstT -= dt;
     if (target && this.burstT < -this.pause) {
-      this.burstT = 0.5 + this.rng() * 0.8;
-      this.pause = 0.8 + this.rng() * 2.2;
+      this.burstT = this.D.burst[0] + this.rng() * (this.D.burst[1] - this.D.burst[0]);
+      this.pause = this.D.pause[0] + this.rng() * (this.D.pause[1] - this.D.pause[0]);
     }
     inp.firePrimary = !!target && this.burstT > 0;
 
@@ -165,7 +180,7 @@ export class AIController {
         this.secDelay -= dt;
         if (this.secDelay <= 0) {
           inp.fireSecondary = true;
-          this.secDelay = 1.5 + this.rng() * 4;
+          this.secDelay = this.D.secDelay[0] + this.rng() * (this.D.secDelay[1] - this.D.secDelay[0]);
         }
       }
     }
@@ -192,8 +207,8 @@ export class AIController {
     let mul = this.skill * this.baseSpeedMul;
     if (player && !player.finished) {
       const gap = (k.prog - player.prog) * race.track.spacing;
-      if (gap > 120) mul *= 0.93;
-      else if (gap < -120) mul *= 1.06;
+      if (gap > 120) mul *= this.D.ahead;
+      else if (gap < -90) mul *= this.D.behind;
     }
     k.maxSpeedMul = mul;
   }

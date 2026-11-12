@@ -6,18 +6,20 @@ import { pickMissions, type Mission } from './missions';
 import type { Profile } from './save';
 import type { HazardDef, Track } from './track';
 import { clamp, mulberry32, wrapAngle } from './util';
-import { BURN_DPS, BURN_TIME, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
+import { BURN_DPS, BURN_TIME, lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
+import { DIFFICULTY } from './difficulty';
 
 export type RaceMode = 'race' | 'elim';
 
-export interface Bullet { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; dmg: number; owner: Kart }
+/** pierce > 0 表示穿甲彈，打中後還能繼續飛；skip 是剛被打穿的那台車 */
+export interface Bullet { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; dmg: number; owner: Kart; pierce: number; skip: Kart | null; idx: number }
 /** 火箭與追蹤導彈：homing 為 true 時會轉向 target */
 export interface Missile {
   x: number; y: number; z: number; a: number; idx: number; speed: number; life: number; dmg: number; radius: number; owner: Kart;
   homing: boolean; target: Kart | null; age: number;
 }
 /** y 為離地高度，gy 為砲彈下方的路面高度 */
-export interface Shell { x: number; y: number; z: number; gy: number; idx: number; vx: number; vy: number; vz: number; dmg: number; radius: number; owner: Kart }
+export interface Shell { x: number; y: number; z: number; gy: number; idx: number; vx: number; vy: number; vz: number; dmg: number; radius: number; owner: Kart; /** 子母彈彈出的小榴彈 */ sub: boolean }
 /** 爆炸桶：respawnT > 0 表示已引爆等待重生；fuse > 0 表示被旁邊的爆炸波及、即將連鎖引爆 */
 export interface Barrel { x: number; y: number; z: number; respawnT: number; fuse: number; by: Kart | null }
 /**
@@ -52,6 +54,8 @@ export type HitWeapon = 'gun' | 'flame' | 'laser';
 export type RaceEvent =
   | { t: 'shot'; k: Kart; x: number; y: number; z: number; side: number }
   | { t: 'hit'; k: Kart; by: Kart; x: number; y: number; z: number; w: HitWeapon }
+  | { t: 'dmg'; k: Kart; by: Kart | null; amount: number; fatal: boolean }
+  | { t: 'impact'; x: number; y: number; z: number }
   | { t: 'blast'; x: number; y: number; z: number; r: number; gy: number; kart: boolean }
   | { t: 'kill'; killer: Kart | null; victim: Kart; streak: number }
   | { t: 'launch'; k: Kart; kind: SecondaryId }
@@ -79,6 +83,7 @@ const SHELL_VY = 13;
 /** 追蹤導彈的轉向速度（弧度／秒）：比急轉彎的車慢，所以甩得掉 */
 const HOMING_TURN = 2.3;
 const MAX_MINES = 3;
+const MAX_MINES_PERK = 5;
 
 // 機關的尺寸與威力
 export const HAMMER = { pivot: 11, arm: 9.5, amp: 1.15, headR: 1.3, headHalf: 1.8, dmg: 22 };
@@ -121,6 +126,7 @@ export class Race {
     this.mode = mode;
     const rng = (this.rng = mulberry32(seed));
     const total = CFG.racers;
+    const D = DIFFICULTY[profile.difficulty ?? 'normal'];
     let player!: Kart;
     for (let j = 0; j < total; j++) {
       const isP = j === total - 1;
@@ -145,16 +151,21 @@ export class Race {
         k.secondary = profile.secondary;
         k.primaryLvl = profile.lvl[profile.primary];
         k.secondaryLvl = profile.lvl[profile.secondary];
-        this.ais.set(k, new AIController(rng, 1));
+        this.ais.set(k, new AIController(rng, 1, D));
         player = k;
       } else {
         k.aiAssist = true;
         k.car = CAR_IDS[Math.floor(rng() * CAR_IDS.length)];
         k.primary = PRIMARY_IDS[Math.floor(rng() * PRIMARY_IDS.length)];
         k.secondary = SECONDARY_IDS[Math.floor(rng() * SECONDARY_IDS.length)];
-        k.dmgMul = CFG.aiDamageMul;
-        const skill = 0.88 + 0.1 * (1 - j / Math.max(1, total - 2));
-        this.ais.set(k, new AIController(rng, skill));
+        k.dmgMul = D.dmg;
+        k.aiTurn = D.turn;
+        k.aiGauge = D.gauge;
+        // 電腦的武器等級隨難度提高（困難時常常帶著 Lv.5 特性）
+        k.primaryLvl = D.lvl[0] + Math.floor(rng() * (D.lvl[1] - D.lvl[0] + 1));
+        k.secondaryLvl = D.lvl[0] + Math.floor(rng() * (D.lvl[1] - D.lvl[0] + 1));
+        const skill = D.skill[0] + (D.skill[1] - D.skill[0]) * (1 - j / Math.max(1, total - 2));
+        this.ais.set(k, new AIController(rng, skill, D));
       }
       // 車款係數（玩家再疊上車庫的升級）
       const car = CARS[k.car];
@@ -377,6 +388,8 @@ export class Race {
     if (v.dead || v.out || v.invulnT > 0 || this.state === 'countdown' || amount <= 0) return;
     v.hp -= amount;
     v.sinceDamage = 0;
+    // 給 HUD 顯示傷害數字（只有跟玩家有關的才需要）
+    if (v.isPlayer || (attacker && attacker.isPlayer)) this.events.push({ t: 'dmg', k: v, by: attacker, amount, fatal: v.hp <= 0 });
     if (attacker && attacker !== v) {
       attacker.stats.damage += amount;
       // 打中人也會集氣
@@ -605,16 +618,19 @@ export class Race {
 
   private updateWeapons(k: Kart, inp: KartInput, dt: number): void {
     const P = PRIMARY[k.primary];
+    const top = k.primaryLvl >= PERK_LVL5;
     k.fireCd -= dt;
-    if (P.spinUp > 0) k.spin = clamp(k.spin + (inp.firePrimary && !k.overheated ? dt : -dt * 1.5) / P.spinUp, 0, 1);
+    const spinUp = top && k.primary === 'vulcan' ? 0.12 : P.spinUp;
+    if (spinUp > 0) k.spin = clamp(k.spin + (inp.firePrimary && !k.overheated ? dt : -dt * 1.5) / spinUp, 0, 1);
     else k.spin = inp.firePrimary ? 1 : 0;
-    const canFire = inp.firePrimary && !k.overheated && (P.spinUp <= 0 || k.spin >= 1);
+    const canFire = inp.firePrimary && !k.overheated && (spinUp <= 0 || k.spin >= 1);
+    const heatMul = lvl3Mul(k.primaryLvl) * (top && k.primary === 'vulcan' ? 0.8 : 1);
     if (canFire) {
       let guard = 0;
       while (k.fireCd <= 0 && guard++ < 4) {
         this.firePrimary(k, P);
         k.fireCd += 1 / P.rate;
-        k.heat += P.heat;
+        k.heat += P.heat * heatMul;
       }
       if (P.kind !== 'gun') k.firing = 0.1;
     } else if (k.fireCd < 0) {
@@ -627,7 +643,7 @@ export class Race {
     k.secCd = Math.max(0, k.secCd - dt);
     if (inp.fireSecondary && k.secCd <= 0) {
       const S = SECONDARY[k.secondary];
-      k.secCd = S.cooldown;
+      k.secCd = S.cooldown * lvl3Mul(k.secondaryLvl);
       switch (k.secondary) {
         case 'rocket': this.fireRocket(k); break;
         case 'grenade': this.fireShell(k); break;
@@ -660,7 +676,7 @@ export class Race {
       this.bullets.push({
         x: ox, y: oy, z: oz,
         vx: Math.sin(a) * sp, vy: Math.tan(k.pitch) * sp, vz: Math.cos(a) * sp,
-        life: P.range / sp, dmg, owner: k,
+        life: P.range / sp, dmg, owner: k, idx: k.idx, pierce: k.primary === 'mg' && k.primaryLvl >= PERK_LVL5 ? 1 : 0, skip: null,
       });
     }
     this.events.push({ t: 'shot', k, x: ox, y: oy, z: oz, side: k.gunSide });
@@ -669,10 +685,12 @@ export class Race {
   /** 火焰：車頭前方扇形範圍內的車、油桶、地雷、滾石都會被燒到 */
   private fireFlame(k: Kart, P: PrimaryDef, dmg: number): void {
     const h = k.heading;
+    const top = k.primaryLvl >= PERK_LVL5;
+    const range = P.range * (top ? 1.3 : 1);
     const inCone = (x: number, z: number, y: number, w: number): number => {
       const dx = x - k.x, dz = z - k.z;
       const d = Math.hypot(dx, dz);
-      if (d > P.range || d < 0.3 || Math.abs(y - k.y) > 2.6) return -1;
+      if (d > range || d < 0.3 || Math.abs(y - k.y) > 2.6) return -1;
       if (dx * Math.sin(h) + dz * Math.cos(h) <= 0) return -1;
       const ang = Math.abs(wrapAngle(Math.atan2(dx, dz) - h));
       return ang <= P.spread + Math.atan2(w, d) ? d : -1;
@@ -681,8 +699,8 @@ export class Race {
       if (o === k || o.dead || o.out || o.invulnT > 0) continue;
       const d = inCone(o.x, o.z, o.y, 1.1);
       if (d < 0) continue;
-      this.damage(o, dmg * (1 - 0.4 * (d / P.range)), k);
-      o.burnT = BURN_TIME;
+      this.damage(o, dmg * (1 - 0.4 * (d / range)), k);
+      o.burnT = top ? 4 : BURN_TIME;
       o.burnBy = k;
       this.events.push({ t: 'hit', k: o, by: k, x: o.x, y: o.y + 0.9, z: o.z, w: 'flame' });
     }
@@ -734,11 +752,25 @@ export class Race {
       const t = ray(b.x, b.z, b.r);
       if (t >= 0) { best = t; hitK = null; obj = () => this.hurtBoulder(b, dmg, k); }
     }
+    // 貫穿光束：打穿第一台車，再找後面的第二台
+    let hit2: Kart | null = null;
+    if (hitK && k.primaryLvl >= PERK_LVL5) {
+      const first = best;
+      best = len;
+      for (const o of this.karts) {
+        if (o === k || o === hitK || o.dead || o.out || o.invulnT > 0) continue;
+        const t = ray(o.x, o.z, 1.3);
+        if (t > first && Math.abs(o.y + 0.9 - (oy + tp * t)) < 2) { best = t; hit2 = o; }
+      }
+      if (!hit2) best = Math.min(len, first + 30);
+      else this.damage(hit2, dmg * 0.8, k);
+      if (hit2) this.events.push({ t: 'hit', k: hit2, by: k, x: hit2.x, y: hit2.y + 0.9, z: hit2.z, w: 'laser' });
+    }
     k.beamLen = best + 1.3;
     k.beamHit = !!hitK || !!obj;
     if (hitK) {
       this.damage(hitK, dmg, k);
-      this.events.push({ t: 'hit', k: hitK, by: k, x: ox + fx * best, y: oy + tp * best, z: oz + fz * best, w: 'laser' });
+      this.events.push({ t: 'hit', k: hitK, by: k, x: hitK.x, y: hitK.y + 0.9, z: hitK.z, w: 'laser' });
     } else if (obj) obj();
   }
 
@@ -746,27 +778,34 @@ export class Race {
   private fireRocket(k: Kart): void {
     const S = SECONDARY.rocket;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
-    this.missiles.push({
-      x: k.x + fx * 1.6, y: k.y + 0.95, z: k.z + fz * 1.6, a: k.heading, idx: k.idx,
-      speed: Math.max(30, k.speed) + 25, life: 3.5, dmg: this.secDmg(k), radius: S.radius, owner: k,
-      homing: false, target: null, age: 0,
-    });
+    const twin = k.secondaryLvl >= PERK_LVL5;
+    for (const off of twin ? [-0.45, 0.45] : [0]) {
+      this.missiles.push({
+        x: k.x + fx * 1.6 + fz * off, y: k.y + 0.95, z: k.z + fz * 1.6 - fx * off, a: k.heading, idx: k.idx,
+        speed: Math.max(30, k.speed) + 25, life: 3.5, dmg: this.secDmg(k), radius: S.radius, owner: k,
+        homing: false, target: null, age: 0,
+      });
+    }
   }
 
   /** 追蹤導彈：從附近的對手裡隨機挑一台鎖定 */
   private fireHoming(k: Kart): void {
     const S = SECONDARY.missile;
     const cands = this.karts.filter((o) => o !== k && !o.dead && !o.out && !o.finished && Math.hypot(o.x - k.x, o.z - k.z) < 260);
-    const target = cands.length ? cands[Math.floor(this.rng() * cands.length)] : null;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
-    this.missiles.push({
-      x: k.x + fx * 1.6, y: k.y + 1.2, z: k.z + fz * 1.6, a: k.heading, idx: k.idx,
-      speed: Math.max(30, k.speed) + 12, life: 6, dmg: this.secDmg(k), radius: S.radius, owner: k,
-      homing: true, target, age: 0,
-    });
-    if (target) {
-      target.lockT = 2;
-      this.events.push({ t: 'lock', k: target, by: k });
+    const n = k.secondaryLvl >= PERK_LVL5 ? 2 : 1;
+    for (let i = 0; i < n; i++) {
+      const target = cands.length ? cands.splice(Math.floor(this.rng() * cands.length), 1)[0] : null;
+      const off = n > 1 ? (i ? 0.4 : -0.4) : 0;
+      this.missiles.push({
+        x: k.x + fx * 1.6 + fz * off, y: k.y + 1.2, z: k.z + fz * 1.6 - fx * off, a: k.heading + off * 0.3, idx: k.idx,
+        speed: Math.max(30, k.speed) + 12, life: 6, dmg: this.secDmg(k), radius: S.radius, owner: k,
+        homing: true, target, age: 0,
+      });
+      if (target) {
+        target.lockT = 2;
+        this.events.push({ t: 'lock', k: target, by: k });
+      }
     }
   }
 
@@ -777,7 +816,7 @@ export class Race {
     const hv = Math.max(0, k.speed) + 46;
     this.shells.push({
       x: k.x + fx * 1.4, y: 1 + k.air, z: k.z + fz * 1.4, gy: k.y - k.air, idx: k.idx, vx: fx * hv, vy: SHELL_VY, vz: fz * hv,
-      dmg: this.secDmg(k), radius: S.radius, owner: k,
+      dmg: this.secDmg(k), radius: S.radius, owner: k, sub: false,
     });
   }
 
@@ -787,14 +826,14 @@ export class Race {
     return {
       x, y: this.track.probeY, z, vx, vz, idx, owner: k, by: k, kind,
       armT: kind === 'mine' ? 0.8 : 0.35, life: kind === 'mine' ? 45 : 6 + this.rng() * 0.8, fuse: 0,
-      dmg: this.secDmg(k), radius: S.radius, trigger: kind === 'mine' ? 2.6 : 2.1, dead: false,
+      dmg: this.secDmg(k), radius: S.radius * (kind === 'mine' && k.secondaryLvl >= PERK_LVL5 ? 1.4 : 1), trigger: kind === 'mine' ? 2.6 : 2.1, dead: false,
     };
   }
 
   /** 地雷：放在車尾後方；同一個人最多同時留 3 顆，超過就收回最舊的 */
   private dropMine(k: Kart): void {
     const own = this.mines.filter((m) => !m.dead && m.owner === k && m.kind === 'mine');
-    if (own.length >= MAX_MINES) own[0].dead = true;
+    if (own.length >= (k.secondaryLvl >= PERK_LVL5 ? MAX_MINES_PERK : MAX_MINES)) own[0].dead = true;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
     this.mines.push(this.newMine(k, 'mine', k.x - fx * 2.4, k.z - fz * 2.4, k.vx * 0.12, k.vz * 0.12));
   }
@@ -803,8 +842,9 @@ export class Race {
   private dropCluster(k: Kart): void {
     const S = SECONDARY.cluster;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
-    for (let i = 0; i < S.count; i++) {
-      const a = k.heading + Math.PI + (i - (S.count - 1) / 2) * 0.36;
+    const count = S.count + (k.secondaryLvl >= PERK_LVL5 ? 2 : 0);
+    for (let i = 0; i < count; i++) {
+      const a = k.heading + Math.PI + (i - (count - 1) / 2) * (count > 5 ? 0.28 : 0.36);
       const sp = 9 + this.rng() * 5;
       this.mines.push(this.newMine(k, 'cluster', k.x - fx * 2, k.z - fz * 2, k.vx * 0.42 + Math.sin(a) * sp, k.vz * 0.42 + Math.cos(a) * sp));
     }
@@ -930,7 +970,7 @@ export class Race {
       let hit: Kart | null = null;
       let ht = 2;
       for (const k of this.karts) {
-        if (k === b.owner || k.dead || k.out || k.invulnT > 0) continue;
+        if (k === b.owner || k === b.skip || k.dead || k.out || k.invulnT > 0) continue;
         const t = clamp(((k.x - b.x) * sx + (k.z - b.z) * sz) / sl2, 0, 1);
         const cx = b.x + sx * t - k.x, cz = b.z + sz * t - k.z;
         if (cx * cx + cz * cz < 2.1 && t < ht && Math.abs(b.y - (k.y + 0.9)) < 2.2) { ht = t; hit = k; }
@@ -943,14 +983,29 @@ export class Race {
       if (hit) {
         this.events.push({ t: 'hit', k: hit, by: b.owner, x: b.x + sx * ht, y: b.y + b.vy * dt * ht, z: b.z + sz * ht, w: 'gun' });
         this.damage(hit, b.dmg, b.owner);
-        B[i] = B[B.length - 1];
-        B.pop();
-        continue;
+        if (b.pierce > 0) {
+          // 穿甲彈：打穿後繼續飛，傷害打七折
+          b.pierce--;
+          b.skip = hit;
+          b.dmg *= 0.7;
+        } else {
+          B[i] = B[B.length - 1];
+          B.pop();
+          continue;
+        }
       }
       b.x += sx;
       b.y += b.vy * dt;
       b.z += sz;
       b.life -= dt;
+      // 打到護欄或地面：濺出火花後消失
+      b.idx = this.track.probe(b.x, b.z, b.idx, 0.7);
+      if (!this.track.probeOn || b.y < this.track.probeY) {
+        this.events.push({ t: 'impact', x: b.x, y: Math.max(b.y, this.track.probeY + 0.2), z: b.z });
+        B[i] = B[B.length - 1];
+        B.pop();
+        continue;
+      }
       if (b.life <= 0) {
         B[i] = B[B.length - 1];
         B.pop();
@@ -1031,6 +1086,16 @@ export class Race {
         this.explodeAt(s.x, s.gy + Math.max(0.5, s.y), s.z, s.gy, s.radius, s.dmg, s.owner);
         S[i] = S[S.length - 1];
         S.pop();
+        // 子母彈：往四周彈出 3 顆小榴彈
+        if (!s.sub && s.owner.secondary === 'grenade' && s.owner.secondaryLvl >= PERK_LVL5) {
+          for (let j = 0; j < 3; j++) {
+            const a = this.rng() * Math.PI * 2, sp = 7 + this.rng() * 5;
+            S.push({
+              x: s.x, y: 0.8, z: s.z, gy: s.gy, idx: s.idx, vx: s.vx * 0.15 + Math.cos(a) * sp, vy: 8 + this.rng() * 3, vz: s.vz * 0.15 + Math.sin(a) * sp,
+              dmg: s.dmg * 0.4, radius: s.radius * 0.55, owner: s.owner, sub: true,
+            });
+          }
+        }
       }
     }
   }

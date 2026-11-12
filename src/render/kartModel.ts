@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Kart } from '../game/kart';
 import type { PrimaryId, SecondaryId } from '../game/weapons';
 import { cloneModel } from './assets';
+import { buildPrimary, buildSecondary } from './weaponModels';
 
 const DARK = new THREE.MeshLambertMaterial({ color: 0x23262d });
 const METAL = new THREE.MeshLambertMaterial({ color: 0x8c93a0 });
@@ -22,9 +23,6 @@ const FIRE = additive(0xff7a1a, 0.8);
 const FIRE_CORE = additive(0xffe08a, 0.85);
 const BEAM = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.5, 0.6), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
 const BEAM_CORE = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 3, 3), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
-const LENS = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 0.4, 0.5) });
-const TANK = new THREE.MeshLambertMaterial({ color: 0xd7263d });
-const HAZARD_YEL = new THREE.MeshLambertMaterial({ color: 0xffc93c });
 const SHADOW = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false });
 
 const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.36, 14).rotateZ(Math.PI / 2);
@@ -49,7 +47,33 @@ const muzzleGeo = (() => {
   g.setIndex([...ia, ...ia.map((i) => i + 4)]);
   return g;
 })();
-const SHARED_GEOS = new Set<THREE.BufferGeometry>([wheelGeo, hubGeo, flameGeo, flameCoreGeo, shadowGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo]);
+// N2O 時包住車頭的破風氣流：前窄後寬的圓錐殼，貼圖是一條條往後流的氣流線
+const shellGeo = new THREE.CylinderGeometry(0.35, 2.1, 4.6, 18, 1, true).rotateX(Math.PI / 2);
+const shellTex = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = 64;
+  cv.height = 128;
+  const c = cv.getContext('2d')!;
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * 64, y = Math.random() * 128, h = 20 + Math.random() * 60;
+    const g = c.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.5, 'rgba(255,255,255,' + (0.3 + Math.random() * 0.6).toFixed(2) + ')');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.fillRect(x, y, 1 + Math.random() * 2, h);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 1);
+  return t;
+})();
+const SHELL = new THREE.MeshBasicMaterial({
+  map: shellTex, color: new THREE.Color(0.55, 0.85, 1.5), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+});
+const WING_GLOW = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.4, 1.6, 2.6) });
+
+const SHARED_GEOS = new Set<THREE.BufferGeometry>([shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, shadowGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo]);
 
 /** 模型放大倍率：Kenney 卡丁車原始約 1 m 寬，放大成遊戲中的車體尺寸 */
 const MODEL_SCALE = 1.9;
@@ -93,6 +117,11 @@ export class KartView {
   /** 火焰發射器的噴流與雷射光束（左右各一） */
   private fires: THREE.Object3D[] = [];
   private beams: THREE.Object3D[] = [];
+  /** N2O 變形：兩側展開的翼片與升起的尾翼，以及破風氣流 */
+  private wings: THREE.Group[] = [];
+  private spoiler = new THREE.Group();
+  private shell: THREE.Mesh;
+  private deploy = 0;
   private paint: THREE.MeshLambertMaterial;
   private ownMats: THREE.Material[] = [];
   private hpTex?: THREE.CanvasTexture;
@@ -124,6 +153,8 @@ export class KartView {
     else this.buildProcedural(look);
     this.baseColor.copy(this.paint.color);
     this.addWeapons(look.primary, look.secondary);
+    this.shell = new THREE.Mesh(shellGeo, SHELL);
+    this.addBoostKit();
 
     // 噴射火焰
     for (const x of [-0.3, 0.3]) {
@@ -222,115 +253,76 @@ export class KartView {
 
   private addWeapons(primary: PrimaryId, secondary: SecondaryId): void {
     const b = this.body;
-    // 主武器：車身兩側
+    const WS = 1.2;
+    // 主武器：車身兩側各一把
     for (const side of [1, -1]) {
-      const x = GUN_X * side;
-      b.add(box(0.16, 0.34, 0.5, GUN_LIGHT, x * 0.86, GUN_Y - 0.2, GUN_Z - 0.3));
-      let muzzleZ = GUN_Z + 1.0;
+      const parts = buildPrimary(primary, side);
+      const g = parts.group;
+      g.scale.setScalar(WS);
+      g.position.set(GUN_X * side, GUN_Y - 0.2 * WS, GUN_Z - 0.12);
+      b.add(g);
+      this.vulcanBarrels.push(...parts.spinners);
+      const mx = g.position.x, my = g.position.y + parts.muzzle.y * WS, mzz = g.position.z + parts.muzzle.z * WS;
       if (primary === 'flame') {
-        // 紅色燃料罐 + 噴嘴
-        b.add(barrel(0.17, 0.75, TANK, x, GUN_Y - 0.02, GUN_Z - 0.35));
-        b.add(barrel(0.075, 0.9, GUN, x, GUN_Y + 0.02, GUN_Z + 0.35));
-        b.add(barrel(0.12, 0.16, GUN_LIGHT, x, GUN_Y + 0.02, GUN_Z + 0.82));
-        b.add(box(0.06, 0.2, 0.06, HAZARD_YEL, x, GUN_Y - 0.12, GUN_Z + 0.82));
         const f = new THREE.Group();
-        f.position.set(x, GUN_Y + 0.02, GUN_Z + 0.9);
+        f.position.set(mx, my, mzz);
         f.add(new THREE.Mesh(fireGeo, FIRE), new THREE.Mesh(fireCoreGeo, FIRE_CORE));
         f.visible = false;
         b.add(f);
         this.fires.push(f);
-        muzzleZ = GUN_Z + 0.9;
       } else if (primary === 'laser') {
-        // 方形本體 + 散熱鰭片 + 發光鏡頭
-        b.add(box(0.26, 0.24, 0.8, GUN, x, GUN_Y, GUN_Z + 0.1));
-        for (const dz of [-0.15, 0, 0.15]) b.add(box(0.34, 0.04, 0.06, GUN_LIGHT, x, GUN_Y + 0.14, GUN_Z + dz));
-        b.add(barrel(0.09, 0.5, GUN_LIGHT, x, GUN_Y, GUN_Z + 0.7));
-        b.add(barrel(0.07, 0.04, LENS, x, GUN_Y, GUN_Z + 0.96));
         const beam = new THREE.Group();
-        beam.position.set(x, GUN_Y, GUN_Z + 0.98);
+        beam.position.set(mx, my, mzz);
         beam.add(new THREE.Mesh(beamGeo, BEAM), new THREE.Mesh(beamCoreGeo, BEAM_CORE));
         beam.visible = false;
         beam.userData.side = side;
         b.add(beam);
         this.beams.push(beam);
-      } else if (primary === 'vulcan') {
-        const grp = new THREE.Group();
-        grp.position.set(x, GUN_Y, GUN_Z + 0.25);
-        for (let i = 0; i < 6; i++) {
-          const ang = (i / 6) * Math.PI * 2;
-          grp.add(barrel(0.04, 1.25, GUN, Math.cos(ang) * 0.095, Math.sin(ang) * 0.095, 0));
-        }
-        grp.add(barrel(0.13, 0.12, GUN_LIGHT, 0, 0, 0.5));
-        b.add(grp);
-        b.add(barrel(0.17, 0.5, GUN_LIGHT, x, GUN_Y, GUN_Z - 0.35));
-        this.vulcanBarrels.push(grp);
-      } else {
-        b.add(barrel(0.065, 1.35, GUN, x, GUN_Y, GUN_Z + 0.3));
-        b.add(barrel(0.1, 0.22, GUN_LIGHT, x, GUN_Y, GUN_Z + 0.92));
-        b.add(box(0.24, 0.26, 0.62, GUN, x, GUN_Y - 0.02, GUN_Z - 0.3));
-        b.add(box(0.2, 0.3, 0.26, GUN_LIGHT, x + 0.2 * side, GUN_Y - 0.08, GUN_Z - 0.28));
       }
       const mz = new THREE.Mesh(muzzleGeo, MUZZLE);
-      mz.position.set(x, GUN_Y, muzzleZ);
+      mz.position.set(mx, my, mzz);
       mz.visible = false;
       b.add(mz);
       this.muzzles.push(mz);
     }
-    // 副武器：引擎蓋上（地雷類的投放箱裝在車尾）
-    if (secondary === 'rocket') {
-      b.add(box(0.74, 0.3, 0.62, GUN, 0, HOOD_Y + 0.1, HOOD_Z));
-      b.add(box(0.5, 0.12, 0.3, GUN_LIGHT, 0, HOOD_Y - 0.1, HOOD_Z - 0.1));
-      for (const x of [-0.19, 0.19]) {
-        b.add(barrel(0.11, 0.66, GUN_LIGHT, x, HOOD_Y + 0.12, HOOD_Z + 0.02));
-        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.22, 8).rotateX(Math.PI / 2), WARHEAD);
-        tip.position.set(x, HOOD_Y + 0.12, HOOD_Z + 0.42);
-        b.add(tip);
-      }
-    } else if (secondary === 'grenade') {
-      // 粗短的發射管加彈鼓，略微上仰
-      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.95, 10).rotateX(Math.PI / 2 - 0.35), GUN);
-      tube.position.set(0, HOOD_Y + 0.32, HOOD_Z + 0.12);
-      b.add(tube);
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.3, 10), GUN_LIGHT);
-      drum.position.set(0, HOOD_Y + 0.16, HOOD_Z - 0.2);
-      b.add(drum);
-      b.add(box(0.56, 0.2, 0.5, GUN_LIGHT, 0, HOOD_Y + 0.02, HOOD_Z - 0.1));
-    } else if (secondary === 'missile') {
-      // 發射架上掛著一枚大導彈，旁邊有雷達
-      b.add(box(0.36, 0.1, 0.9, GUN_LIGHT, 0, HOOD_Y + 0.04, HOOD_Z));
-      b.add(barrel(0.13, 0.95, WHITE, 0, HOOD_Y + 0.24, HOOD_Z + 0.05));
-      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.3, 10).rotateX(Math.PI / 2), WARHEAD);
-      tip.position.set(0, HOOD_Y + 0.24, HOOD_Z + 0.67);
-      b.add(tip);
-      for (const r of [0, Math.PI / 2]) {
-        const fin = box(0.42, 0.03, 0.16, WARHEAD, 0, HOOD_Y + 0.24, HOOD_Z - 0.35);
-        fin.rotation.z = r;
-        b.add(fin);
-      }
-      const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.05, 0.08, 10).rotateX(Math.PI / 2 - 0.3), GUN_LIGHT);
-      dish.position.set(0.34, HOOD_Y + 0.26, HOOD_Z - 0.25);
-      b.add(dish);
-    } else {
-      // 地雷／集束圓雷：車尾的投放箱
-      const z = -1.2;
-      b.add(box(0.9, 0.36, 0.5, GUN, 0, 0.72, z));
-      b.add(box(0.94, 0.06, 0.54, HAZARD_YEL, 0, 0.92, z));
-      if (secondary === 'cluster') {
-        for (const x of [-0.26, 0, 0.26]) {
-          const ball = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), WARHEAD);
-          ball.position.set(x, 1.0, z);
-          b.add(ball);
-        }
-      } else {
-        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.1, 12), GUN_LIGHT);
-        disc.position.set(0, 0.98, z);
-        b.add(disc);
-        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 4), LENS);
-        dot.position.set(0, 1.04, z);
-        b.add(dot);
-      }
-      b.add(box(0.5, 0.12, 0.3, GUN_LIGHT, 0, HOOD_Y - 0.1, HOOD_Z - 0.1));
+    // 副武器：火箭、榴彈、導彈在引擎蓋上；地雷與圓雷的投放器在車尾
+    const sec = buildSecondary(secondary);
+    sec.scale.setScalar(1.25);
+    if (secondary === 'mine' || secondary === 'cluster') sec.position.set(0, 0.55, -1.2);
+    else sec.position.set(0, HOOD_Y - 0.06, HOOD_Z - 0.12);
+    b.add(sec);
+  }
+
+  /** N2O 時展開的翼片與尾翼（平常收起來看不到） */
+  private addBoostKit(): void {
+    const b = this.body;
+    const paint = this.paint;
+    for (const side of [1, -1]) {
+      const w = new THREE.Group();
+      w.position.set(side * 0.82, 0.6, -0.45);
+      w.add(box(0.95, 0.045, 0.42, paint, side * 0.47, 0, 0));
+      w.add(box(0.95, 0.03, 0.05, WING_GLOW, side * 0.47, 0.01, -0.22));
+      w.add(box(0.04, 0.24, 0.36, paint, side * 0.93, 0.11, 0));
+      w.visible = false;
+      b.add(w);
+      this.wings.push(w);
     }
+    const sp = this.spoiler;
+    sp.position.set(0, 0.8, -1.1);
+    for (const x of [-0.36, 0.36]) sp.add(box(0.06, 0.42, 0.09, GUN, x, 0.2, 0));
+    sp.add(box(1.5, 0.06, 0.38, paint, 0, 0.42, -0.02));
+    sp.add(box(1.5, 0.03, 0.05, WING_GLOW, 0, 0.44, -0.2));
+    for (const x of [-0.76, 0.76]) sp.add(box(0.05, 0.3, 0.42, paint, x, 0.36, -0.02));
+    sp.visible = false;
+    b.add(sp);
+    // 氣流殼要比照獨立的材質透明度：每台車各自一份
+    const mat = SHELL.clone();
+    this.ownMats.push(mat);
+    this.shell.material = mat;
+    this.shell.position.set(0, 0.75, 0.75);
+    this.shell.visible = false;
+    this.shell.renderOrder = 5;
+    b.add(this.shell);
   }
 
   /** 開火時讓對應那一側的槍口閃一下 */
@@ -351,6 +343,10 @@ export class KartView {
     for (const m of this.muzzles) m.visible = false;
     for (const f of this.fires) f.visible = false;
     for (const bm of this.beams) bm.visible = false;
+    for (const w of this.wings) w.visible = false;
+    this.spoiler.visible = false;
+    this.shell.visible = false;
+    this.deploy = 0;
     if (this.hpSprite) this.hpSprite.visible = false;
     this.group.visible = true;
   }
@@ -442,6 +438,26 @@ export class KartView {
 
     const boosting = k.boostT > 0;
     const mini = k.miniT > 0 || k.padT > 0;
+    // N2O 變形：翼片往外展開、尾翼升起；結束後收回
+    this.deploy += ((boosting && !k.dead ? 1 : 0) - this.deploy) * Math.min(1, dt * (boosting ? 9 : 4));
+    const d = this.deploy * this.deploy * (3 - 2 * this.deploy);
+    const show = d > 0.02;
+    for (let i = 0; i < this.wings.length; i++) {
+      const w = this.wings[i], side = i === 0 ? 1 : -1;
+      w.visible = show;
+      w.scale.setScalar(Math.max(0.01, d));
+      w.rotation.z = side * (1 - d) * 1.4;
+    }
+    this.spoiler.visible = show;
+    this.spoiler.position.y = 0.72 + 0.28 * d;
+    this.spoiler.scale.set(0.35 + 0.65 * d, Math.max(0.01, d), 1);
+    this.shell.visible = show;
+    if (show) {
+      const m = this.shell.material as THREE.MeshBasicMaterial;
+      m.opacity = 0.42 * d * (0.85 + Math.random() * 0.3);
+      if (m.map) m.map.offset.y = (this.t * 3.2) % 1;
+      this.shell.scale.set(1, 1, 0.9 + Math.random() * 0.15);
+    }
     for (let i = 0; i < this.flames.length; i++) {
       const f = this.flames[i];
       f.visible = boosting || mini;

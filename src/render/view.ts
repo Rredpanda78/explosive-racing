@@ -9,11 +9,16 @@ import type { Track } from '../game/track';
 import { clamp, lerpAngle } from '../game/util';
 import { PRIMARY } from '../game/weapons';
 import { HazardView } from './hazards';
-import { BlastFx, Debris, SkidMarks } from './effects';
+import { BlastFx, Debris, Scorch, SkidMarks, Trails } from './effects';
+import { clusterMineMaterial, hexMineGeometry, steelMaterial } from './weaponModels';
 import { KartView } from './kartModel';
 import { Particles } from './particles';
 import { THEMES, type Theme } from './themes';
+import { Weather, type WeatherKind } from './weather';
 import { buildWorld, type World } from './world';
+
+/** 每張地圖的天氣 */
+const WEATHER: Record<string, WeatherKind> = { meadow: 'petals', desert: 'sand', city: 'rain' };
 
 const MAX_TRACERS = 320;
 const POOL = 16;
@@ -38,6 +43,8 @@ export class GameView {
   private smoke = new Particles(1100, false);
   private fire = new Particles(1800, true);
   private skid = new SkidMarks();
+  private trails = new Trails(16);
+  private scorch = new Scorch(40);
   private debris: Debris | null = null;
   private blast = new BlastFx();
   private tracers: THREE.InstancedMesh;
@@ -48,6 +55,8 @@ export class GameView {
   private barrelMat: THREE.MeshLambertMaterial;
   private barrelHot: THREE.MeshBasicMaterial;
   private hazardView: HazardView | null = null;
+  private weather: Weather | null = null;
+  private groundHint = 0;
   /** 地雷與集束圓雷：本體與閃燈（閃燈用每個實例的顏色控制亮暗） */
   private mineBody: THREE.InstancedMesh;
   private mineLight: THREE.InstancedMesh;
@@ -111,7 +120,7 @@ export class GameView {
       this.composer.addPass(new OutputPass());
     }
 
-    this.scene.add(this.skid.mesh, this.blast.group, this.smoke.points, this.fire.points);
+    this.scene.add(this.skid.mesh, this.blast.group, this.smoke.points, this.fire.points, this.trails.mesh, this.scorch.mesh);
 
     this.tracers = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.1, 0.1, 5.5),
@@ -175,13 +184,11 @@ export class GameView {
       this.scene.add(m);
       return m;
     };
-    this.mineBody = inst(
-      new THREE.CylinderGeometry(0.55, 0.62, 0.24, 14).translate(0, 0.12, 0),
-      new THREE.MeshLambertMaterial({ color: 0x3a3f48 }), MAX_MINES, false,
-    );
-    this.mineLight = inst(new THREE.SphereGeometry(0.15, 8, 6).translate(0, 0.28, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_MINES, true);
-    this.clusterBody = inst(new THREE.IcosahedronGeometry(0.34, 1).translate(0, 0.34, 0), new THREE.MeshLambertMaterial({ color: 0x2b2e35, flatShading: true }), MAX_CLUSTER, false);
-    this.clusterLight = inst(new THREE.TorusGeometry(0.34, 0.06, 6, 14).rotateX(Math.PI / 2).translate(0, 0.34, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_CLUSTER, true);
+    // 地雷：六角形外殼、中間的紅燈；集束圓雷：紅白條紋圓球、腰間一圈燈
+    this.mineBody = inst(hexMineGeometry(), steelMaterial(), MAX_MINES, false);
+    this.mineLight = inst(new THREE.CylinderGeometry(0.17, 0.2, 0.08, 10).translate(0, 0.22, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_MINES, true);
+    this.clusterBody = inst(new THREE.SphereGeometry(0.34, 14, 10).translate(0, 0.34, 0), clusterMineMaterial(), MAX_CLUSTER, false);
+    this.clusterLight = inst(new THREE.TorusGeometry(0.345, 0.035, 6, 16).rotateX(Math.PI / 2).translate(0, 0.34, 0), new THREE.MeshBasicMaterial({ color: 0xffffff }), MAX_CLUSTER, true);
     this.mineBody.castShadow = this.clusterBody.castShadow = this.shadows;
     this.resize();
   }
@@ -216,6 +223,18 @@ export class GameView {
     this.headlight.intensity = th.night ? 110 : 0;
     this.world = buildWorld(track, th, this.shadows, this.mobile);
     this.scene.add(this.world.group);
+    // 天氣：路面上用路面高度，路外用地形高度
+    this.weather?.dispose();
+    const world = this.world;
+    this.weather = new Weather(WEATHER[th.id] ?? 'petals', {
+      mobile: this.mobile,
+      groundY: (x, z) => {
+        this.groundHint = track.probe(x, z, this.groundHint < 0 ? -1 : this.groundHint);
+        return track.probeOn ? track.probeY : world.terrainH(x, z);
+      },
+    });
+    this.groundHint = -1;
+    this.scene.add(this.weather.group);
     if (this.debris) this.scene.remove(this.debris.group);
     this.debris = new Debris(this.mobile ? 16 : 36, this.shadows);
     this.scene.add(this.debris.group);
@@ -238,6 +257,8 @@ export class GameView {
     this.smoke.clear();
     this.fire.clear();
     this.skid.clear();
+    this.trails.clear();
+    this.scorch.clear();
     this.debris?.clear();
     this.blast.clear();
     this.tracers.count = 0;
@@ -268,6 +289,8 @@ export class GameView {
 
   resize(): void {
     const w = window.innerWidth, h = window.innerHeight;
+    // 視窗被縮到 0（例如分頁隱藏）時不要把畫布設成 0，否則後製的畫框會失效
+    if (w < 2 || h < 2) return;
     this.renderer.setSize(w, h, false);
     if (this.composer) {
       this.composer.setPixelRatio(this.renderer.getPixelRatio());
@@ -325,9 +348,16 @@ export class GameView {
           if (e.k === p) this.addShake(0.04);
           break;
         }
-        this.sparks(e.x, e.y, e.z, 4, 16, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
+        this.sparks(e.x, e.y, e.z, 5, 18, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
         f.spawn(e.x, e.y, e.z, 0, 0, 0, 0.07, 2.4, 0.6, 1, 0.9, 0.6, 0.9);
+        // 偶爾打下一小塊碎片並冒一點煙
+        if (R() < 0.12) this.debris?.burst(e.x, e.y, e.z, e.k.y, 1, 6);
+        if (R() < 0.3) sm.spawn(e.x, e.y, e.z, e.k.vx * 0.5, 1, e.k.vz * 0.5, 0.5, 0.4, 1.6, 0.25, 0.25, 0.27, 0.4);
         if (e.k === p) this.addShake(0.1);
+        break;
+      case 'impact':
+        if (R() < 0.5) this.sparks(e.x, e.y, e.z, 2, 8, e.y - 1);
+        sm.spawn(e.x, e.y, e.z, 0, 0.6, 0, 0.35, 0.3, 1.2, 0.75, 0.72, 0.68, 0.35);
         break;
       case 'hazard':
         this.sparks(e.x, e.y, e.z, 14, 16, e.k.y);
@@ -364,6 +394,7 @@ export class GameView {
           sm.spawn(e.x, e.y + 0.5, e.z, Math.cos(a) * sp, 2.5 + R() * 5, Math.sin(a) * sp, 1.2 + R() * 1.2, 2.2, 7 + R() * 4, 0.12, 0.11, 0.11, 0.72, -1.2, 1.2);
         }
         this.blast.spawn(e.x, e.y, e.z, e.gy, e.r);
+        if (e.y - e.gy < 3.5) this.scorch.add(e.x, e.gy, e.z, e.r * (e.kart ? 1.1 : 0.85));
         this.debris?.burst(e.x, e.y, e.z, e.gy, e.kart ? 7 : 3, e.kart ? 15 : 10);
         const d = Math.hypot(e.x - p.x, e.z - p.z);
         this.addShake(clamp(1 - d / 80, 0, 1) * 0.85);
@@ -458,6 +489,8 @@ export class GameView {
         }
         this.skid.wheel(k, 0, false, 0, 0, 0, 0, 0);
         this.skid.wheel(k, 1, false, 0, 0, 0, 0, 0);
+        const g0 = kv.group.position;
+        for (let w = 0; w < 2; w++) this.trails.push(k.id * 2 + w, g0.x, g0.y, g0.z, 0, 0, 0, 0);
         continue;
       }
       if (kv.wrecked) kv.endWreck();
@@ -497,6 +530,18 @@ export class GameView {
         for (let i = 0; i < cnt; i++) {
           const side = R() > 0.5 ? 0.3 : -0.3;
           f.spawn(k.x + lx * side - fx * 1.6, k.y + 0.6, k.z + lz * side - fz * 1.6, k.vx * 0.4 - fx * 7, R() * 0.6, k.vz * 0.4 - fz * 7, 0.24, 1.2, 0.15, blue ? 0.35 : 1, blue ? 0.75 : 0.6, blue ? 1 : 0.2, 0.5);
+        }
+      }
+      // 破風氣流：甩尾時白色、N2O 時藍色，從車身兩側往後拖
+      {
+        const boost = k.boostT > 0;
+        const drift = grounded && k.speed > 18 && (k.drifting ? Math.abs(k.slip) > 0.12 : sliding);
+        const kk = boost ? 1 : drift ? clamp(Math.abs(k.slip) * 2.2 + (k.aiAssist ? 0.5 : 0), 0.3, 0.75) : 0;
+        for (let w = 0; w < 2; w++) {
+          const side = w === 0 ? 1 : -1;
+          const ox = side * 1.0, oz = -0.75, oy = boost ? 1.0 : 0.75;
+          if (boost) this.trails.push(k.id * 2 + w, k.x + lx * ox + fx * oz, k.y + oy, k.z + lz * ox + fz * oz, kk, 0.35, 0.8, 1.6);
+          else this.trails.push(k.id * 2 + w, k.x + lx * ox + fx * oz, k.y + oy, k.z + lz * ox + fz * oz, kk, 0.85, 0.9, 1.0);
         }
       }
       // 火焰發射器：從兩側噴嘴往前噴出火舌
@@ -606,6 +651,8 @@ export class GameView {
     }
     this.hazardView?.update(race, this.time);
 
+    this.trails.update();
+    this.scorch.update(dt);
     this.blast.update(dt);
     this.debris?.update(dt);
     sm.update(dt);
@@ -616,8 +663,19 @@ export class GameView {
       this.headlight.target.position.set(p.x + hx * 32, p.y - 0.5, p.z + hz * 32);
     }
     this.updateChaseCam(dt, p, lookBack);
+    this.updateWeather(dt, p.vx, p.vz);
     this.world?.update(dt, this.time, this.camera);
     this.updateSun(p.x, p.y - p.air, p.z);
+  }
+
+  /** 天氣跟著鏡頭；閃電時把環境光短暫調亮 */
+  private updateWeather(dt: number, vx: number, vz: number): void {
+    const w = this.weather;
+    if (!w) return;
+    w.update(dt, this.time, this.camera, vx, vz);
+    const th = this.theme;
+    this.hemi.intensity = th.hemiIntensity + w.flash * 2.4;
+    this.sun.intensity = th.sunIntensity + w.flash * 1.5;
   }
 
   /** 陰影範圍跟著玩家移動（以固定格距對齊，避免陰影邊緣閃爍） */
@@ -681,6 +739,7 @@ export class GameView {
       this.updateParticleScale();
     }
     this.boostK = 0;
+    this.updateWeather(dt, 0, 0);
     this.world?.update(dt, this.time, this.camera);
     this.updateSun(x, y, z);
   }

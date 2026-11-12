@@ -1,4 +1,5 @@
 import { KILL_REWARD, STREAK_BONUS } from '../game/config';
+import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
 import { formatTime } from '../game/util';
@@ -38,6 +39,9 @@ export class Hud {
   private hitMarkT = 0;
   private missionT = 0;
   private wasDrafting = false;
+  /** 傷害數字：同一台車短時間內的傷害合併成一個數字 */
+  private dmgLayer = document.createElement('div');
+  private dmgAcc = new Map<Kart, { amt: number; t: number; fatal: boolean; mine: boolean }>();
   private mapBg = document.createElement('canvas');
   private mapT = { s: 1, ox: 0, oz: 0, size: 220 };
   private cache: Record<string, string | number> = {};
@@ -45,6 +49,8 @@ export class Hud {
 
   constructor(track: Track) {
     this.setTrack(track);
+    this.dmgLayer.id = 'dmgnums';
+    this.root.appendChild(this.dmgLayer);
   }
 
   /** 換地圖時重畫小地圖底圖 */
@@ -62,6 +68,8 @@ export class Hud {
     this.w2.querySelector('.wname')!.textContent = SECONDARY[race.player.secondary].name;
     this.feed.innerHTML = '';
     this.popups.innerHTML = '';
+    this.dmgLayer.innerHTML = '';
+    this.dmgAcc.clear();
     this.cache = {};
     this.center.className = '';
     this.center.textContent = '';
@@ -142,6 +150,15 @@ export class Hud {
       case 'hit':
         if (e.by === p) this.hitMarkT = 0.12;
         break;
+      case 'dmg': {
+        // 只顯示玩家打出去的傷害
+        if (e.by !== p || e.k === p) break;
+        const a = this.dmgAcc.get(e.k) ?? { amt: 0, t: 0, fatal: false, mine: true };
+        a.amt += e.amount;
+        a.fatal = a.fatal || e.fatal;
+        this.dmgAcc.set(e.k, a);
+        break;
+      }
       case 'shortcut':
         if (e.k === p) this.popup('捷徑！', 'gold');
         break;
@@ -260,6 +277,26 @@ export class Hud {
     }
 
     this.drawMap(race);
+    this.updateDamageNumbers(view, dt);
+  }
+
+  /** 每 0.25 秒把累積的傷害變成一個往上飄的數字，擊毀那一下用金色大字 */
+  private updateDamageNumbers(view: GameView, dt: number): void {
+    for (const [k, a] of this.dmgAcc) {
+      a.t += dt;
+      if (a.t < 0.25 && !a.fatal) continue;
+      this.dmgAcc.delete(k);
+      if (a.amt < 0.5) continue;
+      if (!view.project(k.x, k.y + 2.2, k.z, this.scr)) continue;
+      const d = document.createElement('div');
+      d.className = a.fatal ? 'fatal' : a.amt >= 25 ? 'big' : '';
+      d.textContent = String(Math.round(a.amt));
+      d.style.left = (this.scr.x + (Math.random() - 0.5) * 30).toFixed(0) + 'px';
+      d.style.top = this.scr.y.toFixed(0) + 'px';
+      this.dmgLayer.appendChild(d);
+      setTimeout(() => d.remove(), 900);
+      while (this.dmgLayer.children.length > 14) this.dmgLayer.firstChild!.remove();
+    }
   }
 
   /** 任務清單（HUD 與暫停畫面共用） */

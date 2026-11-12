@@ -141,10 +141,30 @@ kbd { background: #343948; border-radius: 4px; padding: .05em .45em; font-family
 #elim:empty { display: none; }
 #elim.warn { background: rgba(255,50,50,.85); animation: blink .5s steps(2) infinite; }
 @keyframes blink { 50% { opacity: .55; } }
+/* 電腦難度選擇 */
+.diffs { display: flex; align-items: center; justify-content: center; gap: .45em; margin-top: 1em; flex-wrap: wrap; }
+.diffs span { font-weight: 700; opacity: .85; margin-right: .3em; }
+.diffs em { font-style: normal; opacity: .7; font-size: .9em; margin-left: .4em; }
+.diffbtn { font: inherit; color: #fff; background: rgba(20, 22, 30, .7); border: 2px solid rgba(255,255,255,.25); border-radius: .5em; padding: .3em .9em; cursor: pointer; }
+.diffbtn.on { border-color: #ffd23f; background: rgba(255, 210, 63, .22); }
+.diffbtn:hover { border-color: rgba(255,255,255,.6); }
+/* 車庫：武器圖與升級特性 */
+.card .wimg { margin: -.2em -.2em .4em; border-radius: .4em; background: radial-gradient(ellipse at 50% 40%, #3a3f4c, #15171d 75%); border: 1px solid rgba(255,255,255,.12); display: flex; justify-content: center; }
+.card .wimg img { width: 100%; max-width: 240px; aspect-ratio: 32 / 15; object-fit: contain; display: block; }
+.card .perks { font-size: .82em; margin: .3em 0 .5em; display: grid; gap: .15em; }
+.card .perks div { opacity: .45; }
+.card .perks div.on { opacity: 1; color: #ffd23f; }
+.card .perks b { display: inline-block; min-width: 2.6em; }
+
 #reticle { position: absolute; left: 0; top: 0; width: calc(2.4 * var(--u)); height: calc(2.4 * var(--u)); margin: calc(-1.2 * var(--u)) 0 0 calc(-1.2 * var(--u)); border: calc(.2 * var(--u)) solid rgba(255,255,255,.5); border-radius: 50%; display: none; }
 #reticle::before { content: ""; position: absolute; left: 50%; top: 50%; width: calc(.44 * var(--u)); height: calc(.44 * var(--u)); margin: calc(-.22 * var(--u)); background: rgba(255,255,255,.85); border-radius: 50%; }
 #reticle.hit { border-color: #ff5a4d; }
 #reticle.hit::before { background: #ff5a4d; }
+/* 傷害數字 */
+#dmgnums div { position: absolute; transform: translate(-50%, -50%); font-size: calc(2.6 * var(--u)); color: #fff; animation: dmgfly .9s ease-out forwards; }
+#dmgnums div.big { color: #ffb347; font-size: calc(3.2 * var(--u)); }
+#dmgnums div.fatal { color: var(--accent); font-size: calc(4.2 * var(--u)); }
+@keyframes dmgfly { 0% { opacity: 0; margin-top: 0; scale: .6; } 15% { opacity: 1; scale: 1.15; } 100% { opacity: 0; margin-top: calc(-6 * var(--u)); scale: 1; } }
 #popups { position: absolute; left: 62%; top: 44%; font-size: calc(3.2 * var(--u)); white-space: nowrap; }
 #popups div { animation: rise 1.7s ease-out forwards; margin-bottom: .1em; }
 #popups .gold { color: var(--accent); }

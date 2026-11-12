@@ -29,6 +29,9 @@ export class Kart {
   isPlayer = false;
   /** AI 用的簡化操控：不甩尾，改用較高的轉向率並在過彎時集氣 */
   aiAssist = false;
+  /** AI 高速時的轉向率與過彎集氣量（依難度） */
+  aiTurn = CFG.aiTurnHigh;
+  aiGauge = 0.21;
 
   // 運動狀態
   x = 0;
@@ -231,7 +234,7 @@ export class Kart {
     } else {
       const av = Math.abs(vf);
       const t = clamp((av - 8) / (vmaxBase - 8), 0, 1);
-      const hi = this.aiAssist ? C.aiTurnHigh : C.gripTurnHigh * this.handling;
+      const hi = this.aiAssist ? this.aiTurn : C.gripTurnHigh * this.handling;
       const rate = lerp(C.gripTurnLow, hi, t) * Math.min(1, av / 5);
       omega = inp.steer * rate * (reversing ? -1 : 1);
     }
@@ -338,7 +341,7 @@ export class Kart {
     // ---- 集氣 ----
     const driftFill = this.drifting && s > 10 ? C.gaugeRate * Math.abs(Math.sin(this.slip)) * (s / vmaxBase) : 0;
     let fill = driftFill;
-    if (this.aiAssist && s > 18) fill += 0.21 * Math.abs(inp.steer);
+    if (this.aiAssist && s > 18) fill += this.aiGauge * Math.abs(inp.steer);
     if (s > 15) fill += C.gaugePassive;
     if (this.drafting) {
       fill += C.gaugeDraft;

@@ -1,4 +1,5 @@
 import type { CarId } from './cars';
+import type { DifficultyId } from './difficulty';
 import type { CarUpgradeId, PrimaryId, SecondaryId, WeaponId } from './weapons';
 
 export interface Profile {
@@ -19,6 +20,8 @@ export interface Profile {
   wins: number;
   /** 已經換成新版武器清單（新存檔一開始就是） */
   weaponsV2?: boolean;
+  /** 電腦車手難度 */
+  difficulty: DifficultyId;
 }
 
 const KEY = 'explosive-racing-save-v1';
@@ -39,6 +42,7 @@ export function defaultProfile(): Profile {
     races: 0,
     wins: 0,
     weaponsV2: true,
+    difficulty: 'normal',
   };
 }
 

@@ -237,3 +237,153 @@ export class BlastFx {
     this.light.intensity = 0;
   }
 }
+
+/**
+ * 破風氣流：從車身兩側拖出去的發光帶子。每條帶子是一個環狀緩衝區，
+ * 每幀記錄一個點，越舊越淡；甩尾時是白色、N2O 時是藍色。所有帶子合成一次繪製。
+ */
+export class Trails {
+  mesh: THREE.Mesh;
+  private n: number;
+  private pts = 22;
+  private pos: Float32Array;
+  private col: Float32Array;
+  /** 每條帶子的歷史點：x, y, z, 強度, r, g, b */
+  private hist: Float32Array;
+  private head: Int32Array;
+  private geo: THREE.BufferGeometry;
+
+  constructor(ribbons: number) {
+    this.n = ribbons;
+    const P = this.pts;
+    this.pos = new Float32Array(ribbons * P * 2 * 3);
+    this.col = new Float32Array(ribbons * P * 2 * 3);
+    this.hist = new Float32Array(ribbons * P * 7);
+    this.head = new Int32Array(ribbons);
+    const idx: number[] = [];
+    for (let r = 0; r < ribbons; r++) {
+      for (let i = 0; i < P - 1; i++) {
+        const a = (r * P + i) * 2;
+        idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setAttribute('color', new THREE.BufferAttribute(this.col, 3).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setIndex(idx);
+    this.mesh = new THREE.Mesh(this.geo, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    }));
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 3;
+  }
+
+  /** 記錄第 r 條帶子這一幀的位置；k = 0 表示沒有在噴（帶子會慢慢消失） */
+  push(r: number, x: number, y: number, z: number, k: number, cr: number, cg: number, cb: number): void {
+    if (r >= this.n) return;
+    const P = this.pts;
+    const h = (this.head[r] = (this.head[r] + 1) % P);
+    this.hist.set([x, y, z, k, cr, cg, cb], (r * P + h) * 7);
+  }
+
+  update(): void {
+    const P = this.pts, H = this.hist;
+    for (let r = 0; r < this.n; r++) {
+      const h = this.head[r];
+      for (let i = 0; i < P; i++) {
+        // i = 0 是最新的點
+        const j = (r * P + ((h - i + P) % P)) * 7;
+        const fade = 1 - i / (P - 1);
+        const k = H[j + 3] * fade;
+        const w = 0.05 + 0.2 * fade;
+        const v = (r * P + i) * 2;
+        this.pos.set([H[j], H[j + 1] + w, H[j + 2], H[j], H[j + 1] - w, H[j + 2]], v * 3);
+        this.col.set([H[j + 4] * k, H[j + 5] * k, H[j + 6] * k, H[j + 4] * k * 0.5, H[j + 5] * k * 0.5, H[j + 6] * k * 0.5], v * 3);
+      }
+    }
+    (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    (this.geo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+  }
+
+  clear(): void {
+    this.hist.fill(0);
+    this.update();
+  }
+}
+
+/** 爆炸留在路面上的焦痕：固定數量的貼花循環使用，25 秒內慢慢淡掉 */
+export class Scorch {
+  mesh: THREE.InstancedMesh;
+  private fade: Float32Array;
+  private fadeAttr: THREE.InstancedBufferAttribute;
+  private cursor = 0;
+  private max: number;
+  private m4 = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+  private v = new THREE.Vector3();
+  private s = new THREE.Vector3();
+  private up = new THREE.Vector3(0, 1, 0);
+
+  constructor(max = 40) {
+    this.max = max;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const c = cv.getContext('2d')!;
+    const g = c.createRadialGradient(32, 32, 2, 32, 32, 32);
+    g.addColorStop(0, 'rgba(10,8,6,0.9)');
+    g.addColorStop(0.55, 'rgba(25,18,12,0.55)');
+    g.addColorStop(1, 'rgba(25,18,12,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, 64, 64);
+    // 不規則的放射狀裂痕
+    c.strokeStyle = 'rgba(5,4,3,0.6)';
+    c.lineWidth = 2;
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + Math.random() * 0.4;
+      c.beginPath();
+      c.moveTo(32, 32);
+      c.lineTo(32 + Math.cos(a) * (18 + Math.random() * 12), 32 + Math.sin(a) * (18 + Math.random() * 12));
+      c.stroke();
+    }
+    const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    this.fade = new Float32Array(max);
+    this.fadeAttr = new THREE.InstancedBufferAttribute(this.fade, 1).setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aFade', this.fadeAttr);
+    const mat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+    // 每個實例自己的透明度
+    mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = 'attribute float aFade;\nvarying float vFade;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvFade = aFade;');
+      sh.fragmentShader = 'varying float vFade;\n' + sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.a *= vFade;');
+    };
+    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 1;
+    this.clear();
+  }
+
+  add(x: number, y: number, z: number, r: number): void {
+    const i = this.cursor;
+    this.cursor = (i + 1) % this.max;
+    this.fade[i] = 1;
+    this.q.setFromAxisAngle(this.up, Math.random() * 6.28);
+    this.m4.compose(this.v.set(x, y + 0.06, z), this.q, this.s.set(r, 1, r));
+    this.mesh.setMatrixAt(i, this.m4);
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.fadeAttr.needsUpdate = true;
+  }
+
+  update(dt: number): void {
+    let any = false;
+    for (let i = 0; i < this.max; i++) {
+      if (this.fade[i] <= 0) continue;
+      this.fade[i] = Math.max(0, this.fade[i] - dt / 25);
+      any = true;
+    }
+    if (any) this.fadeAttr.needsUpdate = true;
+  }
+
+  clear(): void {
+    this.fade.fill(0);
+    this.fadeAttr.needsUpdate = true;
+  }
+}

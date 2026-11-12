@@ -73,7 +73,7 @@ function runAll(mode: 'race' | 'elim', seed: number): void {
   if (!done()) throw new Error(`${mode} did not end`);
   if (!count['kart:jump']) throw new Error('nobody used a ramp');
   if (mode === 'race' && track.branches.length && !count.shortcut) throw new Error('nobody took the shortcut');
-  if (mode === 'race' && (def.hazards ?? []).length && !count.hazard) throw new Error('hazards never hit anyone');
+  if (mode === 'race' && (def.hazards ?? []).length && !count.hazard && !count.tram && !count.rock) throw new Error('hazards never did anything');
 }
 runAll('race', 12345);
 runAll('elim', 777);
