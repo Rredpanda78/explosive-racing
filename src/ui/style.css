@@ -17,7 +17,11 @@ html, body {
 button { font: inherit; color: inherit; cursor: pointer; }
 
 /* ---------- HUD ---------- */
-#hud { position: fixed; inset: 0; pointer-events: none; font-style: italic; font-weight: 900; text-shadow: 0 2px 0 rgba(0,0,0,.55); }
+#hud { position: fixed; inset: 0; overflow: hidden; pointer-events: none; font-style: italic; font-weight: 900; text-shadow: 0 2px 0 rgba(0,0,0,.55); }
+/* 速度線：由中心向外的放射條紋，加速時淡入並旋轉 */
+#fx-speed { position: absolute; inset: -30%; opacity: 0; transition: opacity .15s; background: repeating-conic-gradient(from 0deg, rgba(255,255,255,0) 0deg 5deg, rgba(255,255,255,.55) 5.4deg 5.9deg, rgba(255,255,255,0) 6.3deg 11deg); -webkit-mask-image: radial-gradient(circle, transparent 34%, #000 78%); mask-image: radial-gradient(circle, transparent 34%, #000 78%); animation: speedspin .5s steps(6) infinite; }
+@keyframes speedspin { to { transform: rotate(11deg); } }
+#fx-hit { position: absolute; inset: 0; opacity: 0; transition: opacity .12s; box-shadow: inset 0 0 calc(16 * var(--u)) calc(1 * var(--u)) rgba(255,30,30,.6); }
 #hud-pos { position: absolute; left: calc(3 * var(--u) + env(safe-area-inset-left)); top: calc(2 * var(--u)); font-size: calc(11 * var(--u)); line-height: 1; color: var(--accent); }
 #hud-pos small { font-size: 40%; color: #fff; }
 #hud-top { position: absolute; top: calc(2 * var(--u)); left: 50%; transform: translateX(-50%); text-align: center; }
@@ -37,10 +41,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #sub-msg { position: absolute; left: 50%; top: 46%; transform: translateX(-50%); font-size: calc(4.4 * var(--u)); white-space: nowrap; }
 #sub-msg.warn { color: var(--danger); }
 #sub-msg.mini { color: var(--hot); }
-#reticle { position: absolute; left: 0; top: 0; width: calc(9 * var(--u)); height: calc(9 * var(--u)); margin: calc(-4.5 * var(--u)) 0 0 calc(-4.5 * var(--u)); border: calc(.5 * var(--u)) solid var(--danger); border-radius: 50%; display: none; box-shadow: 0 0 calc(1.5 * var(--u)) rgba(255,70,70,.7); }
-#reticle::before, #reticle::after { content: ""; position: absolute; background: var(--danger); }
-#reticle::before { left: 50%; top: -30%; width: calc(.4 * var(--u)); height: 160%; transform: translateX(-50%); opacity: .7; }
-#reticle::after { top: 50%; left: -30%; height: calc(.4 * var(--u)); width: 160%; transform: translateY(-50%); opacity: .7; }
+#reticle { position: absolute; left: 0; top: 0; width: calc(5 * var(--u)); height: calc(5 * var(--u)); margin: calc(-2.5 * var(--u)) 0 0 calc(-2.5 * var(--u)); border: calc(.35 * var(--u)) solid rgba(255,255,255,.75); border-radius: 50%; display: none; box-shadow: 0 0 calc(.8 * var(--u)) rgba(0,0,0,.5); }
+#reticle::before { content: ""; position: absolute; left: 50%; top: 50%; width: calc(.7 * var(--u)); height: calc(.7 * var(--u)); margin: calc(-.35 * var(--u)); background: #ff5a4d; border-radius: 50%; }
 
 .bar { height: calc(1.8 * var(--u)); background: rgba(0,0,0,.55); border: 2px solid rgba(255,255,255,.75); border-radius: 99px; overflow: hidden; transform: skewX(-14deg); }
 .bar i { display: block; height: 100%; width: 0; background: var(--accent); }

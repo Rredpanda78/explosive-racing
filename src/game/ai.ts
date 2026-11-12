@@ -71,9 +71,8 @@ export class AIController {
       }
     }
 
-    // 武器
-    const target = race.pickTarget(k, 0.16, 110);
-    // 點放射擊，避免火力過於密集
+    // 武器：沒有輔助瞄準，前方很窄的角度內有車才開火
+    const target = race.pickTarget(k, 0.07, 95);
     this.burstT -= dt;
     if (target && this.burstT < -this.pause) {
       this.burstT = 0.5 + this.rng() * 0.8;
@@ -81,11 +80,15 @@ export class AIController {
     }
     inp.firePrimary = !!target && this.burstT > 0;
     inp.fireSecondary = false;
-    if (target && k.secCd <= 0) {
-      this.secDelay -= dt;
-      if (this.secDelay <= 0) {
-        inp.fireSecondary = true;
-        this.secDelay = 1.5 + this.rng() * 4;
+    if (k.secCd <= 0) {
+      // 火箭要正對目標；榴彈落點固定在車前約 45 公尺，目標在那附近才打
+      const st = k.secondary === 'rocket' ? race.pickTarget(k, 0.045, 110) : race.pickTarget(k, 0.09, 58, 32);
+      if (st) {
+        this.secDelay -= dt;
+        if (this.secDelay <= 0) {
+          inp.fireSecondary = true;
+          this.secDelay = 1.5 + this.rng() * 4;
+        }
       }
     }
 

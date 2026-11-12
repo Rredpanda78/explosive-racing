@@ -40,35 +40,41 @@ console.log(`track length ${track.length.toFixed(0)} m, samples ${track.n}, min 
   }
 }
 
-// ---- 2. 玩家甩尾測試：直線加速後左甩 1.2 秒，放開並小噴 ----
+// ---- 2. 玩家甩尾測試：在超寬賽道上（不會撞牆）量測各種操作下甩尾能維持多久 ----
 {
-  const race = new Race(track, defaultProfile(), 1);
-  const k = race.player;
-  const inp = emptyInput();
+  const wide = new Track({ ...TRACKS[0], halfWidth: 2000 });
   const dt = 1 / 60;
-  const log: string[] = [];
-  let t = 0;
-  // 跳過倒數
-  while (race.state === 'countdown') race.step(dt, inp);
-  race.events.length = 0;
-  inp.accel = 1;
-  let maxSlip = 0, minSpeed = 99, gotMini = false;
-  for (let i = 0; i < 60 * 9; i++) {
-    t = i * dt;
-    inp.drift = t > 5 && t < 5.5;
-    inp.steer = t > 5 && t < 5.5 ? 1 : t >= 5.5 && t < 5.8 ? -0.7 : 0;
-    // 甩尾結束後重按油門觸發小噴
-    if (!k.drifting && k.miniWindowT > 0) inp.accel = inp.accel === 1 ? 0 : 1;
-    else inp.accel = 1;
-    race.step(dt, inp);
-    for (const e of race.events) if (e.t === 'kart' && e.k === k && e.e === 'mini') gotMini = true;
-    race.events.length = 0;
-    if (t > 5) { maxSlip = Math.max(maxSlip, Math.abs(k.slip)); minSpeed = Math.min(minSpeed, k.speed); }
-    if (i % 30 === 0 || (t > 5 && t < 6.6 && i % 6 === 0)) log.push(`t=${t.toFixed(1)} v=${k.speed.toFixed(1)} slip=${(k.slip * 57.3).toFixed(0)}° drift=${k.drifting} gauge=${k.gauge.toFixed(2)} lat=${k.lat.toFixed(1)}`);
-  }
-  console.log(log.join('\n'));
-  console.log(`top speed cfg ${CFG.maxSpeed}, max slip ${(maxSlip * 57.3).toFixed(0)}°, min speed after drift ${minSpeed.toFixed(1)}, mini boost ${gotMini}`);
-  if (maxSlip < 0.4) throw new Error('drift slip too small');
-  if (k.gauge <= 0.05) throw new Error('gauge did not fill');
+  const scenario = (name: string, shiftT: number, after: number): number => {
+    const race = new Race(wide, defaultProfile(), 1);
+    for (const k of race.karts) if (!k.isPlayer) { k.x += 5000; }
+    const k = race.player;
+    const inp = emptyInput();
+    while (race.state === 'countdown') race.step(dt, inp);
+    inp.accel = 1;
+    for (let i = 0; i < 60 * 5; i++) race.step(dt, inp);
+    const h0 = k.heading, g0 = k.gauge, v0 = k.speed;
+    let t = 0, maxSlip = 0, dur = 0, vMin = 99, mini = false, started = false;
+    while (t < 8) {
+      inp.drift = t < shiftT;
+      inp.steer = t < shiftT ? 1 : after;
+      if (started && !k.drifting && k.miniWindowT > 0) inp.accel = inp.accel === 1 ? 0 : 1; else inp.accel = 1;
+      race.events.length = 0;
+      race.step(dt, inp);
+      for (const e of race.events) if (e.t === 'kart' && e.k === k && e.e === 'mini') mini = true;
+      if (k.drifting) { started = true; dur = t + dt; maxSlip = Math.max(maxSlip, Math.abs(k.slip)); vMin = Math.min(vMin, k.speed); }
+      else if (started && t > dur + 1) break;
+      t += dt;
+    }
+    let turned = (k.heading - h0) * 57.3;
+    console.log(`${name.padEnd(26)} drift ${dur.toFixed(2)}s  maxSlip ${(maxSlip * 57.3).toFixed(0)}°  v ${v0.toFixed(1)}→min ${vMin.toFixed(1)}  gauge +${(k.gauge - g0).toFixed(2)}  heading Δ${turned.toFixed(0)}°  mini ${mini}`);
+    return dur;
+  };
+  const hold = scenario('tap 0.3s + hold dir', 0.3, 1);
+  const neutral = scenario('tap 0.3s + neutral', 0.3, 0);
+  const counter = scenario('tap 0.3s + counter', 0.3, -1);
+  scenario('hold 1.0s + hold dir', 1.0, 1);
+  scenario('hold 1.0s + counter', 1.0, -1);
+  if (!(hold > neutral && neutral > counter)) throw new Error('drift durations out of order');
+  if (hold < 1.5) throw new Error('held drift too short');
 }
 console.log('SIM OK');

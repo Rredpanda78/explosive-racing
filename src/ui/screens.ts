@@ -97,7 +97,7 @@ export class Screens {
     }
   }
 
-  menu(): void {
+  menu(loading = false): void {
     this.current = 'menu';
     const p = this.profile;
     this.root.innerHTML = `
@@ -105,14 +105,14 @@ export class Screens {
         <h1 class="title">EXPLOSIVE <span>RACING</span></h1>
         <div class="tagline">甩尾集氣、N2O 衝刺，再用機槍與飛彈把對手轟出賽道</div>
         <div class="row">
-          <button class="btn primary" data-act="start">開始比賽</button>
+          <button class="btn primary" data-act="start" ${loading ? 'disabled' : ''}>${loading ? '載入中…' : '開始比賽'}</button>
           <button class="btn" data-act="garage">車庫</button>
         </div>
         <div class="tagline" style="margin:1.2em 0 0"><span class="cash">$${p.cash}</span>　出賽 ${p.races}　冠軍 ${p.wins}　最快單圈 ${formatTime(p.bestLap)}</div>
         <div class="help">
           <b>鍵盤</b>　<kbd>↑↓←→</kbd> 駕駛　<kbd>Shift</kbd> 甩尾　<kbd>Ctrl</kbd> N2O　<kbd>Z</kbd> 主武器　<kbd>X</kbd> 副武器　<kbd>C</kbd> 後視　<kbd>R</kbd> 重置　<kbd>Esc</kbd> 暫停<br />
           <b>手機</b>　自動油門，左下方向鍵、左側中間開火，右下甩尾與 N2O<br />
-          <b>技巧</b>　過彎按住甩尾集氣，集滿一管得到一瓶 N2O（最多兩瓶）；甩尾結束瞬間再按一次 <kbd>↑</kbd>（手機按 N2O）可觸發小噴
+          <b>技巧</b>　過彎時點一下甩尾並按住方向可以拖漂很久，反打方向盤回正；集滿一管得到一瓶 N2O（最多兩瓶）；甩尾結束瞬間再按一次 <kbd>↑</kbd>（手機按 N2O）可觸發小噴；地上的箭頭是加速帶
         </div>
       </div>`;
   }
@@ -127,7 +127,7 @@ export class Screens {
     const mul = weaponLvlMul(lvl);
     const stat = prim
       ? `每秒傷害 ${(PRIMARY[id as 'mg'].dmg * PRIMARY[id as 'mg'].rate * mul).toFixed(0)}　射速 ${PRIMARY[id as 'mg'].rate}/秒`
-      : `傷害 ${(SECONDARY[id as 'missile'].dmg * mul).toFixed(0)}　冷卻 ${SECONDARY[id as 'missile'].cooldown} 秒`;
+      : `傷害 ${(SECONDARY[id as 'rocket'].dmg * mul).toFixed(0)}　冷卻 ${SECONDARY[id as 'rocket'].cooldown} 秒`;
     let btns: string;
     if (!owned) {
       btns = `<button class="btn small primary" data-act="buy" data-id="${id}" ${p.cash < def.price ? 'disabled' : ''}>購買 $${def.price}</button>`;
@@ -176,7 +176,7 @@ export class Screens {
           </div>
         </div>
         <div class="section"><h3>主武器（車身兩側）</h3><div class="cards">${this.weaponCard('mg')}${this.weaponCard('vulcan')}</div></div>
-        <div class="section"><h3>副武器（引擎蓋）</h3><div class="cards">${this.weaponCard('missile')}${this.weaponCard('howitzer')}</div></div>
+        <div class="section"><h3>副武器（引擎蓋）</h3><div class="cards">${this.weaponCard('rocket')}${this.weaponCard('howitzer')}</div></div>
         <div class="section"><h3>車輛升級</h3><div class="cards">${this.carCard('engine')}${this.carCard('n2o')}${this.carCard('armor')}</div></div>
       </div>`;
     const s = this.root.querySelector('.screen');

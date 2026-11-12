@@ -1,5 +1,5 @@
 export type PrimaryId = 'mg' | 'vulcan';
-export type SecondaryId = 'missile' | 'howitzer';
+export type SecondaryId = 'rocket' | 'howitzer';
 export type WeaponId = PrimaryId | SecondaryId;
 export type CarUpgradeId = 'engine' | 'n2o' | 'armor';
 
@@ -38,8 +38,8 @@ export const PRIMARY: Record<PrimaryId, PrimaryDef> = {
 
 /** 副武器：裝在引擎蓋上 */
 export const SECONDARY: Record<SecondaryId, SecondaryDef> = {
-  missile: { id: 'missile', name: '追蹤飛彈', desc: '鎖定前方目標後自動追蹤', dmg: 34, radius: 5, cooldown: 4.2, price: 0 },
-  howitzer: { id: 'howitzer', name: '榴彈砲', desc: '拋射砲彈，大範圍爆炸並震退敵車', dmg: 46, radius: 9, cooldown: 3.4, price: 3000 },
+  rocket: { id: 'rocket', name: '火箭炮', desc: '朝正前方直線飛行，命中或撞牆時爆炸', dmg: 38, radius: 5.5, cooldown: 3.2, price: 0 },
+  howitzer: { id: 'howitzer', name: '榴彈砲', desc: '朝前方拋射，落地大範圍爆炸並震退敵車', dmg: 46, radius: 9, cooldown: 3.4, price: 3000 },
 };
 
 export const MAX_WEAPON_LVL = 5;

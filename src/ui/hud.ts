@@ -27,6 +27,9 @@ export class Hud {
   private reticle = $('reticle');
   private feed = $('feed');
   private map = $<HTMLCanvasElement>('minimap');
+  private fxSpeed = $('fx-speed');
+  private fxHit = $('fx-hit');
+  private hitK = 0;
   private mapBg = document.createElement('canvas');
   private mapT = { s: 1, ox: 0, oz: 0, size: 220 };
   private cache: Record<string, string | number> = {};
@@ -130,6 +133,19 @@ export class Hud {
     this.width('w2', this.w2Bar, 1 - p.secCd / S.cooldown);
     this.cls('w2cd', this.w2, 'cd', p.secCd > 0);
 
+    // 畫面效果：加速時的速度線、受擊時的紅色邊框
+    const sp = Math.round(view.boostK * 10) / 10;
+    if (this.cache.fxs !== sp) {
+      this.cache.fxs = sp;
+      this.fxSpeed.style.opacity = String(sp);
+    }
+    this.hitK = p.dead ? 0.7 : Math.max(p.sinceDamage < 0.1 ? 1 : 0, this.hitK - 0.04, p.hp < p.maxHp * 0.3 ? 0.45 : 0);
+    const hk = Math.round(this.hitK * 10) / 10;
+    if (this.cache.fxh !== hk) {
+      this.cache.fxh = hk;
+      this.fxHit.style.opacity = String(hk);
+    }
+
     // 提示訊息
     let sub = '';
     let subCls = '';
@@ -144,13 +160,12 @@ export class Hud {
       this.sub.className = subCls;
     }
 
-    // 鎖定準星
-    const tg = !p.dead && !p.finished && race.state !== 'countdown'
-      ? race.pickTarget(p, p.secondary === 'missile' ? 0.5 : 0.35, p.secondary === 'missile' ? 190 : 125)
-      : null;
-    if (tg && view.project(tg.x, 1, tg.z, this.scr)) {
+    // 準星：固定指向車頭正前方 45 公尺處，不會鎖定敵人
+    const show = !p.dead && !p.finished && race.state !== 'countdown';
+    const ax = p.x + Math.sin(p.heading) * 45, az = p.z + Math.cos(p.heading) * 45;
+    if (show && view.project(ax, p.y + 0.95 + Math.tan(p.pitch) * 45, az, this.scr)) {
       this.reticle.style.display = 'block';
-      this.reticle.style.transform = `translate(${this.scr.x.toFixed(1)}px, ${this.scr.y.toFixed(1)}px)`;
+      this.reticle.style.transform = 'translate(' + this.scr.x.toFixed(1) + 'px, ' + this.scr.y.toFixed(1) + 'px)';
     } else {
       this.reticle.style.display = 'none';
     }

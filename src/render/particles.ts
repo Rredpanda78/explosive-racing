@@ -36,6 +36,7 @@ export class Particles {
   private a0: Float32Array;
   private grav: Float32Array;
   private drag: Float32Array;
+  private ground: Float32Array;
   private cursor = 0;
   private mat: THREE.ShaderMaterial;
   private geo: THREE.BufferGeometry;
@@ -53,6 +54,7 @@ export class Particles {
     this.a0 = new Float32Array(max);
     this.grav = new Float32Array(max);
     this.drag = new Float32Array(max);
+    this.ground = new Float32Array(max);
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aColor', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
@@ -77,7 +79,7 @@ export class Particles {
   spawn(
     x: number, y: number, z: number, vx: number, vy: number, vz: number,
     life: number, s0: number, s1: number, r: number, g: number, b: number, a: number,
-    grav = 0, drag = 0,
+    grav = 0, drag = 0, ground = -1e9,
   ): void {
     const i = this.cursor;
     this.cursor = (i + 1) % this.max;
@@ -85,7 +87,7 @@ export class Particles {
     this.vel[i * 3] = vx; this.vel[i * 3 + 1] = vy; this.vel[i * 3 + 2] = vz;
     this.life[i] = life; this.maxLife[i] = life;
     this.s0[i] = s0; this.s1[i] = s1; this.a0[i] = a;
-    this.grav[i] = grav; this.drag[i] = drag;
+    this.grav[i] = grav; this.drag[i] = drag; this.ground[i] = ground;
     this.col[i * 4] = r; this.col[i * 4 + 1] = g; this.col[i * 4 + 2] = b; this.col[i * 4 + 3] = a;
     this.size[i] = s0;
   }
@@ -106,7 +108,8 @@ export class Particles {
       pos[i * 3] += vel[i * 3] * dt;
       pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
       pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
-      if (pos[i * 3 + 1] < 0.05) { pos[i * 3 + 1] = 0.05; vel[i * 3 + 1] *= -0.3; }
+      const gy = this.ground[i] + 0.05;
+      if (pos[i * 3 + 1] < gy) { pos[i * 3 + 1] = gy; vel[i * 3 + 1] *= -0.3; }
       const t = 1 - life[i] / maxLife[i];
       size[i] = this.s0[i] + (this.s1[i] - this.s0[i]) * t;
       col[i * 4 + 3] = this.a0[i] * (1 - t * t);

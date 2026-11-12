@@ -16,16 +16,23 @@ export const CFG = {
 
   // 甩尾
   driftMinSpeed: 13,
-  driftTurn: 2.15,
+  driftTurn: 1.95,
+  /** 放開甩尾鍵後繼續按同方向時的轉向率（拖漂） */
+  driftHoldTurn: 1.25,
   driftCounterTurn: 1.5,
   driftIdleTurn: 0.55,
-  gripDrift: 2.3,
-  driftRecover: 0.4,
-  driftDrag: 9,
+  gripDrift: 1.8,
+  /** 放開甩尾鍵後抓地力完全恢復所需秒數 */
+  driftRecover: 1.1,
+  /** 拖漂時恢復速度的倍率（越小拖越久） */
+  driftSustain: 0.35,
+  /** 反打方向盤時恢復速度的倍率 */
+  driftCounterRecover: 2.6,
+  driftDrag: 8,
   driftKick: 0.1,
 
   // 集氣與 N2O
-  gaugeRate: 0.4,
+  gaugeRate: 0.3,
   gaugePassive: 0.01,
   maxN2O: 2,
   boostTime: 3.0,
@@ -38,6 +45,12 @@ export const CFG = {
   miniTime: 0.6,
   miniSpeedMul: 1.1,
   miniAccel: 30,
+
+  // 加速帶與坡度
+  padTime: 1.3,
+  padSpeedMul: 1.25,
+  padAccel: 34,
+  slopeGravity: 0.45,
 
   // 碰撞
   kartRadius: 1.25,
@@ -52,7 +65,7 @@ export const CFG = {
 
   // 武器共用
   bulletSpeed: 260,
-  aiDamageMul: 0.45,
+  aiDamageMul: 0.65,
 
   racers: 8,
 };

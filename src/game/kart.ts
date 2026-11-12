@@ -18,7 +18,7 @@ export const emptyInput = (): KartInput => ({
   steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false,
 });
 
-export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart';
+export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'pad';
 
 export class Kart {
   id: number;
@@ -31,6 +31,10 @@ export class Kart {
   // 運動狀態
   x = 0;
   z = 0;
+  /** 路面高度（由賽道決定） */
+  y = 0;
+  /** 車身俯仰角（上坡為正） */
+  pitch = 0;
   heading = 0;
   vx = 0;
   vz = 0;
@@ -50,6 +54,8 @@ export class Kart {
   boostT = 0;
   miniT = 0;
   miniWindowT = 0;
+  /** 加速帶效果剩餘時間 */
+  padT = 0;
 
   // 耐久
   hp = CFG.hp;
@@ -76,7 +82,7 @@ export class Kart {
 
   // 武器
   primary: PrimaryId = 'mg';
-  secondary: SecondaryId = 'missile';
+  secondary: SecondaryId = 'rocket';
   primaryLvl = 1;
   secondaryLvl = 1;
   heat = 0;
@@ -135,11 +141,12 @@ export class Kart {
 
     // ---- 轉向 ----
     let omega: number;
+    const sameDir = this.drifting ? inp.steer * this.driftDir : 0;
     if (this.drifting) {
-      const s = inp.steer * this.driftDir;
-      if (s > 0.1) omega = inp.steer * C.driftTurn;
-      else if (s < -0.1) omega = inp.steer * C.driftCounterTurn;
-      else omega = this.driftDir * C.driftIdleTurn;
+      if (sameDir < -0.1) omega = inp.steer * C.driftCounterTurn;
+      else if (inp.drift) omega = sameDir > 0.1 ? inp.steer * C.driftTurn : this.driftDir * C.driftIdleTurn;
+      // 放開甩尾鍵後：繼續按同方向 = 拖漂，維持滑行角度
+      else omega = sameDir > 0.1 ? inp.steer * C.driftHoldTurn : this.driftDir * C.driftIdleTurn * 0.5;
     } else {
       const av = Math.abs(vf);
       const t = clamp((av - 8) / (vmaxBase - 8), 0, 1);
@@ -155,9 +162,11 @@ export class Kart {
     // ---- 抓地力：把行進方向往車頭方向拉 ----
     let grip = C.gripNormal;
     if (this.drifting) {
+      // 放開後抓地力慢慢恢復：同方向拖漂恢復最慢，反打方向盤最快回正
       if (inp.drift) this.driftRelease = 0;
-      else this.driftRelease += dt;
-      grip = lerp(C.gripDrift, C.gripNormal, clamp(this.driftRelease / C.driftRecover, 0, 1));
+      else this.driftRelease += dt * (sameDir > 0.1 ? C.driftSustain : sameDir < -0.1 ? C.driftCounterRecover : 1);
+      const r = clamp(this.driftRelease / C.driftRecover, 0, 1);
+      grip = lerp(C.gripDrift, C.gripNormal, r * r);
       this.driftTime += dt;
     }
     let dirx = fx, dirz = fz;
@@ -190,13 +199,19 @@ export class Kart {
     // ---- 加減速 ----
     let vmax = vmaxBase;
     const boosting = this.boostT > 0;
+    const padOn = this.padT > 0;
     if (boosting) vmax *= C.boostSpeedMul;
+    else if (padOn) vmax *= C.padSpeedMul;
     else if (this.miniT > 0) vmax *= C.miniSpeedMul;
-    const throttle = inp.accel < -0.1 ? inp.accel : boosting || this.miniT > 0 ? 1 : inp.accel;
+    const throttle = inp.accel < -0.1 ? inp.accel : boosting || padOn || this.miniT > 0 ? 1 : inp.accel;
+    // 坡度：上坡略減速、下坡略加速
+    const sm0 = track.samples[this.idx];
+    if (Math.abs(s) > 1) s -= 9.8 * C.slopeGravity * sm0.slope * Math.sign(dirx * sm0.tx + dirz * sm0.tz) * dt;
     if (throttle > 0.05) {
       if (s < vmax) {
         let a: number;
         if (boosting) a = C.boostAccel;
+        else if (padOn) a = C.padAccel;
         else if (this.miniT > 0) a = C.miniAccel;
         else {
           const r = Math.max(0, s) / vmax;
@@ -217,6 +232,7 @@ export class Kart {
     this.boostT = Math.max(0, this.boostT - dt);
     this.miniT = Math.max(0, this.miniT - dt);
     this.miniWindowT = Math.max(0, this.miniWindowT - dt);
+    this.padT = Math.max(0, this.padT - dt);
 
     this.speed = s;
     this.vx = dirx * s;
@@ -241,7 +257,10 @@ export class Kart {
     }
 
     // ---- 甩尾結束 ----
-    if (this.drifting && ((!inp.drift && Math.abs(this.slip) < 0.14) || s < 7)) {
+    if (
+      this.drifting &&
+      ((!inp.drift && this.driftRelease > 0.12 && Math.abs(this.slip) < 0.1) || this.driftRelease >= C.driftRecover || s < 7)
+    ) {
       this.drifting = false;
       if (this.driftTime > C.miniMinDrift) this.miniWindowT = C.miniWindow;
     }
@@ -278,6 +297,15 @@ export class Kart {
           emit('wall');
         }
       }
+    }
+
+    // ---- 高度、俯仰與加速帶 ----
+    const sm = track.samples[this.idx];
+    this.y = track.heightAt(this.idx, this.x, this.z);
+    this.pitch = Math.atan(sm.slope) * (Math.sin(this.heading) * sm.tx + Math.cos(this.heading) * sm.tz);
+    if (this.padT < C.padTime - 0.4 && track.onPad(this.idx, this.lat)) {
+      this.padT = C.padTime;
+      emit('pad');
     }
   }
 }

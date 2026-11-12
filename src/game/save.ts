@@ -17,10 +17,10 @@ const KEY = 'explosive-racing-save-v1';
 export function defaultProfile(): Profile {
   return {
     cash: 0,
-    owned: { mg: true, vulcan: false, missile: true, howitzer: false },
-    lvl: { mg: 1, vulcan: 1, missile: 1, howitzer: 1 },
+    owned: { mg: true, vulcan: false, rocket: true, howitzer: false },
+    lvl: { mg: 1, vulcan: 1, rocket: 1, howitzer: 1 },
     primary: 'mg',
-    secondary: 'missile',
+    secondary: 'rocket',
     car: { engine: 0, n2o: 0, armor: 0 },
     bestLap: 0,
     races: 0,
@@ -34,6 +34,10 @@ export function loadProfile(): Profile {
     const raw = localStorage.getItem(KEY);
     if (!raw) return d;
     const p = JSON.parse(raw);
+    // 舊存檔：追蹤飛彈已改為火箭炮
+    if (p.secondary === 'missile') p.secondary = 'rocket';
+    if (p.lvl && p.lvl.missile) { p.lvl.rocket = p.lvl.missile; delete p.lvl.missile; }
+    if (p.owned) delete p.owned.missile;
     return {
       ...d,
       ...p,

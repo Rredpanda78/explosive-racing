@@ -1,0 +1,2 @@
+Models in this folder are from Kenney (www.kenney.nl): Car Kit 3.1 and Racing Kit 2.0.
+License: Creative Commons Zero (CC0) - http://creativecommons.org/publicdomain/zero/1.0/
