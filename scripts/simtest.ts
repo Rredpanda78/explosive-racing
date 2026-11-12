@@ -116,5 +116,54 @@ runAll('elim', 777);
   scenario('hold 1.0s + counter', 1.0, -1);
   if (!(hold > neutral && neutral > counter)) throw new Error('drift durations out of order');
   if (hold < 1.5) throw new Error('held drift too short');
+  // 短漂：點一下就放開，就算繼續按方向也很快回正，而且沒有小噴
+  const short = scenario('short tap 0.08s + hold dir', 0.08, 1);
+  if (short > hold * 0.6) throw new Error('short drift drags too long');
+
+  // 進階操作：照時間表給輸入，回報發生的事件
+  const script = (name: string, plan: (t: number, inp: ReturnType<typeof emptyInput>) => void): { ev: string[]; k: import('../src/game/kart').Kart; vDrop: number } => {
+    const race = new Race(wide, defaultProfile(), 'race', 1);
+    for (const o of race.karts) if (!o.isPlayer) o.x += 5000;
+    const k = race.player;
+    const inp = emptyInput();
+    while (race.state === 'countdown') race.step(dt, inp);
+    inp.accel = 1;
+    for (let i = 0; i < 60 * 5; i++) race.step(dt, inp);
+    const ev: string[] = [];
+    let vDrop = 0;
+    for (let t = 0; t < 5; t += dt) {
+      const v0 = k.speed;
+      plan(t, inp);
+      race.events.length = 0;
+      race.step(dt, inp);
+      if (inp.accel < 0) vDrop += Math.max(0, v0 - k.speed);
+      for (const e of race.events) if (e.t === 'kart' && e.k === k && !ev.includes(e.e)) ev.push(e.e);
+    }
+    console.log(`${name.padEnd(26)} events: ${ev.join(' ')}`);
+    return { ev, k, vDrop };
+  };
+  // 連噴：長漂右彎 → 不噴、直接甩左彎 → 第二次甩尾中途按 ↑ → 再甩完按 ↑
+  const combo = script('combo', (t, inp) => {
+    inp.drift = t < 0.3 || (t > 1.25 && t < 1.55);
+    inp.steer = t < 0.3 ? 1 : t > 1.25 && t < 1.55 ? -1 : 0;
+    // 第二次甩尾開始後，每 0.1 秒放開／再按一次 ↑
+    inp.accel = t > 1.7 && t < 3.6 && Math.floor(t * 10) % 2 === 0 ? 0 : 1;
+  });
+  if (!combo.ev.includes('combo')) throw new Error('combo boost did not trigger');
+  // 短接長：短漂後馬上接長漂
+  const chain = script('short → long chain', (t, inp) => {
+    inp.drift = t < 0.06 || (t > 0.65 && t < 1.05);
+    inp.steer = t < 0.3 ? 1 : t > 0.65 && t < 1.8 ? -1 : 0;
+    inp.accel = 1;
+  });
+  if (!chain.ev.includes('chain')) throw new Error('short-to-long chain did not trigger');
+  // 斷飄：甩尾中點一下煞車，立刻結束甩尾而且幾乎不掉速
+  const cancel = script('drift cancel', (t, inp) => {
+    inp.drift = t < 0.3;
+    inp.steer = t < 1.5 ? 1 : 0;
+    inp.accel = t > 0.8 && t < 0.9 ? -1 : 1;
+  });
+  if (!cancel.ev.includes('driftCancel')) throw new Error('drift cancel did not trigger');
+  if (cancel.vDrop > 1) throw new Error(`drift cancel lost ${cancel.vDrop.toFixed(1)} m/s`);
 }
 console.log('SIM OK');

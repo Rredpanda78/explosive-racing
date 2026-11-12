@@ -150,6 +150,11 @@ export class Screens {
         this.act.settingChanged('musicStyle');
         this.settingsPage();
         break;
+      case 'tdrift':
+        this.settings.touchDrift = id as Settings['touchDrift'];
+        this.act.settingChanged('touchDrift');
+        this.settingsPage();
+        break;
       case 'ctrl':
         this.settings.control = id as Settings['control'];
         this.act.settingChanged('control');
@@ -284,7 +289,9 @@ export class Screens {
             <b>鍵盤</b>　<kbd>↑↓←→</kbd> 駕駛　<kbd>Shift</kbd> 甩尾　<kbd>Ctrl</kbd> N2O　<kbd>Z</kbd> 主武器　<kbd>X</kbd> 副武器　<kbd>C</kbd> 後視　<kbd>R</kbd> 重置　<kbd>Esc</kbd> 暫停<br />
             <b>手機</b>　自動油門；左手方向鍵（或在設定改成傾斜手機），右手開火、N2O、甩尾，右下角煞車<br />
             <b>集氣</b>　甩尾最快；打中對手、擊毀（直接送一瓶）、跟在別人正後方吃尾流、飛越跳台、踩加速帶也都會集氣<br />
-            <b>技巧</b>　倒數到 GO 的瞬間按油門可以起跑衝刺；點一下甩尾並按住方向能拖漂，結束瞬間再按一次 <kbd>↑</kbd>（手機按「小噴」）；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
+            <b>甩尾</b>　點一下甩尾鍵（0.16 秒內放開）是<b>短漂</b>：回正快、減速少、集氣快，但沒有小噴；按久一點是<b>長漂</b>，按住方向能拖很久，結束後再按一次 <kbd>↑</kbd>（手機按「小噴」）觸發小噴<br />
+            <b>進階</b>　短漂後 0.5 秒內接長漂集氣加成（短接長）；長漂完先不噴、直接甩下一個彎，在第二次甩尾中途按 <kbd>↑</kbd> 就能<b>連噴</b>；甩尾中點一下 <kbd>↓</kbd>（手機點煞車）是<b>斷飄</b>，立刻回正又不掉速<br />
+            <b>技巧</b>　倒數到 GO 的瞬間按油門可以起跑衝刺；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
             <div class="hint">點一下關閉</div>
           </div>
         </div>
@@ -421,8 +428,12 @@ export class Screens {
           <b>音效音量</b>${range('sfx', s.sfx, 0, 1, 0.05)}
           <b>比賽配樂</b>${pick('style', s.musicStyle, MUSIC_STYLES.map((m) => [m.id, m.name]))}
           <small>在這頁可以直接試聽</small>
+          <h3>操控輔助</h3>
+          <b>自動小噴</b><label><input type="checkbox" data-set="autoMini" ${s.autoMini ? 'checked' : ''} /> 甩尾結束自動噴（不用自己按）</label>
+          <b>甩尾輔助</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> 自動回正、限制甩尾角度</label>
           <div class="touch-only">
             <h3>手機操控</h3>
+            <b>甩尾鍵</b>${pick('tdrift', s.touchDrift, [['single', '一顆（配合方向鍵）'], ['dual', '左甩／右甩兩顆']])}
             <b>轉向方式</b>${pick('ctrl', s.control, [['buttons', '左右按鈕'], ['tilt', '傾斜手機']])}
             ${s.control === 'tilt' ? `<b>傾斜靈敏度</b>${range('tiltRange', 52 - s.tiltRange, 12, 40, 1)}
             <b>方向反轉</b><label><input type="checkbox" data-set="tiltInvert" ${s.tiltInvert ? 'checked' : ''} /> 轉向相反時打勾</label>

@@ -46,6 +46,19 @@ export const CFG = {
   boostSpeedMul: 1.4,
   boostAccel: 38,
 
+  // 短漂（點一下甩尾鍵）：放開得夠快就是短漂——回正快、減速少、集氣效率高，但沒有小噴
+  shortDriftKey: 0.16,
+  shortDriftRecover: 2.4,
+  shortDriftDrag: 0.5,
+  shortDriftGauge: 1.35,
+  /** 短漂結束後這段時間內接長漂：這次長漂集氣加成 */
+  chainWindow: 0.5,
+  chainGauge: 1.3,
+  /** 連噴：上一次小噴後這段時間內又小噴就算連噴，集氣加成 */
+  comboWindow: 1.8,
+  /** 斷飄：甩尾中點一下煞車立刻結束甩尾，這段時間內的煞車不會減速 */
+  cancelGrace: 0.25,
+
   // 小噴（甩尾結束後短時間內再按一次加速）
   miniMinDrift: 0.35,
   miniWindow: 0.65,

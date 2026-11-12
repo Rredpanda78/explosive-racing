@@ -22,6 +22,11 @@ export interface Settings {
   dmgNumbers: boolean;
   /** 手機操控：按鈕或傾斜轉向 */
   control: 'buttons' | 'tilt';
+  /** 操控輔助：甩完自動小噴、甩尾自動回正並限制角度 */
+  autoMini: boolean;
+  driftAssist: boolean;
+  /** 手機甩尾鍵：一顆（配合方向鍵）或左甩／右甩兩顆 */
+  touchDrift: 'single' | 'dual';
   /** 傾斜幾度轉到底 */
   tiltRange: number;
   tiltInvert: boolean;
@@ -40,6 +45,9 @@ export function defaultSettings(mobile: boolean): Settings {
     shake: 1,
     dmgNumbers: true,
     control: 'buttons',
+    autoMini: false,
+    driftAssist: false,
+    touchDrift: 'single',
     tiltRange: 24,
     tiltInvert: false,
     layout: {},
@@ -67,7 +75,7 @@ export function saveSettings(s: Settings): void {
 }
 
 /** 可以拖曳調整位置的手機按鈕 */
-export const LAYOUT_IDS = ['t-steer', 't-look', 't-fire1', 't-fire2', 't-boost', 't-drift', 't-brake'];
+export const LAYOUT_IDS = ['t-steer', 't-look', 't-fire1', 't-fire2', 't-boost', 't-drift', 't-brake', 't-driftl', 't-driftr'];
 
 /** 套用自訂的按鈕位置；沒有自訂的清掉行內樣式、回到 CSS 預設位置 */
 export function applyLayout(s: Settings): void {

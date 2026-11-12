@@ -650,6 +650,9 @@ export class GameAudio {
         else if (e.e === 'n2o') { this.beep(880, 0.08, 0.15); setTimeout(() => this.beep(1320, 0.12, 0.15), 80); }
         else if (e.e === 'wall') { this.burst(300, 0.8, 0.2, 0.4, 'lowpass'); this.thump(0.3); }
         else if (e.e === 'driftStart') this.burst(2200, 2, 0.12, 0.12);
+        else if (e.e === 'combo') { this.beep(1320, 0.07, 0.14); setTimeout(() => this.beep(1760, 0.09, 0.14), 70); }
+        else if (e.e === 'chain') this.beep(1046, 0.08, 0.1);
+        else if (e.e === 'driftCancel') this.burst(1600, 1.5, 0.1, 0.18);
         else if (e.e === 'jump') this.burst(900, 0.7, 0.45, 0.3, 'bandpass', 300);
         else if (e.e === 'land') { this.thump(0.55); this.burst(400, 0.8, 0.18, 0.3, 'lowpass'); }
         break;

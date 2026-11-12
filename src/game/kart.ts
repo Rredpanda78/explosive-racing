@@ -19,7 +19,7 @@ export const emptyInput = (): KartInput => ({
   steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false,
 });
 
-export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'driftFail' | 'pad' | 'jump' | 'land';
+export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'driftFail' | 'pad' | 'jump' | 'land' | 'chain' | 'combo' | 'driftCancel';
 
 export class Kart {
   id: number;
@@ -67,6 +67,23 @@ export class Kart {
   driftRelease = 0;
   /** 這次甩尾到目前為止集到的氣（撞牆時要扣回去） */
   driftGain = 0;
+  /** 甩尾鍵第一次按住的時間；放開得夠快就是短漂 */
+  private driftKeyT = 0;
+  private driftHeld = false;
+  shortDrift = false;
+  /** 這次長漂是短漂接上來的（集氣加成） */
+  chainDrift = false;
+  private chainShown = false;
+  private sinceShort = 99;
+  /** 連噴計數與距離上次小噴的時間 */
+  combo = 0;
+  private comboT = 99;
+  /** 斷飄後的寬限時間（煞車不減速） */
+  private cancelT = 0;
+  private prevBrake = false;
+  /** 操控輔助（只有玩家，由設定決定）：甩完自動小噴、甩尾自動回正並限制角度 */
+  autoMini = false;
+  driftAssist = false;
   gauge = 0;
   n2o = 0;
   boostT = 0;
@@ -225,8 +242,41 @@ export class Kart {
       this.driftTime = 0;
       this.driftRelease = 0;
       this.driftGain = 0;
+      this.driftKeyT = 0;
+      this.driftHeld = true;
+      this.shortDrift = false;
+      this.chainDrift = this.sinceShort < C.chainWindow;
+      this.chainShown = false;
       this.heading += this.driftDir * C.driftKick;
       emit('driftStart');
+    }
+    this.sinceShort += dt;
+    this.comboT += dt;
+    this.cancelT = Math.max(0, this.cancelT - dt);
+
+    // ---- 斷飄：甩尾中點一下煞車，立刻結束甩尾、保留速度 ----
+    const brakeOn = inp.accel < -0.5;
+    const brakeEdge = brakeOn && !this.prevBrake;
+    this.prevBrake = brakeOn;
+    if (this.drifting && brakeEdge) {
+      this.drifting = false;
+      this.cancelT = C.cancelGrace;
+      if (!this.shortDrift && this.driftTime > C.miniMinDrift) this.miniWindowT = C.miniWindow;
+      emit('driftCancel');
+    }
+
+    // ---- 短漂／長漂：第一次放開甩尾鍵時判斷 ----
+    if (this.drifting && this.driftHeld) {
+      if (inp.drift) {
+        this.driftKeyT += dt;
+        if (this.chainDrift && !this.chainShown && this.driftKeyT >= C.shortDriftKey) {
+          this.chainShown = true;
+          emit('chain');
+        }
+      } else {
+        this.driftHeld = false;
+        this.shortDrift = this.driftKeyT < C.shortDriftKey;
+      }
     }
 
     // ---- 轉向 ----
@@ -258,19 +308,29 @@ export class Kart {
     if (this.drifting) {
       // 放開後抓地力慢慢恢復：同方向拖漂恢復最慢，反打方向盤最快回正
       if (inp.drift) this.driftRelease = 0;
-      else this.driftRelease += dt * (sameDir > 0.1 ? C.driftSustain : sameDir < -0.1 ? C.driftCounterRecover : 1);
+      else {
+        let rate = sameDir > 0.1 ? C.driftSustain : sameDir < -0.1 ? C.driftCounterRecover : 1;
+        if (this.shortDrift) rate = Math.max(rate, 1) * C.shortDriftRecover;
+        // 甩尾輔助：沒有繼續按同方向就自動回正
+        if (this.driftAssist && sameDir <= 0.1) rate = Math.max(rate, C.driftCounterRecover);
+        this.driftRelease += dt * rate;
+      }
       const r = clamp(this.driftRelease / C.driftRecover, 0, 1);
       grip = lerp(C.gripDrift, C.gripNormal, r * r);
       this.driftTime += dt;
       if (!this.finished) this.stats.driftTime += dt;
     }
     if (flying) grip = 0.4; // 空中幾乎不能改變行進方向
+    // 甩尾輔助：限制最大甩尾角度
+    if (this.drifting && this.driftAssist && Math.abs(this.slip) > 0.6) grip = Math.max(grip, 6);
     let dirx = fx, dirz = fz;
     let s: number;
     if (sp > 1 && !reversing) {
       const slip0 = wrapAngle(Math.atan2(this.vx, this.vz) - this.heading);
       const slip = slip0 * Math.exp(-grip * dt);
-      if (!flying) sp = Math.max(0, sp - C.driftDrag * Math.abs(Math.sin(slip0)) * dt);
+      // 短漂與斷飄後減速比較少
+      const dragMul = this.cancelT > 0 ? 0 : this.drifting && this.shortDrift ? C.shortDriftDrag : 1;
+      if (!flying) sp = Math.max(0, sp - C.driftDrag * dragMul * Math.abs(Math.sin(slip0)) * dt);
       const a = this.heading + slip;
       dirx = Math.sin(a);
       dirz = Math.cos(a);
@@ -282,11 +342,16 @@ export class Kart {
     }
 
     // ---- 小噴 / N2O 觸發 ----
-    if (this.miniWindowT > 0 && (accelEdge || boostEdge)) {
+    const autoMini = this.autoMini && this.miniWindowT > 0 && !this.drifting && this.miniWindowT < C.miniWindow - 0.06;
+    if (this.miniWindowT > 0 && (accelEdge || boostEdge || autoMini)) {
       this.miniT = C.miniTime * this.miniMul;
       this.miniWindowT = 0;
-      this.addGauge(C.gaugeMini, emit);
+      // 連噴：上一次小噴不久又小噴
+      this.combo = this.comboT < C.comboWindow ? this.combo + 1 : 1;
+      this.comboT = 0;
+      this.addGauge(C.gaugeMini * (1 + 0.5 * (this.combo - 1)), emit);
       emit('mini');
+      if (this.combo >= 2) emit('combo');
     } else if (boostEdge && this.n2o > 0 && this.boostT <= 0.15) {
       this.n2o--;
       this.boostT = C.boostTime + this.boostTimeAdd;
@@ -327,7 +392,8 @@ export class Kart {
           s = Math.max(vmax, s - C.overspeedDecay * dt);
         }
       } else if (throttle < -0.05) {
-        if (s > 0.5) s = Math.max(0, s - C.brake * dt);
+        if (this.cancelT > 0) { /* 斷飄的那一下煞車不減速 */ }
+        else if (s > 0.5) s = Math.max(0, s - C.brake * dt);
         else s = Math.max(-C.reverseMax, s - 12 * dt);
       } else {
         if (s > 0) s = Math.max(0, s - C.coast * dt);
@@ -343,7 +409,7 @@ export class Kart {
       emit('mini');
     }
     this.miniT = Math.max(0, this.miniT - dt);
-    this.miniWindowT = Math.max(0, this.miniWindowT - dt);
+    if (!this.drifting) this.miniWindowT = Math.max(0, this.miniWindowT - dt);
     this.padT = Math.max(0, this.padT - dt);
 
     this.speed = s;
@@ -353,7 +419,9 @@ export class Kart {
     this.z += this.vz * dt;
 
     // ---- 集氣 ----
-    const driftFill = this.drifting && s > 10 ? C.gaugeRate * Math.abs(Math.sin(this.slip)) * (s / vmaxBase) : 0;
+    const driftFill = this.drifting && s > 10
+      ? C.gaugeRate * Math.abs(Math.sin(this.slip)) * (s / vmaxBase) * (this.shortDrift ? C.shortDriftGauge : 1) * (this.chainDrift && !this.shortDrift ? C.chainGauge : 1)
+      : 0;
     let fill = driftFill;
     if (this.aiAssist && s > 18) fill += this.aiGauge * Math.abs(inp.steer);
     if (s > 15) fill += C.gaugePassive;
@@ -374,7 +442,8 @@ export class Kart {
       ((!inp.drift && this.driftRelease > 0.12 && Math.abs(this.slip) < 0.1) || this.driftRelease >= C.driftRecover || s < 7 || flying)
     ) {
       this.drifting = false;
-      if (this.driftTime > C.miniMinDrift) this.miniWindowT = C.miniWindow;
+      if (this.shortDrift) this.sinceShort = 0;
+      else if (this.driftTime > C.miniMinDrift) this.miniWindowT = C.miniWindow;
     }
 
     // ---- 護欄碰撞（主線與捷徑） ----

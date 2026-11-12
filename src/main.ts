@@ -42,6 +42,7 @@ const view = new GameView(canvas, coarse, settings.quality);
 const input = new Input();
 const hud = new Hud(track);
 const audio = new GameAudio();
+let race: Race | null = null;
 /** 套用設定裡不需要重新載入的部分 */
 function applySettings(): void {
   view.shakeMul = settings.shake;
@@ -52,11 +53,15 @@ function applySettings(): void {
   input.tilt.range = settings.tiltRange;
   input.tilt.invert = settings.tiltInvert;
   touchRoot.classList.toggle('tilt', input.tiltMode);
+  touchRoot.classList.toggle('dual', settings.touchDrift === 'dual');
+  if (race) {
+    race.player.autoMini = settings.autoMini;
+    race.player.driftAssist = settings.driftAssist;
+  }
   applyLayout(settings);
 }
 applySettings();
 
-let race: Race | null = null;
 let mode: RaceMode = 'race';
 let ready = false;
 let paused = false;
@@ -85,6 +90,8 @@ function startRace(m?: RaceMode): void {
   }
   if (input.tiltMode) void input.tilt.enable().then(() => input.tilt.calibrate());
   race = new Race(track, profile, mode);
+  race.player.autoMini = settings.autoMini;
+  race.player.driftAssist = settings.driftAssist;
   view.setRace(race);
   hud.show(race);
   screens.hide();

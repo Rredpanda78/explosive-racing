@@ -182,6 +182,15 @@ kbd { background: #343948; border-radius: 4px; padding: .05em .45em; font-family
 #layout-bar { white-space: nowrap; position: fixed; left: 50%; top: calc(3 * var(--u)); transform: translateX(-50%); display: flex; gap: .6em; align-items: center; z-index: 60; background: rgba(15,17,25,.9); padding: .5em .8em; border-radius: .7em; font-size: calc(2.8 * var(--u)); color: #fff; }
 #layout-bar input { width: 9em; accent-color: #ffd23f; }
 #touch.tilt #t-steer { display: none; }
+/* 左甩／右甩兩顆鍵的配置：取代單一甩尾鍵，煞車移到上面 */
+#touch .dual-only { display: none; }
+#touch.dual .dual-only { display: flex; }
+#touch.dual #t-drift { display: none; }
+#t-driftl, #t-driftr { width: calc(21 * var(--u)); height: calc(21 * var(--u)); bottom: calc(3 * var(--u)); --c: #ffd23f; }
+#t-driftr { right: calc(10 * var(--u) + var(--sr)); }
+#t-driftl { right: calc(33 * var(--u) + var(--sr)); }
+#touch.dual #t-boost { right: calc(56 * var(--u) + var(--sr)); bottom: calc(4 * var(--u)); width: calc(19 * var(--u)); height: calc(19 * var(--u)); }
+#touch.dual #t-brake { bottom: calc(26 * var(--u)); width: calc(12 * var(--u)); height: calc(12 * var(--u)); }
 /* 只在觸控裝置顯示 */
 .touch-only { display: none !important; }
 @media (pointer: coarse) { .touch-only { display: flex !important; } }

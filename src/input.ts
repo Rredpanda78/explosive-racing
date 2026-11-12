@@ -1,6 +1,6 @@
 import type { KartInput } from './game/kart';
 
-type TouchBtn = 'drift' | 'boost' | 'brake' | 'fire1' | 'fire2' | 'look';
+type TouchBtn = 'drift' | 'boost' | 'brake' | 'fire1' | 'fire2' | 'look' | 'driftl' | 'driftr';
 
 const GAME_KEYS = new Set([
   'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'ShiftLeft', 'ShiftRight',
@@ -77,7 +77,10 @@ export class Input {
   /** 手機用傾斜轉向（方向鍵按鈕隱藏） */
   tiltMode = false;
   private keys = new Set<string>();
-  private touch: Record<TouchBtn, boolean> = { drift: false, boost: false, brake: false, fire1: false, fire2: false, look: false };
+  private touch: Record<TouchBtn, boolean> = { drift: false, boost: false, brake: false, fire1: false, fire2: false, look: false, driftl: false, driftr: false };
+  /** 鍵盤轉向：按住後在短時間內漸增，短按可以微調 */
+  private kbSteer = 0;
+  private lastRead = performance.now();
   private steerTouch = 0;
   private out: KartInput = { steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false };
 
@@ -113,10 +116,19 @@ export class Input {
   read(): KartInput {
     const o = this.out;
     const t = this.touch;
-    let steer = 0;
-    if (this.down('ArrowLeft', 'KeyA')) steer += 1;
-    if (this.down('ArrowRight', 'KeyD')) steer -= 1;
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - this.lastRead) / 1000);
+    this.lastRead = now;
+    let want = 0;
+    if (this.down('ArrowLeft', 'KeyA')) want += 1;
+    if (this.down('ArrowRight', 'KeyD')) want -= 1;
+    // 0.12 秒轉到底；換邊或放開時立刻歸零
+    if (want === 0 || Math.sign(want) !== Math.sign(this.kbSteer)) this.kbSteer = 0;
+    if (want !== 0) this.kbSteer = Math.max(-1, Math.min(1, this.kbSteer + want * (dt / 0.12) + want * 0.18 * (this.kbSteer === 0 ? 1 : 0)));
+    let steer = this.kbSteer;
     if (steer === 0) steer = this.tiltMode && this.tilt.enabled ? this.tilt.steer : this.steerTouch;
+    // 左甩／右甩鍵：按住就往那邊甩尾
+    if (t.driftl || t.driftr) steer = t.driftl ? 1 : -1;
     o.steer = steer;
     let accel = 0;
     if (this.down('ArrowUp', 'KeyW')) accel += 1;
@@ -124,7 +136,7 @@ export class Input {
     // 觸控模式：自動油門，按住煞車鍵才減速
     if (this.touchMode) accel = t.brake ? -1 : 1;
     o.accel = accel;
-    o.drift = this.down('ShiftLeft', 'ShiftRight') || t.drift;
+    o.drift = this.down('ShiftLeft', 'ShiftRight') || t.drift || t.driftl || t.driftr;
     o.boost = this.down('ControlLeft', 'ControlRight', 'Space') || t.boost;
     o.firePrimary = this.down('KeyZ') || t.fire1;
     o.fireSecondary = this.down('KeyX') || t.fire2;
