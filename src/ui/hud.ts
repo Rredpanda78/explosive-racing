@@ -3,7 +3,7 @@ import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
 import { formatTime } from '../game/util';
-import { PRIMARY, SECONDARY } from '../game/weapons';
+import { PRIMARY, SECONDARY, type PrimaryId, type SecondaryId } from '../game/weapons';
 import type { GameView } from '../render/view';
 import { ICONS, primaryIcon, secondaryIcon } from './touchIcons';
 
@@ -42,6 +42,8 @@ export class Hud {
   private wasDrafting = false;
   /** 傷害數字：同一台車短時間內的傷害合併成一個數字 */
   private dmgLayer = document.createElement('div');
+  /** 設定：顯示傷害數字 */
+  dmgNumbers = true;
   /** 手機按鈕 */
   private tBoost = $('t-boost');
   private tBoostIc = this.tBoost.querySelector<HTMLElement>('.ic')!;
@@ -62,6 +64,14 @@ export class Hud {
     this.root.appendChild(this.dmgLayer);
   }
 
+  /** 手機開火鈕：圖示與名稱依裝備的武器 */
+  setWeaponIcons(primary: PrimaryId, secondary: SecondaryId): void {
+    $('t-fire1').querySelector('.ic')!.innerHTML = primaryIcon(primary);
+    $('t-fire2').querySelector('.ic')!.innerHTML = secondaryIcon(secondary);
+    $('t-fire1').querySelector('b')!.textContent = PRIMARY[primary].name.replace('.50 ', '');
+    $('t-fire2').querySelector('b')!.textContent = SECONDARY[secondary].name;
+  }
+
   /** 換地圖時重畫小地圖底圖 */
   setTrack(track: Track): void {
     this.buildMap(track);
@@ -75,11 +85,7 @@ export class Hud {
     this.elim.classList.toggle('hidden', !elim);
     this.w1.querySelector('.wname')!.textContent = PRIMARY[race.player.primary].name;
     this.w2.querySelector('.wname')!.textContent = SECONDARY[race.player.secondary].name;
-    // 手機開火鈕：圖示依裝備的武器
-    $('t-fire1').querySelector('.ic')!.innerHTML = primaryIcon(race.player.primary);
-    $('t-fire2').querySelector('.ic')!.innerHTML = secondaryIcon(race.player.secondary);
-    $('t-fire1').querySelector('b')!.textContent = PRIMARY[race.player.primary].name.replace('.50 ', '');
-    $('t-fire2').querySelector('b')!.textContent = SECONDARY[race.player.secondary].name;
+    this.setWeaponIcons(race.player.primary, race.player.secondary);
     this.feed.innerHTML = '';
     this.popups.innerHTML = '';
     this.dmgLayer.innerHTML = '';
@@ -314,6 +320,7 @@ export class Hud {
 
   /** 每 0.25 秒把累積的傷害變成一個往上飄的數字，擊毀那一下用金色大字 */
   private updateDamageNumbers(view: GameView, dt: number): void {
+    if (!this.dmgNumbers) { this.dmgAcc.clear(); return; }
     for (const [k, a] of this.dmgAcc) {
       a.t += dt;
       if (a.t < 0.25 && !a.fatal) continue;

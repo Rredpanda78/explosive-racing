@@ -22,8 +22,6 @@ export interface Profile {
   weaponsV2?: boolean;
   /** 電腦車手難度 */
   difficulty: DifficultyId;
-  /** 手機按鈕樣式 1~5 */
-  touchSkin: number;
   /** 每款車選用的花色（0~2） */
   livery: Partial<Record<CarId, number>>;
 }
@@ -47,7 +45,6 @@ export function defaultProfile(): Profile {
     wins: 0,
     weaponsV2: true,
     difficulty: 'normal',
-    touchSkin: 1,
     livery: {},
   };
 }

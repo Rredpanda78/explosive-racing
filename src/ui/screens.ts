@@ -1,10 +1,11 @@
 import { CAR_IDS, CARS, type CarId } from '../game/cars';
 import { KILL_REWARD } from '../game/config';
 import type { Race, RaceMode } from '../game/race';
-import { TOUCH_SKINS } from './touchIcons';
 import { liverySwatch } from '../render/livery';
 import { carIcon, weaponIcon } from '../render/weaponIcons';
 import { DIFFICULTY, DIFFICULTY_IDS, type DifficultyId } from '../game/difficulty';
+import type { Settings } from '../settings';
+import { MUSIC_STYLES } from '../audio';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
 import {
@@ -26,8 +27,13 @@ export interface ScreenActions {
   restart(): void;
   toMenu(): void;
   toggleMute(): boolean;
-  /** 套用手機按鈕樣式（profile.touchSkin 已更新） */
-  touchSkin(): void;
+  /** 設定改了某一項（已經寫進 settings 物件） */
+  settingChanged(key: keyof Settings): void;
+  editLayout(): void;
+  resetLayout(): void;
+  calibrateTilt(): void;
+  /** 進出設定頁：在設定頁可以試聽比賽配樂 */
+  settingsOpen(open: boolean): void;
 }
 
 /** 一場比賽的結算內容（由 main 計算後交給結算畫面顯示） */
@@ -56,7 +62,7 @@ export class Screens {
   private tracks: TrackInfo[];
   private trackIndex: () => number;
   private act: ScreenActions;
-  current: 'none' | 'menu' | 'garage' | 'pause' | 'results' = 'none';
+  current: 'none' | 'menu' | 'garage' | 'pause' | 'results' | 'settings' = 'none';
   private garageBack: 'menu' | 'results' = 'menu';
   private lastResults = '';
   private loading = false;
@@ -66,11 +72,24 @@ export class Screens {
     this.tracks = tracks;
     this.trackIndex = trackIndex;
     this.act = act;
+    this.root.addEventListener('input', (e) => {
+      const el = e.target as HTMLInputElement;
+      const key = el.dataset.set as keyof Settings | undefined;
+      if (!key || !this.settings) return;
+      const st = this.settings as unknown as Record<string, unknown>;
+      st[key] = el.type === 'checkbox' ? el.checked : Number(el.value);
+      this.act.settingChanged(key);
+    });
     this.root.addEventListener('click', (e) => {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (el && !(el as HTMLButtonElement).disabled) this.handle(el.dataset.act!, el.dataset.id);
     });
   }
+
+  /** 這台裝置的設定（由 main 指定） */
+  settings!: Settings;
+  private settingsBack: 'menu' | 'pause' = 'menu';
+  private pauseArgs: [boolean, string] = [false, ''];
 
   hide(): void {
     this.current = 'none';
@@ -82,18 +101,39 @@ export class Screens {
     switch (act) {
       case 'start': this.act.start(id as RaceMode | undefined); break;
       case 'track': this.act.selectTrack(Number(id)); break;
-      case 'skin':
-        p.touchSkin = Number(id);
-        saveProfile(p);
-        this.act.touchSkin();
-        this.root.querySelectorAll('.skinbtn').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.id === id));
-        break;
       case 'diff':
         p.difficulty = id as DifficultyId;
         saveProfile(p);
         this.menu(this.loading);
         break;
       case 'resume': this.act.resume(); break;
+      case 'settings':
+        this.settingsBack = this.current === 'pause' ? 'pause' : 'menu';
+        this.act.settingsOpen(true);
+        this.settingsPage();
+        break;
+      case 'sback':
+        this.act.settingsOpen(false);
+        if (this.settingsBack === 'pause') this.pause(...this.pauseArgs);
+        else this.menu(this.loading);
+        break;
+      case 'style':
+        this.settings.musicStyle = id as Settings['musicStyle'];
+        this.act.settingChanged('musicStyle');
+        this.settingsPage();
+        break;
+      case 'ctrl':
+        this.settings.control = id as Settings['control'];
+        this.act.settingChanged('control');
+        this.settingsPage();
+        break;
+      case 'quality':
+        this.settings.quality = id as Settings['quality'];
+        this.act.settingChanged('quality');
+        break;
+      case 'layout': this.act.editLayout(); break;
+      case 'layoutreset': this.act.resetLayout(); break;
+      case 'calib': this.act.calibrateTilt(); break;
       case 'restart': this.act.restart(); break;
       case 'menu': this.act.toMenu(); break;
       case 'garage': this.garageBack = this.current === 'results' ? 'results' : 'menu'; this.garage(); break;
@@ -198,8 +238,7 @@ export class Screens {
           </button>
         </div>
         <div class="diffs"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="diffbtn ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}" title="${DIFFICULTY[d].desc}">${DIFFICULTY[d].name}</button>`).join('')}<em>${DIFFICULTY[p.difficulty].desc}</em></div>
-        ${this.skinRow()}
-        <div class="row" style="margin-top:0.8em"><button class="btn" data-act="garage">車庫</button></div>
+        <div class="row" style="margin-top:0.8em"><button class="btn" data-act="garage">車庫</button><button class="btn" data-act="settings">設定</button></div>
         <div class="tagline" style="margin:1.1em 0 0">
           <span class="cash">$${p.cash}</span>　${CARS[p.kart].name}・${PRIMARY[p.primary].name}・${SECONDARY[p.secondary].name}　出賽 ${p.races}　冠軍 ${p.wins}　${cur.name}最快單圈 ${formatTime(p.bestLaps[p.track] ?? 0)}
         </div>
@@ -321,23 +360,52 @@ export class Screens {
     if (s) s.scrollTop = scroll;
   }
 
-  /** 手機按鈕樣式的選擇列（只在觸控裝置顯示） */
-  private skinRow(): string {
-    const cur = this.profile.touchSkin;
-    return `<div class="diffs touch-only"><span>手機按鈕</span>${TOUCH_SKINS.map((s) => `<button class="diffbtn skinbtn ${cur === s.id ? 'on' : ''}" data-act="skin" data-id="${s.id}">${s.id}・${s.name}</button>`).join('')}</div>`;
+  /** 設定頁：畫質、音量、配樂、操控與按鈕位置 */
+  settingsPage(): void {
+    this.current = 'settings';
+    const s = this.settings;
+    const pick = (act: string, cur: string, opts: [string, string][]) =>
+      `<div class="choices">${opts.map(([v, n]) => `<button class="diffbtn ${cur === v ? 'on' : ''}" data-act="${act}" data-id="${v}">${n}</button>`).join('')}</div>`;
+    const range = (key: string, v: number, min: number, max: number, step: number) => `<input type="range" data-set="${key}" min="${min}" max="${max}" step="${step}" value="${v}" />`;
+    this.root.innerHTML = `
+      <div class="screen">
+        <h1 class="title" style="font-size:clamp(28px,7vw,60px)">設定</h1>
+        <div class="setgrid">
+          <h3>畫面</h3>
+          <b>畫質</b>${pick('quality', s.quality, [['low', '低（省電）'], ['medium', '中'], ['high', '高']])}
+          <small>變更後會重新載入</small>
+          <b>畫面震動</b>${range('shake', s.shake, 0, 1, 0.05)}
+          <b>傷害數字</b><label><input type="checkbox" data-set="dmgNumbers" ${s.dmgNumbers ? 'checked' : ''} /> 打中對手時顯示</label>
+          <h3>聲音</h3>
+          <b>音樂音量</b>${range('music', s.music, 0, 1, 0.05)}
+          <b>音效音量</b>${range('sfx', s.sfx, 0, 1, 0.05)}
+          <b>比賽配樂</b>${pick('style', s.musicStyle, MUSIC_STYLES.map((m) => [m.id, m.name]))}
+          <small>在這頁可以直接試聽</small>
+          <div class="touch-only">
+            <h3>手機操控</h3>
+            <b>轉向方式</b>${pick('ctrl', s.control, [['buttons', '左右按鈕'], ['tilt', '傾斜手機']])}
+            ${s.control === 'tilt' ? `<b>傾斜靈敏度</b>${range('tiltRange', 52 - s.tiltRange, 12, 40, 1)}
+            <b>方向反轉</b><label><input type="checkbox" data-set="tiltInvert" ${s.tiltInvert ? 'checked' : ''} /> 轉向相反時打勾</label>
+            <b></b><div class="choices"><button class="diffbtn" data-act="calib">把現在的角度設為正中</button></div>` : ''}
+            <b>按鈕位置</b><div class="choices"><button class="diffbtn" data-act="layout">拖曳調整位置與大小</button><button class="diffbtn" data-act="layoutreset">恢復預設</button></div>
+          </div>
+        </div>
+        <div class="row"><button class="btn primary" data-act="sback">返回</button></div>
+      </div>`;
   }
 
   pause(muted: boolean, missionHtml: string): void {
+    this.pauseArgs = [muted, missionHtml];
     this.current = 'pause';
     this.root.innerHTML = `
       <div class="screen">
         <h1 class="title" style="font-size:clamp(28px,7vw,64px)">暫停</h1>
         <div class="missions-box">${missionHtml}</div>
-        ${this.skinRow()}
         <div class="row" style="flex-direction:column;align-items:center">
           <button class="btn primary" data-act="resume">繼續</button>
           <button class="btn" data-act="restart">重新開始</button>
           <button class="btn" data-act="mute">${muted ? '音效：關' : '音效：開'}</button>
+          <button class="btn" data-act="settings">設定</button>
           <button class="btn" data-act="menu">回主選單</button>
         </div>
       </div>`;

@@ -14,9 +14,12 @@ export interface Livery {
   tint: number | null;
 }
 
-/** 把基本材質複製一份並套上花色（hue = 0、tint = null 時就是原廠色） */
-export function liveryMaterial(base: THREE.Material, lv: Livery | undefined): THREE.MeshLambertMaterial {
-  const m = (base as THREE.MeshLambertMaterial).clone();
+/**
+ * 把基本材質換成有光澤、會反射環境的車漆材質，並套上花色（hue = 0、tint = null 時就是原廠色）
+ */
+export function liveryMaterial(base: THREE.Material, lv: Livery | undefined): THREE.MeshStandardMaterial {
+  const b = base as THREE.MeshLambertMaterial;
+  const m = new THREE.MeshStandardMaterial({ map: b.map, color: b.color?.clone() ?? new THREE.Color(0xffffff), roughness: 0.5, metalness: 0.1, envMapIntensity: 1 });
   if (!lv || (lv.hue === 0 && lv.tint === null)) return m;
   const uHue = { value: (lv.hue * Math.PI) / 180 };
   const uTint = { value: new THREE.Color(lv.tint ?? 0xffffff) };

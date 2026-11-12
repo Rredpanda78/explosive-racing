@@ -7,6 +7,7 @@ import { Track, TRACKS } from './game/track';
 import { Input } from './input';
 import { CAR_MODELS, DEBRIS_MODELS, KART_MODELS, LANDMARK_MODELS, loadModels, PROP_MODELS } from './render/assets';
 import { GameView } from './render/view';
+import { applyLayout, LAYOUT_IDS, loadSettings, saveSettings, type Settings } from './settings';
 import { Hud } from './ui/hud';
 import { Screens, type Summary } from './ui/screens';
 
@@ -19,10 +20,24 @@ let trackIndex = Math.max(0, TRACKS.findIndex((t) => t.id === profile.track));
 let track = new Track(TRACKS[trackIndex]);
 /** 選單上顯示的地圖清單（長度要先把賽道算出來才知道） */
 const trackList = TRACKS.map((def) => ({ name: def.name, desc: def.desc, laps: def.laps, length: Math.round(new Track(def).length) }));
-const view = new GameView(canvas, coarse);
+const settings = loadSettings(coarse);
+const view = new GameView(canvas, coarse, settings.quality);
 const input = new Input();
 const hud = new Hud(track);
 const audio = new GameAudio();
+/** 套用設定裡不需要重新載入的部分 */
+function applySettings(): void {
+  view.shakeMul = settings.shake;
+  audio.setVolumes(settings.music, settings.sfx);
+  if (audio.musicStyle !== settings.musicStyle) audio.setStyle(settings.musicStyle);
+  hud.dmgNumbers = settings.dmgNumbers;
+  input.tiltMode = settings.control === 'tilt';
+  input.tilt.range = settings.tiltRange;
+  input.tilt.invert = settings.tiltInvert;
+  touchRoot.classList.toggle('tilt', input.tiltMode);
+  applyLayout(settings);
+}
+applySettings();
 
 let race: Race | null = null;
 let mode: RaceMode = 'race';
@@ -34,12 +49,6 @@ let resultsShown = false;
 let slowT = 0;
 /** 這場靠連續擊毀多賺的獎金 */
 let streakCash = 0;
-
-/** 套用手機按鈕樣式 */
-function applyTouchSkin(): void {
-  for (let i = 1; i <= 5; i++) touchRoot.classList.toggle('skin-' + i, profile.touchSkin === i);
-}
-applyTouchSkin();
 
 function setTouchUI(on: boolean): void {
   document.body.classList.toggle('touch', on);
@@ -57,6 +66,7 @@ function startRace(m?: RaceMode): void {
     const el = document.documentElement as HTMLElement & { requestFullscreen?: () => Promise<void> };
     el.requestFullscreen?.().then(() => (screen.orientation as unknown as { lock?: (o: string) => Promise<void> }).lock?.('landscape')).catch(() => {});
   }
+  if (input.tiltMode) void input.tilt.enable().then(() => input.tilt.calibrate());
   race = new Race(track, profile, mode);
   view.setRace(race);
   hud.show(race);
@@ -116,8 +126,110 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     audio.setMuted(!audio.muted);
     return audio.muted;
   },
-  touchSkin: applyTouchSkin,
+  settingChanged,
+  editLayout,
+  resetLayout: () => {
+    settings.layout = {};
+    saveSettings(settings);
+    applyLayout(settings);
+  },
+  calibrateTilt: () => { void input.tilt.enable().then(() => input.tilt.calibrate()); },
+  settingsOpen: (open) => {
+    // 在設定頁試聽比賽配樂；離開時回到原本的音樂
+    audio.init();
+    if (!race) audio.setMusic(open ? 'race' : 'menu');
+  },
 });
+screens.settings = settings;
+
+function settingChanged(key: keyof Settings): void {
+  if (key === 'tiltRange') {
+    // 滑桿往右 = 更靈敏（轉到底需要的角度更小）
+    settings.tiltRange = 52 - Number((settings as unknown as Record<string, number>).tiltRange);
+  }
+  saveSettings(settings);
+  if (key === 'quality') {
+    location.reload();
+    return;
+  }
+  if (key === 'control' && settings.control === 'tilt') void input.tilt.enable();
+  applySettings();
+}
+
+/** 按鈕位置編輯：直接拖曳畫面上的按鈕，選中的按鈕可以調大小 */
+function editLayout(): void {
+  hud.setWeaponIcons(profile.primary, profile.secondary);
+  screens.hide();
+  touchRoot.classList.remove('hidden');
+  touchRoot.classList.add('editing');
+  document.body.classList.add('touch');
+  const bar = document.createElement('div');
+  bar.id = 'layout-bar';
+  bar.innerHTML = '拖曳按鈕調整位置　大小 <input type="range" min="0.6" max="1.6" step="0.05" value="1" /> <button class="btn small">恢復預設</button> <button class="btn small primary">完成</button>';
+  document.body.appendChild(bar);
+  const slider = bar.querySelector('input')!;
+  const [resetBtn, doneBtn] = Array.from(bar.querySelectorAll('button'));
+  let sel: HTMLElement | null = null;
+  let drag: { id: string; el: HTMLElement; pid: number } | null = null;
+  const ensure = (el: HTMLElement): void => {
+    if (settings.layout[el.id]) return;
+    const r = el.getBoundingClientRect();
+    settings.layout[el.id] = { x: ((r.left + r.width / 2) / innerWidth) * 100, y: ((r.top + r.height / 2) / innerHeight) * 100, s: 1 };
+  };
+  const select = (el: HTMLElement | null): void => {
+    sel?.classList.remove('sel');
+    sel = el;
+    if (!el) return;
+    el.classList.add('sel');
+    slider.value = String(settings.layout[el.id]?.s ?? 1);
+  };
+  const down = (e: PointerEvent): void => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>(LAYOUT_IDS.map((i) => '#' + i).join(','));
+    e.stopPropagation();
+    e.preventDefault();
+    if (!el) return select(null);
+    ensure(el);
+    select(el);
+    drag = { id: el.id, el, pid: e.pointerId };
+  };
+  const move = (e: PointerEvent): void => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    e.stopPropagation();
+    const p = settings.layout[drag.id];
+    p.x = Math.max(4, Math.min(96, (e.clientX / innerWidth) * 100));
+    p.y = Math.max(6, Math.min(94, (e.clientY / innerHeight) * 100));
+    applyLayout(settings);
+  };
+  const up = (e: PointerEvent): void => {
+    if (drag && e.pointerId === drag.pid) drag = null;
+    e.stopPropagation();
+  };
+  touchRoot.addEventListener('pointerdown', down, true);
+  window.addEventListener('pointermove', move, true);
+  window.addEventListener('pointerup', up, true);
+  slider.addEventListener('input', () => {
+    if (!sel) return;
+    settings.layout[sel.id].s = Number(slider.value);
+    applyLayout(settings);
+  });
+  resetBtn.addEventListener('click', () => {
+    settings.layout = {};
+    applyLayout(settings);
+    select(null);
+  });
+  doneBtn.addEventListener('click', () => {
+    touchRoot.removeEventListener('pointerdown', down, true);
+    window.removeEventListener('pointermove', move, true);
+    window.removeEventListener('pointerup', up, true);
+    select(null);
+    bar.remove();
+    touchRoot.classList.remove('editing');
+    if (!race || resultsShown) touchRoot.classList.add('hidden');
+    if (!race) document.body.classList.toggle('touch', input.touchMode);
+    saveSettings(settings);
+    screens.settingsPage();
+  });
+}
 
 input.bindTouch(touchRoot);
 input.onPause = () => {

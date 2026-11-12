@@ -57,7 +57,7 @@ export const SECONDARY: Record<SecondaryId, SecondaryDef> = {
   rocket: { id: 'rocket', name: '火箭炮', desc: '朝正前方直線飛行，命中或撞牆時爆炸', dmg: 38, radius: 5.5, cooldown: 3.2, count: 1, price: 0, perk: '雙聯裝：一次射出兩枚火箭' },
   grenade: { id: 'grenade', name: '榴彈發射器', desc: '朝前方拋射，落地或碰到車就大範圍爆炸並震退敵車', dmg: 42, radius: 8, cooldown: 3.0, count: 1, price: 2500, perk: '子母彈：爆炸後再彈出 3 顆小榴彈' },
   mine: { id: 'mine', name: '地雷', desc: '往車尾放下地雷，啟動後有車經過就爆炸（最多同時 3 顆）', dmg: 44, radius: 6, cooldown: 2.6, count: 1, price: 2200, perk: '重型地雷：爆炸範圍 +40%，可以同時留 5 顆' },
-  cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆', dmg: 22, radius: 4.5, cooldown: 6, count: 5, price: 3000, perk: '加量：一次撒出 7 顆' },
+  cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆（威力小、不會把車炸飛）', dmg: 13, radius: 3.8, cooldown: 6, count: 5, price: 3000, perk: '加量：一次撒出 7 顆' },
   missile: { id: 'missile', name: '追蹤導彈', desc: '隨機鎖定一台對手並追蹤；被鎖定的人會收到警告，急轉可以甩掉', dmg: 36, radius: 5.5, cooldown: 6.5, count: 1, price: 4000, perk: '雙彈頭：同時射出兩枚，分別鎖定不同對手' },
 };
 

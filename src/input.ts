@@ -7,6 +7,65 @@ const GAME_KEYS = new Set([
   'ControlLeft', 'ControlRight', 'KeyZ', 'KeyX', 'KeyC', 'KeyR',
 ]);
 
+/**
+ * 傾斜轉向：用重力在螢幕平面上的方向算出手機轉了幾度（像握方向盤）。
+ * 以開始時的握法當作正中（校正），所以 iOS 與 Android 的座標正負號不同也沒關係。
+ */
+export class Tilt {
+  enabled = false;
+  steer = 0;
+  range = 24;
+  invert = false;
+  private neutral: number | null = null;
+
+  /** iOS 需要在使用者點擊時要求權限 */
+  async enable(): Promise<boolean> {
+    const DM = (window as unknown as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } }).DeviceMotionEvent;
+    try {
+      if (DM && typeof DM.requestPermission === 'function' && (await DM.requestPermission()) !== 'granted') return false;
+    } catch {
+      return false;
+    }
+    if (!this.enabled) window.addEventListener('devicemotion', this.onMotion);
+    this.enabled = true;
+    this.neutral = null;
+    return true;
+  }
+
+  disable(): void {
+    window.removeEventListener('devicemotion', this.onMotion);
+    this.enabled = false;
+    this.steer = 0;
+  }
+
+  /** 把目前的握法當作正中 */
+  calibrate(): void {
+    this.neutral = null;
+  }
+
+  private onMotion = (e: DeviceMotionEvent): void => {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x === null || g.y === null) return;
+    const so = (screen as unknown as { orientation?: { angle?: number } }).orientation;
+    const ang = ((so?.angle ?? (window as unknown as { orientation?: number }).orientation ?? 0) + 360) % 360;
+    const gx = g.x ?? 0, gy = g.y ?? 0;
+    let sx: number, sy: number;
+    if (ang === 90) { sx = -gy; sy = gx; }
+    else if (ang === 270) { sx = gy; sy = -gx; }
+    else if (ang === 180) { sx = -gx; sy = -gy; }
+    else { sx = gx; sy = gy; }
+    const a = Math.atan2(sx, sy);
+    if (this.neutral === null) this.neutral = a;
+    let d = a - this.neutral;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    let deg = (d * 180) / Math.PI;
+    // 小角度的死區，避免手抖造成蛇行
+    deg = Math.sign(deg) * Math.max(0, Math.abs(deg) - 2);
+    const want = Math.max(-1, Math.min(1, deg / this.range)) * (this.invert ? -1 : 1);
+    this.steer += (want - this.steer) * 0.5;
+  };
+}
+
 /** 鍵盤與觸控輸入統一成 KartInput */
 export class Input {
   /** 是否攔截遊戲按鍵的瀏覽器預設行為（比賽中才開） */
@@ -14,6 +73,9 @@ export class Input {
   touchMode = false;
   onPause: () => void = () => {};
   onReset: () => void = () => {};
+  tilt = new Tilt();
+  /** 手機用傾斜轉向（方向鍵按鈕隱藏） */
+  tiltMode = false;
   private keys = new Set<string>();
   private touch: Record<TouchBtn, boolean> = { drift: false, boost: false, brake: false, fire1: false, fire2: false, look: false };
   private steerTouch = 0;
@@ -54,7 +116,7 @@ export class Input {
     let steer = 0;
     if (this.down('ArrowLeft', 'KeyA')) steer += 1;
     if (this.down('ArrowRight', 'KeyD')) steer -= 1;
-    if (steer === 0) steer = this.steerTouch;
+    if (steer === 0) steer = this.tiltMode && this.tilt.enabled ? this.tilt.steer : this.steerTouch;
     o.steer = steer;
     let accel = 0;
     if (this.down('ArrowUp', 'KeyW')) accel += 1;

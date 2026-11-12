@@ -452,7 +452,8 @@ export class Race {
   }
 
   /** owner 為 null 表示沒有人該被算擊毀（例如自己撞到爆炸桶），這時所有人都會受傷 */
-  explodeAt(x: number, y: number, z: number, gy: number, radius: number, dmg: number, owner: Kart | null): void {
+  /** force：衝擊波把車推開、炸飛的力道倍率（集束圓雷很小） */
+  explodeAt(x: number, y: number, z: number, gy: number, radius: number, dmg: number, owner: Kart | null, force = 1): void {
     this.events.push({ t: 'blast', x, y, z, r: radius, gy, kart: false });
     for (const k of this.karts) {
       if (k === owner || k.dead || k.out) continue;
@@ -465,15 +466,21 @@ export class Race {
       if (!k.dead && !immune) {
         // 衝擊波：往外推、炸離地面、打轉
         const inv = d > 0.01 ? 1 / d : 0;
-        const bm = k.blastMul;
-        k.vx = k.vx * 0.7 + dx * inv * 9 * f * bm;
-        k.vz = k.vz * 0.7 + dz * inv * 9 * f * bm;
-        if (k.air <= 0) k.jumped = false;
-        k.air = Math.max(k.air, 0.05);
-        k.vy = Math.max(k.vy, CFG.blastLift * (0.45 + 0.55 * f) * (0.4 + 0.6 * bm));
-        k.spinVel += (this.rng() - 0.5) * 5 * f;
-        k.tumble = (this.rng() > 0.5 ? 1 : -1) * (4 + 5 * f);
-        k.drifting = false;
+        const bm = k.blastMul * force;
+        // 小爆炸（集束圓雷）只稍微晃一下、不減速也不炸飛
+        const keep = force > 0.5 ? 0.7 : 0.97;
+        k.vx = k.vx * keep + dx * inv * 9 * f * bm;
+        k.vz = k.vz * keep + dz * inv * 9 * f * bm;
+        if (force > 0.5) {
+          if (k.air <= 0) k.jumped = false;
+          k.air = Math.max(k.air, 0.05);
+          k.vy = Math.max(k.vy, CFG.blastLift * (0.45 + 0.55 * f) * (0.4 + 0.6 * bm));
+        }
+        k.spinVel += (this.rng() - 0.5) * 5 * f * force;
+        if (force > 0.5) {
+          k.tumble = (this.rng() > 0.5 ? 1 : -1) * (4 + 5 * f);
+          k.drifting = false;
+        }
       }
     }
     const r2 = (radius + 1.5) * (radius + 1.5);
@@ -487,7 +494,8 @@ export class Race {
       }
     }
     for (const m of this.mines) {
-      if (m.dead || m.fuse > 0) continue;
+      // 集束圓雷不會被爆炸連鎖引爆（避免 5 顆一起炸）
+      if (m.dead || m.fuse > 0 || m.kind === 'cluster') continue;
       const dx = m.x - x, dz = m.z - z;
       if (dx * dx + dz * dz < r2) {
         m.fuse = 0.1 + this.rng() * 0.12;
@@ -864,7 +872,7 @@ export class Race {
   private explodeMine(m: Mine): void {
     if (m.dead) return;
     m.dead = true;
-    this.explodeAt(m.x, m.y + 0.5, m.z, m.y, m.radius, m.dmg, m.by);
+    this.explodeAt(m.x, m.y + 0.5, m.z, m.y, m.radius, m.dmg, m.by, m.kind === 'cluster' ? 0.25 : 1);
   }
 
   private updateMines(dt: number): void {

@@ -663,16 +663,57 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   }
   if (crowdM.length) {
     const crowdTime = { value: 0 };
+    // 小人的幾何：身體（衣服色）、頭與手臂（膚色）、頭髮（髮色）；part 決定用哪個顏色，arm 標記左右手
+    const piece = (g: THREE.BufferGeometry, part: number, arm: number) => {
+      const ng = g.index ? g.toNonIndexed() : g;
+      const n = ng.attributes.position.count;
+      ng.setAttribute('part', new THREE.BufferAttribute(new Float32Array(n).fill(part), 1));
+      ng.setAttribute('arm', new THREE.BufferAttribute(new Float32Array(n).fill(arm), 1));
+      ng.deleteAttribute('uv');
+      return ng;
+    };
+    const fan = mergeGeometries([
+      piece(new THREE.BoxGeometry(0.5, 0.56, 0.34).translate(0, -0.25, 0), 0, 0),
+      piece(new THREE.IcosahedronGeometry(0.25, 0).translate(0, 0.3, 0), 1, 0),
+      piece(new THREE.BoxGeometry(0.5, 0.15, 0.46).translate(0, 0.49, -0.02), 2, 0),
+      piece(new THREE.BoxGeometry(0.46, 0.26, 0.12).translate(0, 0.36, -0.2), 2, 0),
+      piece(new THREE.BoxGeometry(0.11, 0.42, 0.11).translate(0.29, 0.21, 0), 1, 1),
+      piece(new THREE.BoxGeometry(0.11, 0.42, 0.11).translate(-0.29, 0.21, 0), 1, -1),
+    ])!;
+    const skins = [0xf2c9a0, 0xe0ac7e, 0xc68642, 0x8d5524, 0xffdbb8];
+    const hairs = [0x2b1d14, 0x5a3a22, 0xd9b24a, 0x1a1a1a, 0xb03a2e, 0x7a7f88, 0x3a5fc4, 0xf2f2f2];
+    const aSkin = new Float32Array(crowdM.length * 3), aHair = new Float32Array(crowdM.length * 3);
+    for (let i = 0; i < crowdM.length; i++) {
+      tmpC.setHex(skins[Math.floor(rng() * skins.length)]);
+      aSkin.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
+      tmpC.setHex(hairs[Math.floor(rng() * hairs.length)]);
+      aHair.set([tmpC.r, tmpC.g, tmpC.b], i * 3);
+    }
+    fan.setAttribute('aSkin', new THREE.InstancedBufferAttribute(aSkin, 3));
+    fan.setAttribute('aHair', new THREE.InstancedBufferAttribute(aHair, 3));
     const mat = new THREE.MeshLambertMaterial();
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = crowdTime;
-      sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace(
-        '#include <begin_vertex>',
-        // 每個人依自己的位置有不同的節奏，偶爾一起跳
-        '#include <begin_vertex>\n#ifdef USE_INSTANCING\n float ph = instanceMatrix[3].x * 1.7 + instanceMatrix[3].z * 2.3;\n transformed.y += max(0.0, sin(uTime * 7.0 + ph)) * 0.32 * step(0.2, sin(uTime * 0.9 + ph * 0.13));\n#endif',
-      );
+      sh.vertexShader = 'uniform float uTime;\nattribute float part;\nattribute float arm;\nattribute vec3 aSkin;\nattribute vec3 aHair;\n' + sh.vertexShader
+        .replace('#include <color_vertex>', `#include <color_vertex>
+        #ifdef USE_INSTANCING_COLOR
+          vColor.xyz = part < 0.5 ? instanceColor.xyz : ( part < 1.5 ? aSkin : aHair );
+        #endif`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+        #ifdef USE_INSTANCING
+          // 每個人依自己的位置有不同的節奏，偶爾大家一起跳起來揮手
+          float ph = instanceMatrix[3].x * 1.7 + instanceMatrix[3].z * 2.3;
+          float cheer = step(0.2, sin(uTime * 0.9 + ph * 0.13));
+          if (abs(arm) > 0.5) {
+            vec3 pv = vec3(arm * 0.29, 0.0, 0.0);
+            float a = -arm * (0.2 + (0.3 + 0.45 * sin(uTime * 9.0 + ph)) * (0.25 + 0.75 * cheer));
+            vec3 q = transformed - pv;
+            transformed = pv + vec3(q.x * cos(a) - q.y * sin(a), q.x * sin(a) + q.y * cos(a), q.z);
+          }
+          transformed.y += max(0.0, sin(uTime * 7.0 + ph)) * 0.3 * cheer;
+        #endif`);
     };
-    const crowd = new THREE.InstancedMesh(new THREE.BoxGeometry(0.55, 1.1, 0.45), mat, crowdM.length);
+    const crowd = new THREE.InstancedMesh(fan, mat, crowdM.length);
     crowdM.forEach((m, i) => {
       crowd.setMatrixAt(i, m);
       crowd.setColorAt(i, tmpC.setRGB(crowdC[i * 3], crowdC[i * 3 + 1], crowdC[i * 3 + 2]));

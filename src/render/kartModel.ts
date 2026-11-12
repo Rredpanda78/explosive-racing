@@ -151,8 +151,12 @@ const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo,
 
 /** 模型放大倍率：Kenney 卡丁車原始約 1 m 寬，放大成遊戲中的車體尺寸 */
 const MODEL_SCALE = 1.9;
-/** Tripo 車體縮放到這個車長（公尺） */
-const CAR_LENGTH = 2.9;
+/**
+ * Tripo 車體依「體積」統一大小：長寬高的幾何平均縮放到這個值（公尺）。
+ * 只對齊車長的話，寬胖的車會比細長的車大一圈。
+ */
+const CAR_SIZE = 1.97;
+const CAR_MAX_LENGTH = 3.4;
 
 /** 車上各種配件的位置（車體座標，車頭朝 +Z） */
 interface Mounts {
@@ -220,7 +224,7 @@ export class KartView {
   private sprays: THREE.Mesh[] = [];
   private swirls: THREE.Sprite[] = [];
   private sprayT = 0;
-  private paint: THREE.MeshLambertMaterial;
+  private paint: THREE.MeshLambertMaterial | THREE.MeshStandardMaterial;
   /** 翼片等配件的顏色（Kenney 車用車身色，Tripo 車用車手代表色） */
   private trim: THREE.MeshLambertMaterial;
   private m: Mounts = { ...KART_MOUNTS };
@@ -313,7 +317,7 @@ export class KartView {
   private buildFromTripo(model: THREE.Object3D, look: KartLook): void {
     const box0 = new THREE.Box3().setFromObject(model);
     const size = box0.getSize(new THREE.Vector3()), c = box0.getCenter(new THREE.Vector3());
-    const s = CAR_LENGTH / Math.max(size.z, 0.001);
+    const s = Math.min(CAR_SIZE / Math.cbrt(Math.max(size.x * size.y * size.z, 1e-6)), CAR_MAX_LENGTH / Math.max(size.z, 0.001));
     model.scale.setScalar(s);
     model.position.set(-c.x * s, -box0.min.y * s, -c.z * s);
     this.body.add(model);
@@ -397,7 +401,7 @@ export class KartView {
       }
       m.material = tinted;
     });
-    this.trim = this.paint;
+    this.trim = this.paint as THREE.MeshLambertMaterial;
   }
 
   private buildProcedural(look: KartLook): void {

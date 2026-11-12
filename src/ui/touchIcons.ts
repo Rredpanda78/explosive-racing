@@ -36,11 +36,3 @@ const SECONDARY_ICON: Record<SecondaryId, string> = {
 export const primaryIcon = (id: PrimaryId) => PRIMARY_ICON[id];
 export const secondaryIcon = (id: SecondaryId) => SECONDARY_ICON[id];
 
-/** 五種手機按鈕樣式 */
-export const TOUCH_SKINS = [
-  { id: 1, name: '霓虹' },
-  { id: 2, name: '街機' },
-  { id: 3, name: '極簡' },
-  { id: 4, name: '戰鬥' },
-  { id: 5, name: '玻璃' },
-];

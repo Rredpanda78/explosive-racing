@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
@@ -17,6 +18,7 @@ import { Particles } from './particles';
 import { THEMES, type Theme } from './themes';
 import { Weather, type WeatherKind } from './weather';
 import { buildWorld, type World } from './world';
+import type { Quality } from '../settings';
 
 /** 每張地圖的天氣 */
 const WEATHER: Record<string, WeatherKind> = { meadow: 'petals', desert: 'sand', city: 'rain' };
@@ -31,6 +33,10 @@ export class GameView {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(66, 1, 0.3, 4000);
   mobile: boolean;
+  /** 景物、粒子減量（低畫質或手機中畫質） */
+  lowDetail: boolean;
+  /** 畫面震動倍率（設定） */
+  shakeMul = 1;
   shadows: boolean;
   /** 畫面震動強度 0~1（實際位移為平方） */
   shake = 0;
@@ -68,6 +74,8 @@ export class GameView {
   private clusterLight: THREE.InstancedMesh;
   private col = new THREE.Color();
   private sun: THREE.DirectionalLight;
+  /** 從太陽的反方向打過來的背光：讓車與景物的輪廓從背景跳出來 */
+  private rim: THREE.DirectionalLight;
   private hemi: THREE.HemisphereLight;
   private sunDir = new THREE.Vector3(0.6, 0.5, 0.4).normalize();
   /** 夜間地圖才會亮的車頭燈 */
@@ -85,11 +93,13 @@ export class GameView {
   private one = new THREE.Vector3(1, 1, 1);
   private up = new THREE.Vector3(0, 1, 0);
 
-  constructor(canvas: HTMLCanvasElement, mobile: boolean) {
+  constructor(canvas: HTMLCanvasElement, mobile: boolean, quality: Quality = mobile ? 'medium' : 'high') {
     this.mobile = mobile;
-    this.shadows = !mobile;
+    // 畫質：低 = 不開陰影與泛光、景物減量；中 = 電腦開陰影與泛光、手機不開；高 = 全開
+    this.lowDetail = quality === 'low' || (mobile && quality !== 'high');
+    this.shadows = quality === 'high' || (quality === 'medium' && !mobile);
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: mobile, powerPreference: 'high-performance' }));
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.5 : 2));
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'low' ? 1 : quality === 'medium' ? 1.5 : 2));
     // 色調映射：讓太陽、火焰這些很亮的地方平順地壓回螢幕能顯示的範圍，又不會讓顏色變灰
     r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1.08;
@@ -101,7 +111,12 @@ export class GameView {
     this.hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 1);
     const sun = (this.sun = new THREE.DirectionalLight(0xffffff, 2));
     this.headlight = new THREE.SpotLight(0xfff0d0, 0, 95, 0.52, 0.65, 1.3);
-    this.scene.add(this.hemi, sun, sun.target, this.headlight, this.headlight.target);
+    this.rim = new THREE.DirectionalLight(0xa9c8ff, 0.7);
+    this.scene.add(this.hemi, sun, sun.target, this.rim, this.rim.target, this.headlight, this.headlight.target);
+    // 環境反射（只影響車漆這類標準材質）
+    const pmrem = new THREE.PMREMGenerator(r);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
     if (this.shadows) {
       r.shadowMap.enabled = true;
       r.shadowMap.type = THREE.PCFShadowMap;
@@ -113,8 +128,8 @@ export class GameView {
       sun.shadow.normalBias = 0.07;
     }
 
-    // 後製：泛光讓火焰、噴射、太陽、加速帶發亮（手機為了效能不開）
-    if (!mobile) {
+    // 後製：泛光讓火焰、噴射、太陽、加速帶發亮
+    if (quality === 'high' || (quality === 'medium' && !mobile)) {
       const size = r.getDrawingBufferSize(new THREE.Vector2());
       const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
       this.composer = new EffectComposer(r, rt);
@@ -225,13 +240,16 @@ export class GameView {
     this.renderer.toneMappingExposure = th.exposure;
     if (this.bloomPass) this.bloomPass.strength = th.bloom;
     this.headlight.intensity = th.night ? 110 : 0;
-    this.world = buildWorld(track, th, this.shadows, this.mobile);
+    this.scene.environmentIntensity = th.night ? 0.18 : 0.32;
+    this.rim.color.setHex(th.night ? 0x7f9cff : 0xcfe0ff);
+    this.rim.intensity = th.night ? 0.9 : 0.55;
+    this.world = buildWorld(track, th, this.shadows, this.lowDetail);
     this.scene.add(this.world.group);
     // 天氣：路面上用路面高度，路外用地形高度
     this.weather?.dispose();
     const world = this.world;
     this.weather = new Weather(WEATHER[th.id] ?? 'petals', {
-      mobile: this.mobile,
+      mobile: this.lowDetail,
       groundY: (x, z) => {
         this.groundHint = track.probe(x, z, this.groundHint < 0 ? -1 : this.groundHint);
         return track.probeOn ? track.probeY : world.terrainH(x, z);
@@ -240,7 +258,7 @@ export class GameView {
     this.groundHint = -1;
     this.scene.add(this.weather.group);
     if (this.debris) this.scene.remove(this.debris.group);
-    this.debris = new Debris(this.mobile ? 16 : 36, this.shadows);
+    this.debris = new Debris(this.lowDetail ? 16 : 36, this.shadows);
     this.scene.add(this.debris.group);
   }
 
@@ -323,7 +341,7 @@ export class GameView {
   }
 
   addShake(a: number): void {
-    this.shake = Math.min(1, this.shake + a);
+    this.shake = Math.min(1, this.shake + a * this.shakeMul);
   }
 
   private sparks(x: number, y: number, z: number, n: number, speed: number, ground: number, vx = 0, vz = 0): void {
@@ -692,6 +710,8 @@ export class GameView {
     const g = 4;
     this.sun.target.position.set(Math.round(x / g) * g, y, Math.round(z / g) * g);
     this.sun.position.copy(this.sun.target.position).addScaledVector(this.sunDir, 220);
+    this.rim.target.position.copy(this.sun.target.position);
+    this.rim.position.set(this.sun.target.position.x - this.sunDir.x * 100, this.sun.target.position.y + 40, this.sun.target.position.z - this.sunDir.z * 100);
   }
 
   private updateChaseCam(dt: number, k: Kart, lookBack: boolean): void {
