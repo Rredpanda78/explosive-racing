@@ -51,6 +51,8 @@ const view = new GameView(canvas, coarse, settings.quality);
 const input = new Input();
 const hud = new Hud(track);
 const audio = new GameAudio();
+// 其他車的引擎聲以追車鏡頭當作聽者（方位、距離、都卜勒）
+audio.camera = view.camera;
 const haptics = new Haptics();
 // 沒有後製（低畫質、手機中畫質）時，N2O 的速度感改用 CSS 的簡易版
 document.body.classList.toggle('fx-lite', !view.postFx);
@@ -65,6 +67,8 @@ function applySettings(): void {
   audio.setWeaponPack(settings.weaponSound);
   hud.dmgNumbers = settings.dmgNumbers;
   hud.showInfo = settings.netInfo;
+  input.setKeys(settings.keys);
+  audio.setOtherEngines(settings.otherEngines);
   input.tiltMode = settings.control === 'tilt';
   input.tilt.range = settings.tiltRange;
   input.tilt.invert = settings.tiltInvert;

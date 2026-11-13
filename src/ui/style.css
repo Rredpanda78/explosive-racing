@@ -178,6 +178,19 @@ kbd { background: #343948; border-radius: 4px; padding: .05em .45em; font-family
 .setgrid h3 { grid-column: 1 / -1; margin: .6em 0 0; color: var(--accent); font-size: 1em; }
 .setgrid .touch-only { display: none; }
 @media (pointer: coarse) { .setgrid .touch-only { display: contents !important; } }
+/* 鍵盤按鍵：只在有滑鼠／鍵盤的裝置顯示（touch-only 的相反） */
+.setgrid .kb-only, .setgrid .keyrows { display: contents; }
+@media (pointer: coarse) { .setgrid .kb-only { display: none; } }
+.keyslots { display: flex; flex-wrap: wrap; align-items: center; gap: .45em; }
+.keyslots em { font-style: normal; font-size: .85em; opacity: .6; margin-left: .3em; }
+.keycap { font: inherit; font-weight: 800; min-width: 4.6em; padding: .28em .8em .22em; color: var(--cream); background: var(--navy-2); border: 2px solid rgba(243,234,213,.55); border-bottom-width: 4px; border-bottom-color: var(--navy-3); border-radius: .5em; cursor: pointer; letter-spacing: .02em; }
+.keycap:hover { border-color: var(--cream); border-bottom-color: var(--navy-3); }
+.keycap.empty { background: transparent; border-style: dashed; border-bottom-width: 2px; opacity: .55; min-width: 3.2em; }
+.keycap.empty:hover { opacity: .9; }
+.keycap.wait { background: var(--coral); border-color: var(--coral); border-bottom-color: var(--coral-2); animation: keywait 1s ease-in-out infinite alternate; }
+@keyframes keywait { from { box-shadow: 0 0 0 0 rgba(232,87,74,.55); } to { box-shadow: 0 0 0 .4em rgba(232,87,74,0); } }
+.setgrid small.keymsg { opacity: .75; }
+.setgrid small.keymsg.warn { color: var(--coral); opacity: 1; font-weight: 800; }
 /* 按鈕位置編輯模式 */
 #touch.editing { pointer-events: auto; background: rgba(0,0,0,.35); z-index: 50; }
 #touch.editing .tbtn, #touch.editing #t-steer { outline: 2px dashed rgba(255,255,255,.55); outline-offset: 4px; }

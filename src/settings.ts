@@ -1,4 +1,5 @@
 import type { EngineStyle, MusicStyle, WeaponPack } from './audio';
+import { defaultKeys, normalizeKeys, type KeyMap } from './keymap';
 
 /** 這台裝置的設定（跟存檔分開：畫質、音量、按鈕位置都是看裝置的） */
 export type Quality = 'low' | 'medium' | 'high';
@@ -39,6 +40,10 @@ export interface Settings {
   tiltInvert: boolean;
   /** 自訂的按鈕位置（沒有的就用預設位置） */
   layout: Record<string, ButtonPos>;
+  /** 鍵盤按鍵（電腦版；每個動作主要鍵＋第二個鍵） */
+  keys: KeyMap;
+  /** 聽得到附近其他車的引擎聲（有方位感） */
+  otherEngines: boolean;
 }
 
 const KEY = 'explosive-racing-settings-v1';
@@ -62,6 +67,8 @@ export function defaultSettings(mobile: boolean): Settings {
     tiltRange: 24,
     tiltInvert: false,
     layout: {},
+    keys: defaultKeys(),
+    otherEngines: true,
   };
 }
 
@@ -71,7 +78,8 @@ export function loadSettings(mobile: boolean): Settings {
     const raw = localStorage.getItem(KEY);
     if (!raw) return d;
     const s = JSON.parse(raw);
-    return { ...d, ...s, layout: { ...(s.layout ?? {}) } };
+    // 舊版存檔沒有 keys：補上預設鍵位（跟改版前一樣）
+    return { ...d, ...s, layout: { ...(s.layout ?? {}) }, keys: normalizeKeys(s.keys), otherEngines: s.otherEngines !== false };
   } catch {
     return d;
   }
