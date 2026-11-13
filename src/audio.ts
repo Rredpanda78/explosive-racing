@@ -25,6 +25,9 @@ export class GameAudio {
   weaponPack: WeaponPack = 'classic';
   private skidGain!: GainNode;
   private boostGain!: GainNode;
+  /** 壓路緣的隆隆聲：音量與「一格一格」的節奏（跟車速成正比） */
+  private rumbleGain!: GainNode;
+  private rumbleLfo!: OscillatorNode;
   muted = false;
 
   private mode: MusicMode = 'off';
@@ -81,6 +84,7 @@ export class GameAudio {
     this.skidGain = this.loopNoise('bandpass', 1900, 3, 0);
     // 加速帶、小噴的噴射聲（N2O 的聲音由引擎聲自己的加速層負責）
     this.boostGain = this.loopNoise('bandpass', 700, 0.8, 0);
+    this.initRumble();
     // 配樂：每 25 毫秒排好接下來 0.15 秒的音符（用音訊時鐘，畫面卡頓也不會亂拍）
     this.engine = new MusicEngine(ctx, this.music);
     this.engine.setStyle(this.musicStyle);
@@ -114,6 +118,44 @@ export class GameAudio {
     src.connect(f).connect(g).connect(this.sfx);
     src.start();
     return g;
+  }
+
+  /**
+   * 壓路緣的隆隆聲：低頻雜訊加一個低音，用方波調變音量做出「噠噠噠」壓過紅白條紋的節奏。
+   * 條紋每格約 2.5 公尺，所以節奏 = 車速 / 2.5（由 frame() 更新）
+   */
+  private initRumble(): void {
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 170;
+    lp.Q.value = 3;
+    const body = ctx.createOscillator();
+    body.type = 'triangle';
+    body.frequency.value = 52;
+    const bodyG = ctx.createGain();
+    bodyG.gain.value = 0.18;
+    const mod = ctx.createGain();
+    mod.gain.value = 0.5;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'square';
+    lfo.frequency.value = 10;
+    const depth = ctx.createGain();
+    depth.gain.value = 0.5;
+    lfo.connect(depth).connect(mod.gain);
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(lp).connect(mod);
+    body.connect(bodyG).connect(mod);
+    mod.connect(g).connect(this.sfx);
+    src.start();
+    body.start();
+    lfo.start();
+    this.rumbleGain = g;
+    this.rumbleLfo = lfo;
   }
 
   setMuted(m: boolean): void {
@@ -184,8 +226,8 @@ export class GameAudio {
   // 音效
   // ------------------------------------------------------------------
 
-  /** 每幀更新持續性的聲音（引擎、甩尾、噴射） */
-  frame(race: Race | null, active: boolean): void {
+  /** 每幀更新持續性的聲音（引擎、甩尾、噴射、壓路緣）；kerb = 玩家壓在路緣上的強度 0~1 */
+  frame(race: Race | null, active: boolean, kerb = 0): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
@@ -197,8 +239,11 @@ export class GameAudio {
       wpn.laserCharge(0, 0);
       this.skidGain.gain.setTargetAtTime(0, t, 0.05);
       this.boostGain.gain.setTargetAtTime(0, t, 0.05);
+      this.rumbleGain.gain.setTargetAtTime(0, t, 0.04);
       return;
     }
+    this.rumbleGain.gain.setTargetAtTime(kerb * 0.75, t, kerb > 0 ? 0.02 : 0.06);
+    if (kerb > 0) this.rumbleLfo.frequency.setTargetAtTime(clamp(Math.abs(p.speed) / 2.5, 4, 22), t, 0.05);
     const kind = PRIMARY[p.primary].kind;
     wpn.flame(p.firing > 0 && kind === 'flame', 1);
     // 雷射蓄力：音高往上爬的充能聲

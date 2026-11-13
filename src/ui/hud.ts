@@ -1,3 +1,4 @@
+import { Vector3 } from 'three';
 import { KILL_REWARD, STREAK_BONUS } from '../game/config';
 import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
@@ -62,6 +63,25 @@ export class Hud {
   private mapT = { s: 1, ox: 0, oz: 0, size: 220 };
   private cache: Record<string, string | number> = {};
   private scr = { x: 0, y: 0 };
+  /** 命中標記（準星旁的 X）：打中時小小的米白色，擊毀時大一點的珊瑚紅 */
+  private hitX = document.createElement('div');
+  /** 受擊方向：畫面中央一圈弧形，指向攻擊來的方向 */
+  private dirLayer = document.createElement('div');
+  private dirs: { el: HTMLElement; t: number; x: number; z: number; src: unknown }[] = [];
+  /** 連擊計數：短時間內連續打中 */
+  private comboEl = document.createElement('div');
+  private comboN = 0;
+  private comboT = 0;
+  private comboShown = 0;
+  private comboFrame = new Set<Kart>();
+  private flameComboT = 0;
+  /** 自己的雷射射出時畫面閃一下 */
+  private flashEl = document.createElement('div');
+  /** 這一幀有沒有在玩家附近爆炸（受擊方向改指向爆炸點） */
+  private blastNear = false;
+  private camDir = new Vector3();
+  /** 擊毀獎金：下一幀在被擊毀的車上方飄出來 */
+  private killText: { k: Kart; text: string; x: number; y: number; z: number } | null = null;
 
   constructor(track: Track) {
     this.setTrack(track);
@@ -70,6 +90,53 @@ export class Hud {
     });
     this.dmgLayer.id = 'dmgnums';
     this.root.appendChild(this.dmgLayer);
+    this.hitX.id = 'hitx';
+    this.dirLayer.id = 'dmgdir';
+    this.comboEl.id = 'combo';
+    this.flashEl.id = 'fx-flash';
+    for (let i = 0; i < 4; i++) {
+      const el = document.createElement('div');
+      this.dirLayer.appendChild(el);
+      this.dirs.push({ el, t: 0, x: 0, z: 0, src: null });
+    }
+    this.root.append(this.flashEl, this.dirLayer, this.hitX, this.comboEl);
+  }
+
+  /** 命中標記：重新播放動畫 */
+  private hitMark(kill: boolean): void {
+    const el = this.hitX;
+    if (!kill && el.classList.contains('kill') && el.getAnimations().some((a) => a.playState === 'running')) return;
+    el.className = '';
+    void el.offsetWidth;
+    el.className = kill ? 'kill' : 'on';
+  }
+
+  /** 連擊：同一幀同一台車只算一次 */
+  private addCombo(k: Kart): void {
+    if (this.comboFrame.has(k)) return;
+    this.comboFrame.add(k);
+    this.comboN = this.comboT > 0 ? this.comboN + 1 : 1;
+    this.comboT = 1.1;
+  }
+
+  /** 受擊方向：來源 (x, z)；同一個來源短時間內重複受擊只更新同一個弧 */
+  private hitFrom(x: number, z: number, src: unknown): void {
+    let d = this.dirs.find((o) => o.t > 0 && o.src === src && src !== null);
+    if (!d) d = this.dirs.reduce((a, b) => (a.t <= b.t ? a : b));
+    d.t = 1;
+    d.x = x;
+    d.z = z;
+    d.src = src;
+  }
+
+  /** 自己的雷射射出：整個畫面閃一下粉白色 */
+  private screenFlash(): void {
+    const el = this.flashEl;
+    el.style.transition = 'none';
+    el.style.opacity = '0.32';
+    void el.offsetWidth;
+    el.style.transition = 'opacity .22s ease-out';
+    el.style.opacity = '0';
   }
 
   /** 手機開火鈕：圖示與名稱依裝備的武器 */
@@ -106,6 +173,10 @@ export class Hud {
     this.missionT = 9;
     this.wasDrafting = false;
     this.missions.classList.remove('fade');
+    this.comboN = this.comboT = this.comboShown = 0;
+    this.comboEl.className = '';
+    this.hitX.className = '';
+    for (const d of this.dirs) { d.t = 0; d.el.style.opacity = '0'; }
   }
 
   hide(): void {
@@ -176,11 +247,37 @@ export class Hud {
         else this.popup(`${e.k.name} 遭到淘汰`, 'warn');
         break;
       case 'hit':
-        if (e.by === p) this.hitMarkT = 0.12;
+        if (e.by === p) {
+          this.hitMarkT = 0.12;
+          // 火焰每秒判定很多次：命中標記與連擊放慢一點算
+          if (e.w !== 'flame' || this.flameComboT <= 0) {
+            if (e.w === 'flame') this.flameComboT = 0.3;
+            this.hitMark(false);
+            this.addCombo(e.k);
+          }
+        }
+        if (e.k === p && e.by !== p) this.hitFrom(e.by.x, e.by.z, e.by);
+        break;
+      case 'blast':
+        // 玩家被爆炸波及：受擊方向指向爆炸點
+        if (!e.kart && Math.hypot(e.x - p.x, e.z - p.z) < e.r + 1.2 && !p.dead) {
+          this.blastNear = true;
+          if (Math.hypot(e.x - p.x, e.z - p.z) > 1.2) this.hitFrom(e.x, e.z, null);
+        }
         break;
       case 'dmg': {
+        if (e.k === p) {
+          // 受擊方向（子彈、火焰、雷射在 hit 事件處理；這裡補上導彈、地雷等沒有 hit 事件的）
+          if (e.by && e.by !== p && !this.blastNear && e.amount >= 0.5) this.hitFrom(e.by.x, e.by.z, e.by);
+          break;
+        }
         // 只顯示玩家打出去的傷害
-        if (e.by !== p || e.k === p) break;
+        if (e.by !== p) break;
+        // 爆炸、雷射這種一下很大的傷害：也算命中
+        if (e.amount >= 12) {
+          this.hitMark(false);
+          this.addCombo(e.k);
+        }
         const a = this.dmgAcc.get(e.k) ?? { amt: 0, t: 0, fatal: false, mine: true };
         a.amt += e.amount;
         a.fatal = a.fatal || e.fatal;
@@ -191,6 +288,7 @@ export class Hud {
         if (e.k === p) this.popup('捷徑！', 'gold');
         break;
       case 'hazard':
+        if (e.k === p) this.hitFrom(e.x, e.z, null);
         if (e.k === p) this.popup(e.kind === 'hammer' ? '被鐵鎚砸飛！' : e.kind === 'tram' ? '被電車撞飛！' : '被落石撞到！', 'warn');
         break;
       case 'lock':
@@ -200,6 +298,8 @@ export class Hud {
         if ((e.a === p || e.b === p) && e.power > 5) {
           const fast = p.boostT > 0 || p.padT > 0;
           this.popup(fast ? '噴射衝撞！' : '碰撞！', fast ? 'gold' : '');
+          const o = e.a === p ? e.b : e.a;
+          this.hitFrom(o.x, o.z, o);
         }
         break;
       case 'kart':
@@ -213,6 +313,7 @@ export class Hud {
         else if (e.e === 'hardDrift') this.popup('重甩！', 'gold');
         break;
       case 'rail':
+        if (e.k === p) this.screenFlash();
         if (e.k === p && e.hits >= 2) this.popup(`雷射貫穿 ×${e.hits}`, 'gold');
         break;
       case 'kill': {
@@ -225,7 +326,11 @@ export class Hud {
         while (this.feed.children.length > 4) this.feed.firstChild!.remove();
         if (e.killer === p) {
           this.flash(e.streak >= 2 ? `連續擊毀 ×${e.streak}` : '擊毀！');
-          this.popup(`+$${KILL_REWARD + (e.streak - 1) * STREAK_BONUS}　N2O +1`, 'gold');
+          this.popup('N2O +1', 'blue');
+          this.hitMark(true);
+          // 被擊毀的車上方飄出獎金（連續擊毀另外加獎金）
+          const cash = KILL_REWARD + Math.max(0, e.streak - 1) * STREAK_BONUS;
+          this.killText = { k: e.victim, text: `+$${cash} 擊毀！`, x: e.victim.x, y: e.victim.y, z: e.victim.z };
         }
         break;
       }
@@ -276,7 +381,8 @@ export class Hud {
       this.cache.fxs = sp;
       this.fxSpeed.style.opacity = String(sp);
     }
-    this.hitK = p.dead ? 0.7 : Math.max(p.sinceDamage < 0.1 ? 1 : 0, this.hitK - 0.04, p.hp < p.maxHp * 0.3 ? 0.45 : 0);
+    // 紅色邊框保持低調：受擊方向由中央的弧形指示，這裡只是淡淡一圈
+    this.hitK = p.dead ? 0.55 : Math.max(p.sinceDamage < 0.1 ? 0.45 : 0, this.hitK - 0.03, p.hp < p.maxHp * 0.3 ? 0.3 : 0);
     const hk = Math.round(this.hitK * 10) / 10;
     if (this.cache.fxh !== hk) {
       this.cache.fxh = hk;
@@ -305,12 +411,21 @@ export class Hud {
     const ax = p.x + Math.sin(p.heading) * 45, az = p.z + Math.cos(p.heading) * 45;
     if (show && view.project(ax, p.y + 0.95 + Math.tan(p.pitch) * 45, az, this.scr)) {
       this.reticle.style.display = 'block';
-      this.reticle.style.transform = 'translate(' + this.scr.x.toFixed(1) + 'px, ' + this.scr.y.toFixed(1) + 'px)';
+      const tr = 'translate(' + this.scr.x.toFixed(1) + 'px, ' + this.scr.y.toFixed(1) + 'px)';
+      this.reticle.style.transform = tr;
+      // 命中標記與連擊數跟著準星
+      this.hitX.style.transform = tr;
+      this.comboEl.style.transform = tr;
     } else {
       this.reticle.style.display = 'none';
     }
     this.hitMarkT -= dt;
     this.cls('hitmark', this.reticle, 'hit', this.hitMarkT > 0);
+    this.updateCombo(dt);
+    this.updateHitDirs(view, p, dt);
+    this.blastNear = false;
+    this.comboFrame.clear();
+    this.flameComboT -= dt;
 
     // 任務：開場顯示幾秒後淡出，進度每半秒更新一次
     this.missionT -= dt;
@@ -343,8 +458,57 @@ export class Hud {
     this.set('tboostn', this.tBoostN, mini || p.n2o === 0 ? '' : '×' + p.n2o);
   }
 
+  /** 連擊數：3 下以上才顯示，1.1 秒沒打中就歸零 */
+  private updateCombo(dt: number): void {
+    this.comboT -= dt;
+    if (this.comboT <= 0) this.comboN = 0;
+    const n = this.comboN >= 3 ? this.comboN : 0;
+    if (n === this.comboShown) return;
+    this.comboShown = n;
+    if (!n) {
+      this.comboEl.className = 'out';
+      return;
+    }
+    this.comboEl.textContent = `連擊 ×${n}`;
+    // 每多一下就跳一下（重新播放動畫）
+    this.comboEl.className = '';
+    void this.comboEl.offsetWidth;
+    this.comboEl.className = n >= 10 ? 'on hot' : 'on';
+  }
+
+  /** 受擊方向的弧：依攻擊來源相對鏡頭的方向旋轉，0.9 秒內淡掉 */
+  private updateHitDirs(view: GameView, p: Kart, dt: number): void {
+    let yaw = NaN;
+    for (const d of this.dirs) {
+      if (d.t <= 0) continue;
+      d.t = Math.max(0, d.t - dt / 0.9);
+      if (Number.isNaN(yaw)) {
+        view.camera.getWorldDirection(this.camDir);
+        yaw = Math.atan2(this.camDir.x, this.camDir.z);
+      }
+      // 來源在鏡頭左邊 → 弧在畫面左邊（追尾視角裡 +X 在左）
+      const a = Math.atan2(d.x - p.x, d.z - p.z) - yaw;
+      d.el.style.transform = `rotate(${(-a).toFixed(3)}rad)`;
+      d.el.style.opacity = (d.t * d.t).toFixed(2);
+    }
+  }
+
   /** 每 0.25 秒把累積的傷害變成一個往上飄的數字，擊毀那一下用金色大字 */
   private updateDamageNumbers(view: GameView, dt: number): void {
+    // 擊毀獎金：在被擊毀的車上方飄出「+$150 擊毀！」（不受傷害數字設定影響）
+    const kt = this.killText;
+    if (kt) {
+      this.killText = null;
+      if (view.project(kt.x, kt.y + 3.6, kt.z, this.scr)) {
+        const d = document.createElement('div');
+        d.className = 'kill';
+        d.textContent = kt.text;
+        d.style.left = this.scr.x.toFixed(0) + 'px';
+        d.style.top = this.scr.y.toFixed(0) + 'px';
+        this.dmgLayer.appendChild(d);
+        setTimeout(() => d.remove(), 1500);
+      }
+    }
     if (!this.dmgNumbers) { this.dmgAcc.clear(); return; }
     for (const [k, a] of this.dmgAcc) {
       a.t += dt;

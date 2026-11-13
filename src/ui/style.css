@@ -550,3 +550,34 @@ body.touch #missions { top: calc(33 * var(--u)); }
 
 /* 主選單的帳號按鈕：登入後顯示名字 */
 .m-links button.acct-on { color: var(--coral); }
+
+/* ---------- 手感回饋：命中標記、受擊方向、連擊、擊毀獎金、雷射閃光 ---------- */
+/* 命中標記：準星外圍四段斜線（X），打中時小、擊毀時大而且是珊瑚紅 */
+#hitx { position: absolute; left: 0; top: 0; width: calc(5 * var(--u)); height: calc(5 * var(--u)); margin: calc(-2.5 * var(--u)) 0 0 calc(-2.5 * var(--u)); opacity: 0; pointer-events: none; --c: var(--cream); }
+#hitx::before, #hitx::after { content: ""; position: absolute; left: 0; top: 50%; width: 100%; height: calc(.42 * var(--u)); margin-top: calc(-.21 * var(--u)); background: linear-gradient(90deg, var(--c) 0 32%, transparent 32% 68%, var(--c) 68% 100%); filter: drop-shadow(0 0 2px rgba(19,40,75,.95)); }
+#hitx::before { rotate: 45deg; }
+#hitx::after { rotate: -45deg; }
+#hitx.on { animation: hitx .22s ease-out forwards; }
+#hitx.kill { --c: var(--coral); animation: hitxk .55s ease-out forwards; }
+@keyframes hitx { 0% { opacity: 1; scale: 1.35; } 100% { opacity: 0; scale: 1; } }
+@keyframes hitxk { 0% { opacity: 1; scale: 2.4; } 30% { opacity: 1; scale: 1.7; } 100% { opacity: 0; scale: 1.6; } }
+/* 受擊方向：畫面中央一圈橢圓的一小段弧，指向攻擊來的方向 */
+#dmgdir { position: absolute; left: 50%; top: 52%; width: 0; height: 0; pointer-events: none; }
+#dmgdir div { position: absolute; left: calc(-30 * var(--u)); top: calc(-24 * var(--u)); width: calc(60 * var(--u)); height: calc(48 * var(--u)); border-radius: 50%; border: calc(1.1 * var(--u)) solid transparent; border-top-color: rgba(232, 87, 74, .95); opacity: 0; filter: drop-shadow(0 0 calc(.8 * var(--u)) rgba(232, 87, 74, .8)); }
+/* 連擊數：準星右上方的小膠囊 */
+#combo { position: absolute; left: 0; top: 0; pointer-events: none; opacity: 0; white-space: nowrap; font-style: italic; font-weight: 900; font-size: calc(2.6 * var(--u)); color: var(--cream); background: rgba(19, 40, 75, .88); border: 2px solid var(--cream); border-radius: 99px; padding: 0 .6em; margin: calc(2.6 * var(--u)) 0 0 calc(3.4 * var(--u)); text-shadow: none; }
+#combo.on { animation: combo .16s ease-out forwards; }
+#combo.hot { color: #fff; background: var(--coral); border-color: var(--cream); }
+#combo.out { animation: comboout .3s ease-in forwards; }
+@keyframes combo { 0% { opacity: 1; scale: 1.3; } 100% { opacity: 1; scale: 1; } }
+@keyframes comboout { 0% { opacity: 1; } 100% { opacity: 0; translate: 0 -.6em; } }
+/* 傷害數字：米白字、深藍描邊；一下很痛的用珊瑚紅；擊毀那一下用珊瑚紅底的膠囊 */
+#dmgnums div { color: var(--cream); -webkit-text-stroke: calc(.35 * var(--u)) var(--navy); paint-order: stroke fill; text-shadow: 0 2px 0 rgba(19,40,75,.6); }
+#dmgnums div.big { color: #ff8a7a; }
+#dmgnums div.fatal { color: var(--cream); background: var(--coral); -webkit-text-stroke: 0; border: 2px solid var(--cream); border-radius: 99px; padding: 0 .4em; font-size: calc(3.4 * var(--u)); }
+#dmgnums div.kill { color: var(--cream); background: rgba(19, 40, 75, .92); border: 2px solid var(--coral); -webkit-text-stroke: 0; border-radius: 99px; padding: .05em .7em; font-size: calc(3.6 * var(--u)); white-space: nowrap; animation: killfly 1.5s ease-out forwards; }
+@keyframes killfly { 0% { opacity: 0; scale: .5; margin-top: 0; } 12% { opacity: 1; scale: 1.2; } 22% { scale: 1; } 75% { opacity: 1; } 100% { opacity: 0; margin-top: calc(-9 * var(--u)); } }
+/* 自己的雷射射出：整個畫面閃一下 */
+#fx-flash { position: absolute; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(circle at 50% 55%, rgba(255, 235, 245, .9), rgba(255, 120, 170, .55) 60%, rgba(255, 90, 140, .35)); }
+/* 沒有後製的畫質（低畫質、手機中畫質）：N2O 時速度線外圈再加一層偏藍的暗角，代替放射模糊 */
+body.fx-lite #fx-speed::after { content: ""; position: absolute; inset: 18%; background: radial-gradient(circle, transparent 42%, rgba(40, 120, 255, .22) 70%, rgba(10, 20, 60, .5) 100%); }
