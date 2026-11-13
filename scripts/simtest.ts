@@ -2,13 +2,15 @@
 // 1. 地形不能蓋住路面（之前破圖的原因）
 // 2. 8 台車全由 AI 跑完競速賽與淘汰賽
 // 3. 玩家的甩尾／集氣在各種操作下的表現
+import { AIController } from '../src/game/ai';
 import { CFG } from '../src/game/config';
+import { DIFFICULTY } from '../src/game/difficulty';
 import { emptyInput } from '../src/game/kart';
 import { Race } from '../src/game/race';
 import { defaultProfile } from '../src/game/save';
 import { makeTerrain } from '../src/game/terrain';
 import { Track, TRACKS } from '../src/game/track';
-import { wrapAngle } from '../src/game/util';
+import { mulberry32, wrapAngle } from '../src/game/util';
 import { PRIMARY_IDS, SECONDARY_IDS } from '../src/game/weapons';
 
 for (const def of TRACKS) {
@@ -633,6 +635,218 @@ for (const def of TRACKS) {
   if (!cut.took || cut.fell) throw new Error('could not drive along the shortcut');
   if (main.t - cut.t < 1) throw new Error('the shortcut should save at least a second');
   if (!fall.fell || fall.t < cut.t + 1.5) throw new Error('falling off the broken tube should cost time');
+}
+// ---- 7. 廟口夜市：街頭機關（機車、鞭炮、強風、平交道的火車）只看時鐘、撞到的效果、AI、夜市小巷的風險 ----
+{
+  // 原本的六條賽道順序不能動（線上房間用索引選賽道）；新賽道接在後面
+  const ORIGINAL = ['skyline-loop', 'red-canyon', 'neon-bay', 'neon-heights', 'forest-jump', 'canyon-rush'];
+  ORIGINAL.forEach((id, i) => { if (TRACKS[i]?.id !== id) throw new Error(`track order changed at ${i}`); });
+  const ti = TRACKS.findIndex((d) => d.id === 'temple-night');
+  if (ti < ORIGINAL.length) throw new Error('temple-night must be appended after the original tracks');
+  const def = TRACKS[ti];
+  if (def.theme !== 'taiwan' || def.laps !== 2) throw new Error('temple-night should be a 2-lap taiwan-theme track');
+  const track = new Track(def);
+  const dt = 1 / 60;
+  const kinds = new Set<string>((def.hazards ?? []).map((h) => (h.kind === 'tram' && h.train ? 'train' : h.kind)));
+  for (const k of ['scooter', 'firecracker', 'train', 'gust']) if (!kinds.has(k)) throw new Error(`temple-night is missing its ${k} hazard`);
+  console.log(`--- temple-night (#${ti}): ${def.name}, ${track.length.toFixed(0)} m, hazards ${[...kinds].join('/')} ---`);
+
+  // 1. 確定性：兩場不同亂數種子的比賽，同一個時鐘下所有街頭機關的狀態一模一樣（連線時每台電腦算的一樣）
+  {
+    const a = new Race(track, defaultProfile(), 'race', 1), b = new Race(track, defaultProfile(), 'race', 98765);
+    a.autoPlayer = b.autoPlayer = true;
+    a.player.aiAssist = b.player.aiAssist = true;
+    const sig = (r: Race) => r.hazards.map((h) => [
+      h.def.kind, h.c.toFixed(3), h.warn, h.gust?.toFixed(4) ?? '',
+      (h.riders ?? []).map((q) => (q.on ? `${q.x.toFixed(3)},${q.z.toFixed(3)}` : '-')).join(';'),
+      (h.mats ?? []).map((m) => `${m.state}:${m.t.toFixed(3)}`).join(';'),
+    ].join('|')).join(' ');
+    let checks = 0, riders = 0, bursts = 0, trains = 0, gusts = 0;
+    for (let i = 0; i < 60 * 60; i++) {
+      a.step(dt, emptyInput());
+      b.step(dt, emptyInput());
+      a.events.length = b.events.length = 0;
+      if (i % 20) continue;
+      if (sig(a) !== sig(b)) throw new Error(`street hazards differ between seeds at t=${a.clock.toFixed(2)}`);
+      checks++;
+      for (const h of a.hazards) {
+        riders += (h.riders ?? []).filter((q) => q.on).length;
+        bursts += (h.mats ?? []).filter((m) => m.state === 2).length;
+        if (h.def.train && h.moving) trains++;
+        if ((h.gust ?? 0) > 0.5) gusts++;
+      }
+    }
+    console.log(`determinism: ${checks} snapshots identical across seeds (riders seen ${riders}, bursting mats ${bursts}, train moving ${trains}, strong gust ${gusts})`);
+    if (!riders || !bursts || !trains || !gusts) throw new Error('some street hazard never became active');
+  }
+
+  // 放一台車在 dist 處（其他車退出），回傳 race 與車
+  const place = (dist: number, lat: number, speed: number, seed = 5) => {
+    const race = new Race(track, defaultProfile(), 'race', seed);
+    for (const o of race.karts) if (!o.isPlayer) o.out = true;
+    const k = race.player;
+    while (race.state === 'countdown') race.step(dt, emptyInput());
+    const i = track.wrap(Math.round(dist / track.spacing)), s = track.samples[i];
+    k.x = s.x + s.nx * lat; k.z = s.z + s.nz * lat; k.y = s.y; k.idx = i; k.lat = lat; k.prog = i; k.progFine = i; k.lapCount = 0;
+    k.heading = Math.atan2(s.tx, s.tz); k.speed = speed; k.vx = s.tx * speed; k.vz = s.tz * speed;
+    return { race, k };
+  };
+  // 2. 撞到機車：被彈開、掉速，不扣血（不會被撞爆）
+  {
+    const h0 = track.def.hazards!.find((h) => h.kind === 'scooter' && !h.len)!;
+    const { race, k } = place(h0.dist - 40, 0, 30);
+    const hz = race.hazards.find((h) => h.def === h0)!;
+    // 等到有一台機車騎到路中央附近，再把車放在它前面 6 公尺、正對著它開過去
+    let r = null as null | NonNullable<typeof hz.riders>[number];
+    for (let i = 0; i < 60 * 20 && !r; i++) {
+      race.step(dt, emptyInput());
+      race.events.length = 0;
+      r = hz.riders!.find((q) => q.on && Math.abs((q.x - hz.x) * hz.nx + (q.z - hz.z) * hz.nz) < 2) ?? null;
+    }
+    if (!r) throw new Error('no scooter crossed the road');
+    const hp0 = k.hp = k.maxHp;
+    k.invulnT = 0;
+    k.x = r.x - hz.tx * 6; k.z = r.z - hz.tz * 6; k.heading = Math.atan2(hz.tx, hz.tz);
+    k.speed = 30; k.vx = hz.tx * 30; k.vz = hz.tz * 30;
+    k.idx = track.locate(k.x, k.z, -1);
+    let hit = false;
+    const inp = emptyInput();
+    inp.accel = 1;
+    for (let i = 0; i < 30 && !hit; i++) {
+      race.step(dt, inp);
+      for (const e of race.events) if (e.t === 'hazard' && e.kind === 'scooter' && e.k === k) hit = true;
+      race.events.length = 0;
+    }
+    const v = Math.hypot(k.vx, k.vz);
+    console.log(`scooter bump: hit ${hit}, speed 30 → ${v.toFixed(1)} m/s, hp ${k.hp.toFixed(0)}/${hp0}`);
+    if (!hit || v > 26 || k.hp < hp0 || k.dead) throw new Error('scooter bump should slow the kart without damaging it');
+  }
+  // 3. 鞭炮炸開時開上去：小扣血、被炸得往旁邊彈；沒炸的鞭炮可以安全開過
+  {
+    const fz = track.def.hazards!.find((h) => h.kind === 'firecracker')!;
+    const { race, k } = place(fz.dist - 30, 0, 20);
+    const hz = race.hazards.find((h) => h.def === fz)!;
+    const m = hz.mats![0];
+    k.invulnT = 0;
+    // 等到這片鞭炮剛開始炸
+    for (let i = 0; i < 60 * 10 && !(m.state === 2 && m.t < 0.15); i++) { race.step(dt, emptyInput()); race.events.length = 0; }
+    k.x = m.x - m.tx * 1; k.z = m.z - m.tz * 1; k.heading = Math.atan2(m.tx, m.tz); k.vx = m.tx * 15; k.vz = m.tz * 15; k.speed = 15;
+    k.idx = track.locate(k.x, k.z, -1);
+    const hp0 = k.hp = k.maxHp;
+    const lat0 = (k.x - m.x) * m.nx + (k.z - m.z) * m.nz;
+    let hit = false;
+    for (let i = 0; i < 20; i++) {
+      race.step(dt, emptyInput());
+      for (const e of race.events) if (e.t === 'hazard' && e.kind === 'firecracker' && e.k === k) hit = true;
+      race.events.length = 0;
+    }
+    const pushed = Math.abs((k.x - m.x) * m.nx + (k.z - m.z) * m.nz - lat0);
+    console.log(`firecracker: hit ${hit}, damage ${(hp0 - k.hp).toFixed(0)}, pushed sideways ${pushed.toFixed(1)} m`);
+    if (!hit || hp0 - k.hp < 3 || hp0 - k.hp > 15 || pushed < 0.8) throw new Error('bursting firecrackers should do small damage and push the kart');
+    // 沒在炸的時候開過去不會怎樣
+    for (let i = 0; i < 60 * 10 && m.state !== 0; i++) { race.step(dt, emptyInput()); race.events.length = 0; }
+    k.x = m.x - m.tx * 2; k.z = m.z - m.tz * 2; k.hp = k.maxHp; k.hazardCd = 0;
+    let quiet = true;
+    for (let i = 0; i < 10; i++) {
+      race.step(dt, emptyInput());
+      for (const e of race.events) if (e.t === 'hazard' && e.k === k) quiet = false;
+      race.events.length = 0;
+    }
+    if (!quiet) throw new Error('idle firecrackers hurt the kart');
+  }
+  // 4. 河堤強風：有風的時候，不打方向盤的車會被吹往側邊（沒風的時候不會）
+  {
+    const gd = track.def.hazards!.find((h) => h.kind === 'gust')!;
+    const drift = (strong: boolean) => {
+      const { race, k } = place(gd.dist + 20, 0, 30);
+      const hz = race.hazards.find((h) => h.def === gd)!;
+      // 跳到想要的風況（只推時鐘，不動車）
+      for (let i = 0; i < 60 * 12 && (strong ? (hz.gust ?? 0) < 0.95 : (hz.gust ?? 0) > 0.01); i++) { race.clock += dt; race.step(0, emptyInput()); }
+      const i0 = track.wrap(Math.round((gd.dist + 20) / track.spacing)), s = track.samples[i0];
+      k.x = s.x; k.z = s.z; k.idx = i0; k.lat = 0; k.heading = Math.atan2(s.tx, s.tz); k.vx = s.tx * 30; k.vz = s.tz * 30;
+      const inp = emptyInput();
+      inp.accel = 1;
+      for (let i = 0; i < 50; i++) { race.step(dt, inp); race.events.length = 0; }
+      return k.lat;
+    };
+    const calm = drift(false), windy = drift(true);
+    // 不打方向盤時路本身的彎度也會讓車偏一點：比較有風與沒風的差別
+    console.log(`gust: lateral drift in 0.8 s without steering, calm ${calm.toFixed(2)} m vs strong gust ${windy.toFixed(2)} m`);
+    if (windy - calm < 0.8) throw new Error('gusts should push karts sideways while blowing');
+  }
+  // 5. 夜市小巷：帶著 N2O 乾淨地鑽過去比主線快；沒閃障礙物、直直撞上去反而比較慢
+  {
+    const br = track.branches[0];
+    const from = br.def.from - 40, to = br.def.to + 30;
+    /** alley = 走巷子；sloppy = 自己沿巷子中線直直開（不閃攤車）；n2o = 帶幾瓶 N2O */
+    const run = (alley: boolean, n2o: number, sloppy = false) => {
+      const { race, k } = place(from, 0, 32, 11);
+      k.invulnT = 1e9;
+      const ai = new AIController(mulberry32(3), 1, { ...DIFFICULTY.normal, shortcut: alley ? 1 : 0 });
+      ai.baseSpeedMul = k.maxSpeedMul;
+      race.ais.set(k, ai);
+      race.autoPlayer = true;
+      k.aiAssist = true;
+      // sloppy：AI 只在有 N2O 時才走碎石捷徑，先給一瓶讓它決定走巷子（第一幀後就收回）
+      k.n2o = sloppy ? 1 : n2o;
+      k.gauge = 0;
+      let t = 0, cut = false, posts = 0;
+      const startProg = k.progFine;
+      const need = (to - from) / track.spacing;
+      const inp = emptyInput();
+      inp.accel = 1;
+      while (t < 30 && k.progFine - startProg < need) {
+        if (sloppy && k.branch) {
+          // 進了巷子：沿巷子中線直直往前，不閃攤車、不開 N2O
+          race.autoPlayer = false;
+          const s2 = k.branch.samples[Math.min(k.branch.n - 1, k.bIdx + 8)];
+          inp.steer = Math.max(-1, Math.min(1, wrapAngle(Math.atan2(s2.x - k.x, s2.z - k.z) - k.heading) * 2.5));
+          race.step(dt, inp);
+        } else {
+          race.autoPlayer = true;
+          race.step(dt, emptyInput());
+          if (sloppy) { k.n2o = 0; k.boostT = 0; }
+        }
+        for (const e of race.events) {
+          if (e.t === 'shortcut' && e.k === k) cut = true;
+          if (e.t === 'kart' && e.k === k && e.e === 'post') posts++;
+        }
+        race.events.length = 0;
+        t += dt;
+      }
+      return { t, cut, posts };
+    };
+    // 兩邊都帶一瓶 N2O（巷子裡用掉、或主線直線上用掉）
+    const mainN = run(false, 1), cleanN = run(true, 1), main0 = run(false, 0), sloppy0 = run(true, 0, true);
+    console.log(`alley (${from}→${to} m): with N2O main ${mainN.t.toFixed(2)} s vs alley ${cleanN.t.toFixed(2)} s (posts hit ${cleanN.posts}, took it ${cleanN.cut}); without N2O main ${main0.t.toFixed(2)} s vs ploughing straight through the stalls ${sloppy0.t.toFixed(2)} s (posts hit ${sloppy0.posts}, took it ${sloppy0.cut})`);
+    if (mainN.cut || main0.cut || !cleanN.cut || !sloppy0.cut) throw new Error('alley test did not take the intended line');
+    if (cleanN.t > mainN.t - 0.25) throw new Error('the alley with N2O should be faster than the main line');
+    if (sloppy0.posts < 2 || sloppy0.t < main0.t - 0.2) throw new Error('crashing through the alley should not pay off');
+  }
+  // 6. AI：三場比賽都跑完，機車與鞭炮偶爾會撞到但不會一直撞
+  {
+    let hits = 0, laps = 0;
+    const byKind: Record<string, number> = {};
+    for (const seed of [12345, 2024, 31337]) {
+      const race = new Race(track, defaultProfile(), 'race', seed);
+      race.autoPlayer = true;
+      race.player.aiAssist = true;
+      let t = 0;
+      while (t < 400 && !race.karts.every((k) => k.finished)) {
+        race.step(dt, emptyInput());
+        for (const e of race.events) if (e.t === 'hazard') {
+          byKind[e.kind] = (byKind[e.kind] ?? 0) + 1;
+          if (e.kind === 'scooter' || e.kind === 'firecracker') hits++;
+        }
+        race.events.length = 0;
+        t += dt;
+      }
+      if (!race.karts.every((k) => k.finished)) throw new Error(`AI did not finish temple-night (seed ${seed})`);
+      laps += race.karts.length * track.laps;
+    }
+    console.log(`AI: 3 races finished, hazard hits ${JSON.stringify(byKind)} over ${laps} kart-laps (scooter + firecracker ${(hits / laps).toFixed(2)} per lap)`);
+    if (hits / laps > 0.5) throw new Error('AI keeps running into scooters and firecrackers');
+  }
 }
 console.log('SIM OK');
 

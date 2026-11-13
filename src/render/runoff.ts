@@ -437,7 +437,7 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
       }
       // 霓虹燈條（白天是紅白相間的反光條）
       const stripMat = theme.night
-        ? new THREE.MeshBasicMaterial({ color: new THREE.Color(sg > 0 ? 0x22e6ff : 0xff3d9a).multiplyScalar(1.9), side: THREE.DoubleSide })
+        ? new THREE.MeshBasicMaterial({ color: new THREE.Color(sg > 0 ? theme.edgeNeon?.[0] ?? 0x22e6ff : theme.edgeNeon?.[1] ?? 0xff3d9a).multiplyScalar(1.9), side: THREE.DoubleSide })
         : new THREE.MeshLambertMaterial({ color: 0xe8343f, side: THREE.DoubleSide });
       // 貼在內側斜面前面一點點（斜面在 0.66 m 高處約 FACE+0.21、0.86 m 處約 FACE+0.26）
       const lo = (i: number) => sg * (hw + w[i] + FACE + 0.19), hi = (i: number) => sg * (hw + w[i] + FACE + 0.237);

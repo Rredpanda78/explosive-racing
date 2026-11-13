@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BOULDER, HAMMER, TRAM, type Race } from '../game/race';
 import type { Track } from '../game/track';
+import { StreetHazardView } from './streetHazards';
 import type { Theme } from './themes';
 
 const glow = (hex: number, k: number) => new THREE.Color(hex).multiplyScalar(k);
@@ -45,6 +46,8 @@ export class HazardView {
   private hammers = new Map<number, HammerParts>();
   private trams = new Map<number, TramParts>();
   private rocks: THREE.Mesh[] = [];
+  /** 廟口夜市的街頭機關（機車、鞭炮、平交道的火車、強風） */
+  private street: StreetHazardView | null = null;
   private lampOn: THREE.Material;
   private lampOff: THREE.Material;
   private disposables: { dispose(): void }[] = [];
@@ -64,6 +67,8 @@ export class HazardView {
     this.disposables.push(yb, ybMat, steel, dark, red, this.lampOn, this.lampOff);
 
     race.hazards.forEach((h, i) => {
+      // 街頭機關與平交道的火車由 StreetHazardView 畫
+      if (h.def.kind === 'scooter' || h.def.kind === 'firecracker' || h.def.kind === 'gust' || (h.def.kind === 'tram' && h.def.train)) return;
       const g = new THREE.Group();
       g.position.set(h.x, h.y, h.z);
       g.rotation.y = Math.atan2(h.tx, h.tz);
@@ -178,6 +183,11 @@ export class HazardView {
       }
     });
 
+    if (StreetHazardView.wants(race)) {
+      this.street = new StreetHazardView(race, track, theme, shadows, !shadows);
+      this.group.add(this.street.group);
+    }
+
     // 滾石的物件池
     if (race.hazards.some((h) => h.def.kind === 'boulder')) {
       const geo = new THREE.DodecahedronGeometry(BOULDER.r, 1);
@@ -202,6 +212,7 @@ export class HazardView {
   }
 
   update(race: Race, time: number): void {
+    this.street?.update(race, time);
     race.hazards.forEach((h, i) => {
       const hm = this.hammers.get(i);
       if (hm) hm.pivot.rotation.z = h.theta;
@@ -232,5 +243,6 @@ export class HazardView {
       if (m.isMesh && m.geometry) m.geometry.dispose();
     });
     for (const d of this.disposables) d.dispose();
+    this.street?.dispose();
   }
 }

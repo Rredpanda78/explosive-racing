@@ -1,10 +1,15 @@
 import { CFG } from './config';
 import type { Difficulty } from './difficulty';
 import type { Kart, KartInput } from './kart';
-import type { Race } from './race';
+import { tramSpec, type Race } from './race';
+import { CRACKER, crackerHotIn, riderAhead, SCOOTER } from './street';
 import type { Branch } from './track';
 import { clamp, wrapAngle } from './util';
 import { PRIMARY } from './weapons';
+
+/** 鞭炮陣裡可以選的車道（橫向位置）與每條車道的危險分數 */
+const CRACK_LANES = [-10.6, -7.5, -4.5, -1.5, 1.5, 4.5, 7.5, 10.6];
+const CRACK_SCORE = new Float32Array(CRACK_LANES.length);
 
 /** 電腦車手：沿賽道前視點行駛，直線用 N2O，前方有目標就開火，會閃地雷與滾石、偶爾走捷徑。 */
 export class AIController {
@@ -26,6 +31,9 @@ export class AIController {
   /** 上一幀是否在彎道中（出彎時給小噴） */
   private inCorner = false;
   private planned: Branch | null = null;
+  /** 這次通過鞭炮陣的決定：貼哪一側路邊（0 = 從中間鑽） */
+  private crackPass: object | null = null;
+  private crackSide = 0;
   private rng: () => number;
   private inp: KartInput = { steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false };
 
@@ -75,6 +83,50 @@ export class AIController {
     }
     for (const m of race.mines) if (m.owner !== k) dodge(m.x, m.z, 0.8);
     for (const b of race.boulders) if (b.enterT < 0.5) dodge(b.x, b.z, b.r);
+    // 街頭機關：機車閃「到達時它會在的位置」，鞭炮閃「到達時會炸開的那片」
+    for (const h of race.hazards) {
+      if (h.riders) {
+        for (const r of h.riders) {
+          if (!r.on) continue;
+          const ahead = (r.x - k.x) * fx + (r.z - k.z) * fz;
+          if (ahead < 2 || ahead > 45) continue;
+          const p = riderAhead(r, ahead / Math.max(8, sp));
+          dodge(p.x, p.z, SCOOTER.r + 0.5);
+        }
+      } else if (h.mats) {
+        // 鞭炮陣：鞭炮都鋪在路中間，貼著路邊有一條不會炸到的車道。
+        // 快到的時候決定這次怎麼過：大多數時候貼著比較近的那一側路邊開過去；偶爾賭一把從中間鑽（看哪片快炸了就閃）
+        const len = h.def.len ?? 90;
+        let d = tr.samples[k.idx].dist - h.def.dist;
+        d = ((d % tr.length) + tr.length) % tr.length;
+        if (d > tr.length - 70 || d < len + 4) {
+          if (this.crackPass !== h) {
+            this.crackPass = h;
+            this.crackSide = this.rng() < 0.78 ? (Math.sign(this.lane) || (this.rng() < 0.5 ? 1 : -1)) : 0;
+          }
+          if (this.crackSide) {
+            this.laneTarget = this.crackSide * (tr.halfWidth - 1.4);
+            this.laneTimer = 1.2;
+          } else {
+            let danger = false;
+            CRACK_SCORE.fill(0);
+            for (const m of h.mats) {
+              const ahead = (m.x - k.x) * fx + (m.z - k.z) * fz;
+              if (ahead < 1 || ahead > 60 || !crackerHotIn(h.def, m, race.clock, ahead / Math.max(8, sp))) continue;
+              danger = true;
+              CRACK_LANES.forEach((ln, i) => { if (Math.abs(ln - m.c) < CRACKER.halfW + 1.9) CRACK_SCORE[i] += 70 - ahead; });
+            }
+            if (danger) {
+              let best = 0, bs = Infinity;
+              // 不要一直換車道：跟現在的目標車道比
+              CRACK_LANES.forEach((ln, i) => { const sc = CRACK_SCORE[i] * 10 + Math.abs(ln - this.laneTarget); if (sc < bs) { bs = sc; best = i; } });
+              this.laneTarget = CRACK_LANES[best];
+              this.laneTimer = 1.2;
+            }
+          }
+        } else if (this.crackPass === h) this.crackPass = null;
+      }
+    }
     // 被擠到路邊的緩衝區：從比較近的那一側斜斜地切回路面（不要一回來就橫越整條路）
     if (!k.branch && (k.runoff || Math.abs(k.lat) > tr.halfWidth + 0.5)) {
       this.lane = this.laneTarget = Math.sign(k.lat) * (tr.halfWidth - 4.5);
@@ -165,12 +217,12 @@ export class AIController {
     }
     inp.accel = sp < vT ? 1 : sp > vT + 4 ? -1 : 0;
     if (Math.abs(err) > 1.4 && sp > 8) inp.accel = 0;
-    // 電車正在通過或快要通過：在平交道前減速
+    // 電車（火車）正在通過或快要通過：在平交道前減速
     for (const h of race.hazards) {
       if (h.def.kind !== 'tram' || !h.warn) continue;
       const dx = h.x - k.x, dz = h.z - k.z;
       const ahead = dx * fx + dz * fz;
-      if (ahead > 4 && ahead < 16 + sp * 0.9 && Math.abs(h.c) < 30) inp.accel = sp > 6 ? -1 : 0;
+      if (ahead > 4 && ahead < 16 + sp * 0.9 && Math.abs(h.c) < tramSpec(h.def).half + 22) inp.accel = sp > 6 ? -1 : 0;
     }
     inp.drift = false;
 

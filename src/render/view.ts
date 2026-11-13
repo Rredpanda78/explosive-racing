@@ -352,6 +352,7 @@ export class GameView {
     const world = this.world;
     this.weather = new Weather(WEATHER[th.id] ?? 'petals', {
       mobile: this.lowDetail,
+      petals: th.petals,
       groundY: (x, z) => {
         this.groundHint = track.probe(x, z, this.groundHint < 0 ? -1 : this.groundHint);
         return track.probeOn ? track.probeY : world.terrainH(x, z);

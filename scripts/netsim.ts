@@ -12,8 +12,8 @@ const { Track, TRACKS } = await import('../src/game/track');
 const { OnlineSession } = await import('../src/net/online');
 
 const mode = (process.argv[2] ?? 'race') as 'race' | 'elim';
-// track=<賽道 id>：指定要跑哪一條（預設第 2 條，赤岩峽谷）
-const trackArg = process.argv.find((a) => a.startsWith('track='))?.slice(6);
+// 賽道：track=<賽道 id>，或第三個參數直接給 id（預設第 2 條，赤岩峽谷）
+const trackArg = process.argv.find((a) => a.startsWith('track='))?.slice(6) ?? process.argv.slice(3).find((a) => a !== 'drop' && !a.includes('='));
 const trackIdx = trackArg ? TRACKS.findIndex((t) => t.id === trackArg) : 1;
 if (trackIdx < 0) throw new Error(`unknown track ${trackArg}`);
 const LAT = 60;
@@ -114,7 +114,7 @@ for (let step = 0; step < 60 * 260; step++) {
   if (ra && rb && ra.state === 'finished' && rb.state === 'finished' && ra.karts.every((k) => k.finished || k.out) && rb.karts.every((k) => k.finished || k.out)) break;
 }
 const ra = races.get(A)!, rb = races.get(B)!;
-console.log(`mode ${mode}  time A ${ra.time.toFixed(1)} B ${rb.time.toFixed(1)}  state ${ra.state}/${rb.state}`);
+console.log(`track ${TRACKS[trackIdx].id}  mode ${mode}  time A ${ra.time.toFixed(1)} B ${rb.time.toFixed(1)}  state ${ra.state}/${rb.state}`);
 console.log(`position error (own vs seen by other): avg ${(errSum / errN).toFixed(2)} m, max ${maxErr.toFixed(1)} m`);
 const row = (r: InstanceType<typeof Race>) => r.karts.map((k) => `${k.name}:${k.kills}/${k.deaths}${k.out ? 'X' : ''}${k.finished ? '✓' : ''}`).join(' ');
 console.log('A sees ' + row(ra));

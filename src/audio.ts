@@ -394,6 +394,19 @@ export class GameAudio {
         if (v > 0.01) for (let i = 0; i < 4; i++) setTimeout(() => this.beep(i % 2 ? 1046 : 1318, 0.18, v), i * 260);
         break;
       }
+      case 'street': {
+        if (e.kind === 'horn') {
+          // 機車喇叭：叭叭兩聲
+          const v = near(e.x, e.z, 90) * 0.14;
+          if (v > 0.01) { this.beep(415, 0.12, v); setTimeout(() => this.beep(415, 0.16, v), 170); }
+        } else {
+          // 鞭炮：一連串劈哩啪啦的短促爆裂聲
+          const v = near(e.x, e.z, 110);
+          if (v > 0.02) for (let i = 0; i < 16; i++) setTimeout(() => this.burst(1600 + Math.random() * 2600, 0.9, 0.035 + Math.random() * 0.03, v * (0.25 + Math.random() * 0.25)), i * 55 + Math.random() * 45);
+          if (v > 0.02) this.thump(v * 0.25);
+        }
+        break;
+      }
       case 'lock':
         if (e.k === p) { this.beep(1320, 0.1, 0.18); setTimeout(() => this.beep(1760, 0.14, 0.18), 110); }
         break;

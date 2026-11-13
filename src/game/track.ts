@@ -22,7 +22,7 @@ export interface BoostPad {
   lat: number;
 }
 
-export type ThemeId = 'meadow' | 'desert' | 'city' | 'ocean';
+export type ThemeId = 'meadow' | 'desert' | 'city' | 'ocean' | 'taiwan';
 
 /** 沿賽道的一段範圍（公尺）；side：1 = 行進方向左側，-1 = 右側，0 = 兩側 */
 export interface SceneRange {
@@ -125,14 +125,22 @@ export interface Post { x: number; z: number; y: number; r: number; d: number; l
  * 機關：
  * - hammer：吊在門架上左右擺盪的大鐵鎚
  * - boulder：從路邊滾進賽道、沿著下坡往前滾的巨石（len 為滾動的路段長度，period 為生成間隔）
- * - tram：橫越路口的電車，period 秒一班
+ * - tram：橫越路口的電車，period 秒一班（train = 平交道的區間車：更長、更快）
+ * - scooter：機車（src/game/street.ts）。沒有 len = 從路口的巷子橫越馬路的一群機車；
+ *   有 len = 沿著路邊（lat）騎 len 公尺的機車，period 秒出發一台
+ * - firecracker：鞭炮區（src/game/street.ts）：從 dist 開始 len 公尺內，鋪在路面上的幾串鞭炮輪流引爆
+ * - gust：河堤強風（src/game/street.ts）：從 dist 開始 len 公尺內，一陣一陣把車往側邊推
  */
 export interface HazardDef {
-  kind: 'hammer' | 'boulder' | 'tram';
+  kind: 'hammer' | 'boulder' | 'tram' | 'scooter' | 'firecracker' | 'gust';
   dist: number;
   period: number;
   phase?: number;
   len?: number;
+  /** 沿路騎的機車所在的橫向位置（左為正） */
+  lat?: number;
+  /** 平交道的火車（畫面與尺寸跟電車不同） */
+  train?: boolean;
 }
 
 export const PAD_LENGTH = 9;
@@ -539,6 +547,95 @@ export const TRACKS: TrackDef[] = [
       { from: -100, to: 1250, side: 0, width: 0 },
       { from: 1490, to: 2400, side: 0, width: 0 },
       { from: 1200, to: 1540, side: 1, width: 0 },
+    ],
+  },
+  {
+    // 台灣小鎮的夜晚：夜市街 → 廟口（牌樓、廟埕、鞭炮）→ 平交道 → 河堤 → 堤防坡道髮夾彎 → 老街回到起點
+    id: 'temple-night',
+    name: '廟口夜市',
+    desc: '夜市街、廟埕鞭炮陣、平交道與河堤強風，夜市小巷可抄近路',
+    theme: 'taiwan',
+    scenery: { stands: [{ from: 20, to: 150, side: 1 }], pits: [{ from: 12, to: 140, side: -1 }], tents: [], arches: [] },
+    laps: 2,
+    halfWidth: 12,
+    points: [
+      // 起跑直線（往北）
+      [0, -40, 4], [0, 30, 4], [0, 100, 4], [0, 150, 4],
+      // 左轉進夜市街
+      [3, 180, 4], [25, 200, 4], [60, 203, 4],
+      // 夜市街（往東，中間有一條機車會橫越的巷口）
+      [130, 203, 4], [200, 203, 4], [270, 203, 4], [330, 203, 4],
+      // 左轉穿過牌樓進廟口
+      [368, 198, 4], [390, 172, 4], [392, 135, 4],
+      // 廟埕前：鞭炮陣
+      [392, 80, 4], [392, 20, 4], [390, -30, 4],
+      // 右轉往東：平交道街
+      [398, -58, 4], [425, -72, 4], [470, -74, 4], [540, -74, 4], [610, -74, 4],
+      // 左轉爬上堤防
+      [660, -84, 5], [690, -118, 6.5], [696, -165, 8.5], [680, -215, 10],
+      // 河堤（往西）：右側是河，一段沒有欄杆、一段吹強風
+      [640, -248, 10.5], [580, -262, 10.5], [500, -262, 10.5], [420, -255, 10.5], [340, -262, 10.5], [275, -264, 10.5],
+      // 堤防坡道：左轉髮夾彎下到堤內的河濱路（往東）
+      [236, -262, 10], [211, -254, 9.4], [202, -234, 8.6], [211, -214, 7.6], [236, -206, 6.6], [262, -206, 5.6],
+      // 右轉往北、再右轉往西進老街
+      [288, -200, 5], [302, -180, 4.5], [304, -152, 4],
+      [290, -126, 4], [262, -118, 4], [190, -118, 4], [110, -118, 4], [50, -118, 4],
+      // 左轉回起跑直線
+      [16, -112, 4], [1, -90, 4],
+    ],
+    pads: [
+      { dist: 120, lat: 0 }, { dist: 330, lat: -4 }, { dist: 468, lat: 4 }, { dist: 940, lat: -3.5 }, { dist: 1365, lat: 3.5 },
+      { dist: 1600, lat: 0 }, { dist: 1852, lat: 0 }, { dist: 2040, lat: 3.5 }, { dist: 2160, lat: -3.5 },
+    ],
+    ramps: [],
+    barrels: [
+      { dist: 300, lat: 9.2 }, { dist: 420, lat: -9.2 }, { dist: 540, lat: -9.2 }, { dist: 820, lat: 9.2 }, { dist: 960, lat: 9.2 },
+      { dist: 1080, lat: -9.2 }, { dist: 1420, lat: 9.2 }, { dist: 1560, lat: 9.2 }, { dist: 1660, lat: -9.2 }, { dist: 1950, lat: 9.2 },
+      { dist: 2020, lat: -9.2 }, { dist: 2190, lat: 9.2 },
+    ],
+    hazards: [
+      // 夜市街中段、老街中段的巷口：一群機車從巷子裡橫越馬路
+      { kind: 'scooter', dist: 396, period: 7.5, phase: 0.15 },
+      { kind: 'scooter', dist: 2092, period: 8, phase: 0.6 },
+      // 河堤：靠右騎的機車（比賽車慢很多，要從左邊超過去）
+      { kind: 'scooter', dist: 1345, len: 175, lat: -9.4, period: 4.2 },
+      // 廟埕前的鞭炮陣
+      { kind: 'firecracker', dist: 672, len: 92, period: 3.6 },
+      // 平交道：區間車
+      { kind: 'tram', dist: 1028, period: 15, phase: 0.3, train: true },
+      // 河堤沒有遮蔽的一段：從河面吹來的強風
+      { kind: 'gust', dist: 1545, len: 145, period: 5.5, phase: 0.2 },
+    ],
+    // 夜市小巷：穿過夜市街區的窄巷，石板路沒加速時跑不快，路上擺著攤車、垃圾桶與機車
+    shortcuts: [{
+      from: 490, to: 778, lat: 6.2, via: [[318, 150], [362, 86]], halfWidth: 3.3, name: '夜市小巷', rough: 0.8,
+      posts: [
+        { u: 0.16, lat: 1.5, r: 1.0 }, { u: 0.3, lat: -1.6, r: 1.1 }, { u: 0.44, lat: 1.4, r: 0.9 },
+        { u: 0.57, lat: -1.5, r: 1.0 }, { u: 0.7, lat: 1.6, r: 1.1 }, { u: 0.84, lat: -1.4, r: 0.9 },
+      ],
+    }],
+    // 軟邊界：街道兩旁是店家（護欄）；廟埕、平交道街、堤防與河濱路有鋪面緩衝區；河堤一段外側是河
+    runoff: 10,
+    runoffSurface: 'paved',
+    runoffZones: [
+      // 起跑直線：維修區與看台
+      { from: -80, to: 200, side: 0, width: 0 },
+      // 夜市街：兩旁都是攤販與騎樓
+      { from: 268, to: 570, side: 0, width: 0 },
+      // 廟口：左側是小巷那一側的街屋；牌樓的柱子前後收窄；右側是廟埕
+      { from: 600, to: 840, side: 1, width: 0 },
+      { from: 640, to: 662, side: -1, width: 0 },
+      { from: 662, to: 812, side: -1, width: 14 },
+      // 平交道街與爬上堤防的彎：人行道、路邊停車格，窄一點
+      { from: 880, to: 1330, side: 0, width: 8 },
+      // 平交道：柵欄與鐵軌
+      { from: 1012, to: 1044, side: 0, width: 0 },
+      // 河堤：右側一段沒有欄杆（開出去掉進河裡）
+      { from: 1348, to: 1528, side: -1, width: 8, cliff: true },
+      // 強風段：河那一側是欄杆
+      { from: 1530, to: 1700, side: -1, width: 0 },
+      // 老街：兩旁是老街屋
+      { from: 1985, to: 2222, side: 0, width: 0 },
     ],
   },
 ];
