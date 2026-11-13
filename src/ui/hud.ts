@@ -4,7 +4,8 @@ import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
 import { formatTime } from '../game/util';
-import { PRIMARY, SECONDARY, type PrimaryId, type SecondaryId } from '../game/weapons';
+import { PRIMARY, SECONDARY, weaponLabel, type PrimaryId, type SecondaryId } from '../game/weapons';
+import { t } from '../i18n';
 import type { GameView } from '../render/view';
 import { ICONS, primaryIcon, secondaryIcon } from './touchIcons';
 
@@ -143,8 +144,8 @@ export class Hud {
   setWeaponIcons(primary: PrimaryId, secondary: SecondaryId): void {
     $('t-fire1').querySelector('.ic')!.innerHTML = primaryIcon(primary);
     $('t-fire2').querySelector('.ic')!.innerHTML = secondaryIcon(secondary);
-    $('t-fire1').querySelector('b')!.textContent = PRIMARY[primary].name.replace('.50 ', '');
-    $('t-fire2').querySelector('b')!.textContent = SECONDARY[secondary].name;
+    $('t-fire1').querySelector('b')!.textContent = weaponLabel(primary).replace('.50 ', '');
+    $('t-fire2').querySelector('b')!.textContent = weaponLabel(secondary);
   }
 
   /** 換地圖時重畫小地圖底圖 */
@@ -158,9 +159,7 @@ export class Hud {
     this.laps.textContent = elim ? '' : String(race.track.laps);
     this.lapSep.textContent = elim ? '' : '/';
     this.elim.classList.toggle('hidden', !elim);
-    this.w1.querySelector('.wname')!.textContent = PRIMARY[race.player.primary].name;
-    this.w2.querySelector('.wname')!.textContent = SECONDARY[race.player.secondary].name;
-    this.setWeaponIcons(race.player.primary, race.player.secondary);
+    this.relabel(race);
     this.feed.innerHTML = '';
     this.popups.innerHTML = '';
     this.dmgLayer.innerHTML = '';
@@ -181,6 +180,17 @@ export class Hud {
 
   hide(): void {
     this.root.classList.add('hidden');
+  }
+
+  /** 換語言：武器名稱、手機按鈕、任務清單換成目前語言（比賽開始時也用這個填字） */
+  relabel(race: Race): void {
+    this.w1.querySelector('.wname')!.textContent = weaponLabel(race.player.primary);
+    this.w2.querySelector('.wname')!.textContent = weaponLabel(race.player.secondary);
+    this.setWeaponIcons(race.player.primary, race.player.secondary);
+    delete this.cache.tboost;
+    delete this.cache.missionTick;
+    delete this.cache.elim;
+    delete this.cache.sub;
   }
 
   private set(key: string, el: HTMLElement, text: string): void {
@@ -233,18 +243,18 @@ export class Hud {
         this.flash('GO!');
         break;
       case 'start':
-        if (e.k === p) this.popup('起跑衝刺！', 'gold');
+        if (e.k === p) this.popup(t.rocketStart, 'gold');
         break;
       case 'lap':
         if (e.k !== p) break;
-        if (race.mode === 'race' && e.lap < race.track.laps) this.flash(e.lap === race.track.laps - 1 ? '最後一圈！' : `第 ${e.lap + 1} 圈`);
+        if (race.mode === 'race' && e.lap < race.track.laps) this.flash(e.lap === race.track.laps - 1 ? t.finalLap : t.lapN(e.lap + 1));
         break;
       case 'finish':
-        if (e.k === p) this.flash(race.mode === 'elim' ? '冠軍！' : `第 ${p.rank} 名`, true);
+        if (e.k === p) this.flash(race.mode === 'elim' ? t.winner : t.place(p.rank), true);
         break;
       case 'elim':
-        if (e.k === p) this.flash('遭到淘汰', true);
-        else this.popup(`${e.k.name} 遭到淘汰`, 'warn');
+        if (e.k === p) this.flash(t.eliminated, true);
+        else this.popup(t.elimOther(e.k.name), 'warn');
         break;
       case 'hit':
         if (e.by === p) {
@@ -286,49 +296,49 @@ export class Hud {
         break;
       }
       case 'shortcut':
-        if (e.k === p) this.popup('捷徑！', 'gold');
+        if (e.k === p) this.popup(t.shortcut, 'gold');
         break;
       case 'hazard':
         if (e.k === p) this.hitFrom(e.x, e.z, null);
         if (e.k === p) {
           const train = race.track.def.hazards?.some((h) => h.train);
-          const msg: Record<string, string> = { hammer: '被鐵鎚砸飛！', tram: train ? '被火車撞飛！' : '被電車撞飛！', boulder: '被落石撞到！', scooter: '被機車擦撞！', firecracker: '被鞭炮炸到！' };
-          this.popup(msg[e.kind] ?? '小心！', 'warn');
+          const msg: Record<string, string> = { hammer: t.hzHammer, tram: train ? t.hzTrain : t.hzTram, boulder: t.hzBoulder, scooter: t.hzScooter, firecracker: t.hzCracker };
+          this.popup(msg[e.kind] ?? t.hzAny, 'warn');
         }
         break;
       case 'lock':
-        if (e.k === p) this.popup('被追蹤導彈鎖定！', 'warn');
+        if (e.k === p) this.popup(t.locked, 'warn');
         break;
       case 'ram':
         if ((e.a === p || e.b === p) && e.power > 5) {
           const fast = p.boostT > 0 || p.padT > 0;
-          this.popup(fast ? '噴射衝撞！' : '碰撞！', fast ? 'gold' : '');
+          this.popup(fast ? t.boostRam : t.bump, fast ? 'gold' : '');
           const o = e.a === p ? e.b : e.a;
           this.hitFrom(o.x, o.z, o);
         }
         break;
       case 'kart':
         if (e.k !== p) break;
-        if (e.e === 'jump') this.popup('飛越！');
+        if (e.e === 'jump') this.popup(t.airborne);
         else if (e.e === 'n2o') this.popup('N2O +1', 'blue');
         // 小噴：甩完時下方已經有「小噴！」的時機提示，這裡不再另外跳一個（使用者說兩個重複）
-        else if (e.e === 'combo') this.popup(`連噴 ×${p.combo}`, 'gold');
-        else if (e.e === 'chain') this.popup('短接長！集氣加速', 'blue');
-        else if (e.e === 'driftCancel') this.popup('斷飄');
-        else if (e.e === 'hardDrift') this.popup('重甩！', 'gold');
+        else if (e.e === 'combo') this.popup(t.chainN(p.combo), 'gold');
+        else if (e.e === 'chain') this.popup(t.shortLong, 'blue');
+        else if (e.e === 'driftCancel') this.popup(t.driftCancel);
+        else if (e.e === 'hardDrift') this.popup(t.hardDrift, 'gold');
         break;
       case 'rail':
         if (e.k === p) this.screenFlash();
-        if (e.k === p && e.hits >= 2) this.popup(`雷射貫穿 ×${e.hits}`, 'gold');
+        if (e.k === p && e.hits >= 2) this.popup(t.pierceN(e.hits), 'gold');
         break;
       case 'zap':
-        if (e.k === p && e.chain.length >= 2) this.popup(`電弧連鎖 ×${e.chain.length}`, 'gold');
+        if (e.k === p && e.chain.length >= 2) this.popup(t.arcN(e.chain.length), 'gold');
         break;
       case 'tether':
         if (e.on) {
-          if (e.k === p) this.popup('叉住了！按住拉過去', 'blue');
-          else if (e.v === p) this.popup('被魚叉叉住！', 'warn');
-        } else if (e.k === p && e.why === 'catch') this.popup('追上！', 'gold');
+          if (e.k === p) this.popup(t.hooked, 'blue');
+          else if (e.v === p) this.popup(t.harpooned, 'warn');
+        } else if (e.k === p && e.why === 'catch') this.popup(t.caught, 'gold');
         break;
       case 'kill': {
         const d = document.createElement('div');
@@ -339,12 +349,12 @@ export class Hud {
         setTimeout(() => d.remove(), 4000);
         while (this.feed.children.length > 4) this.feed.firstChild!.remove();
         if (e.killer === p) {
-          this.flash(e.streak >= 2 ? `連續擊毀 ×${e.streak}` : '擊毀！');
+          this.flash(e.streak >= 2 ? t.streakN(e.streak) : t.ko);
           this.popup('N2O +1', 'blue');
           this.hitMark(true);
           // 被擊毀的車上方飄出獎金（連續擊毀另外加獎金）
           const cash = KILL_REWARD + Math.max(0, e.streak - 1) * STREAK_BONUS;
-          this.killText = { k: e.victim, text: `+$${cash} 擊毀！`, x: e.victim.x, y: e.victim.y, z: e.victim.z };
+          this.killText = { k: e.victim, text: t.koCash(cash), x: e.victim.x, y: e.victim.y, z: e.victim.z };
         }
         break;
       }
@@ -381,12 +391,12 @@ export class Hud {
     if (elim) {
       const alive = race.aliveCount;
       const last = p.rank === alive && !p.out;
-      this.set('elim', this.elim, race.state === 'racing' ? `淘汰倒數 ${Math.ceil(race.elimT)}　剩 ${alive} 台${last ? '　你是最後一名！' : ''}` : '');
+      this.set('elim', this.elim, race.state === 'racing' ? t.elimBar(Math.ceil(race.elimT), alive, last) : '');
       this.cls('elimwarn', this.elim, 'warn', last && race.elimT < 8);
     }
 
     // 尾流開始時提示一次
-    if (p.drafting && !this.wasDrafting) this.popup('尾流加速', 'blue');
+    if (p.drafting && !this.wasDrafting) this.popup(t.slipstream, 'blue');
     this.wasDrafting = p.drafting;
 
     // 畫面效果：加速時的速度線、受擊時的紅色邊框
@@ -407,15 +417,15 @@ export class Hud {
     let sub = '';
     let subCls = '';
     if (this.netNote) { sub = this.netNote; subCls = 'warn'; }
-    else if (p.dead) { sub = p.out ? '' : '車輛重生中…'; subCls = 'warn'; }
+    else if (p.dead) { sub = p.out ? '' : t.respawning; subCls = 'warn'; }
     else if (p.finished) sub = '';
-    else if (p.wrongWayT > 1) { sub = '逆向行駛！'; subCls = 'warn'; }
-    else if (p.lockT > 0) { sub = '⚠ 導彈來襲：急轉可以甩掉'; subCls = 'warn'; }
-    else if (p.overheated && PRIMARY[p.primary].kind !== 'laser') { sub = '武器過熱'; subCls = 'warn'; }
-    else if (p.chill > 0.35) { sub = '❄ 結冰打滑'; subCls = 'warn'; }
-    else if (p.towT > 0) { sub = '被魚叉拖住'; subCls = 'warn'; }
-    else if (p.miniWindowT > 0) { sub = '小噴！'; subCls = 'mini'; }
-    else if (race.state === 'countdown' && race.countdown < 1.4) { sub = document.body.classList.contains('touch') ? '抓準 GO 的瞬間按 N2O' : '抓準 GO 的瞬間按油門'; }
+    else if (p.wrongWayT > 1) { sub = t.wrongWay; subCls = 'warn'; }
+    else if (p.lockT > 0) { sub = t.missileIn; subCls = 'warn'; }
+    else if (p.overheated && PRIMARY[p.primary].kind !== 'laser') { sub = t.overheated; subCls = 'warn'; }
+    else if (p.chill > 0.35) { sub = t.frozen; subCls = 'warn'; }
+    else if (p.towT > 0) { sub = t.towed; subCls = 'warn'; }
+    else if (p.miniWindowT > 0) { sub = t.miniNow; subCls = 'mini'; }
+    else if (race.state === 'countdown' && race.countdown < 1.4) { sub = document.body.classList.contains('touch') ? t.startTouch : t.startKb; }
     this.set('sub', this.sub, sub);
     if (this.cache.subCls !== subCls) {
       this.cache.subCls = subCls;
@@ -469,7 +479,7 @@ export class Hud {
       this.tBoost.classList.toggle('boosting', boosting);
       this.tBoost.classList.toggle('empty', state === 'empty');
       this.tBoostIc.innerHTML = mini ? ICONS.mini : ICONS.n2o;
-      this.tBoostLb.textContent = mini ? '小噴' : 'N2O';
+      this.tBoostLb.textContent = mini ? t.miniBtn : 'N2O';
     }
     this.set('tboostn', this.tBoostN, mini || p.n2o === 0 ? '' : '×' + p.n2o);
   }
@@ -485,7 +495,7 @@ export class Hud {
       this.comboEl.className = 'out';
       return;
     }
-    this.comboEl.textContent = `連擊 ×${n}`;
+    this.comboEl.textContent = t.comboN(n);
     // 每多一下就跳一下（重新播放動畫）
     this.comboEl.className = '';
     void this.comboEl.offsetWidth;
@@ -546,7 +556,7 @@ export class Hud {
   /** 任務清單（HUD 與暫停畫面共用） */
   missionHtml(race: Race): string {
     const p = race.player;
-    return '<b>本場任務</b>' + race.missions.map((m) => {
+    return `<b>${t.missions}</b>` + race.missions.map((m) => {
       const ok = m.done(p, p.rank) && !['win', 'top3', 'surv4', 'nodeath'].includes(m.id);
       return `<div class="${ok ? 'ok' : ''}">${ok ? '✔' : '・'} ${m.text} <i>${ok ? '' : m.progress(p)}</i> <em>$${m.reward}</em></div>`;
     }).join('');

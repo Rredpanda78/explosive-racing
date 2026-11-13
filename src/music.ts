@@ -1,5 +1,6 @@
 // 程序化配樂引擎：全部用 WebAudio 即時合成，不需要任何音檔
 // 五種比賽風格＋選單主題，各自有不同的調性、速度、律動、音色與曲式（前奏 → A → B → 副歌 → 間奏…）
+import { localize } from './i18n';
 
 /** 比賽配樂的風格 */
 export type MusicStyle = 'synth' | 'lofi' | 'hiphop' | 'metal' | 'chip';
@@ -10,6 +11,9 @@ export const MUSIC_STYLES: { id: MusicStyle; name: string }[] = [
   { id: 'metal', name: '金屬' },
   { id: 'chip', name: '8-bit' },
 ];
+// 英文名稱（Lo-fi、8-bit 兩邊一樣）
+const EN_MUSIC: Partial<Record<MusicStyle, string>> = { synth: 'Electro', hiphop: 'Hip-Hop', metal: 'Metal' };
+for (const m of MUSIC_STYLES) if (EN_MUSIC[m.id]) localize(m, { name: EN_MUSIC[m.id] });
 
 type Mode = 'off' | 'menu' | 'race';
 type Key = MusicStyle | 'menu';

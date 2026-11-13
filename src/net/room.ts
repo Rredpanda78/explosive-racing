@@ -1,4 +1,5 @@
 /** 連線房間的 WebSocket 客戶端（伺服器在 server/：Cloudflare Worker + Durable Object） */
+import { localize } from '../i18n';
 
 /** 本機開發連本機的伺服器（cd server && npm run dev），正式版連 Cloudflare */
 const ENV = (import.meta as unknown as { env?: { VITE_SERVER?: string; DEV?: boolean } }).env ?? {};
@@ -46,6 +47,15 @@ export const ERR_TEXT: Record<string, string> = {
   closed: '和伺服器的連線中斷了',
   failed: '連不上伺服器，請檢查網路',
 };
+// 伺服器只送錯誤代碼；給玩家看的字在這裡翻（英文版）
+localize(ERR_TEXT, {
+  noroom: 'Room not found (wrong code, or everyone has left)',
+  full: 'This room is full (8 players max)',
+  started: 'This room is mid-race — join once they’re back in the room',
+  taken: 'That room code was just taken — press Create again',
+  closed: 'Lost the connection to the server',
+  failed: 'Can’t reach the server — check your connection',
+});
 /** 這些錯誤不用重試 */
 const FATAL = new Set(['noroom', 'full', 'started', 'taken']);
 /** 斷線後的重試間隔（伺服器替你保留座位 25 秒） */

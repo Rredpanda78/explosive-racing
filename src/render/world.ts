@@ -13,6 +13,8 @@ import { buildOcean, hasOcean, oceanGlass } from './ocean';
 import { buildRunoff, runoffPad } from './runoff';
 import type { Theme } from './themes';
 import { buildTown, hasTown } from './town';
+import { t } from '../i18n';
+import { fitFont, liveSign } from './signText';
 
 export interface World {
   group: THREE.Group;
@@ -474,16 +476,18 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       }
       // 入口的指示牌：在主線上快到分岔點時就看得到
       const arrowSide = Math.sign(b.def.lat) || 1;
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 2.1), new THREE.MeshBasicMaterial({ map: canvasTex(128, 64, (c) => {
+      // 牌子上的字跟著介面語言（換語言時重畫）；英文比較長就縮小字
+      const drawSign = (c: CanvasRenderingContext2D) => {
         c.fillStyle = '#15161a';
         c.fillRect(0, 0, 128, 64);
         c.fillStyle = '#ffd23f';
-        c.font = 'bold 26px "Segoe UI", Arial, sans-serif';
         c.textAlign = 'center';
-        const label = b.def.name ?? '捷徑';
-        c.font = `bold ${label.length > 3 ? 20 : 26}px "Segoe UI", Arial, sans-serif`;
-        c.fillText(arrowSide > 0 ? '◀ ' + label : label + ' ▶', 64, 42);
-      }, false), color: glow(0xffffff, night ? 1.6 : 1.15), side: THREE.DoubleSide }));
+        const label = b.def.name ?? t.signShortcut;
+        const text = arrowSide > 0 ? '◀ ' + label : label + ' ▶';
+        fitFont(c, text, label.length > 3 ? 20 : 26, 122, '"Segoe UI", Arial, sans-serif', 11);
+        c.fillText(text, 64, 42);
+      };
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 2.1), new THREE.MeshBasicMaterial({ map: liveSign(canvasTex(128, 64, drawSign, false), drawSign), color: glow(0xffffff, night ? 1.6 : 1.15), side: THREE.DoubleSide }));
       const sp = track.pointAt(b.def.from - 25);
       // 有緩衝區的話立在屏障後面（不要擋在可以開的沙地上）
       const signLat = hw + 2.4 + track.runoffW(track.wrap(Math.round(wrapD(b.def.from - 25) / track.spacing)), arrowSide);

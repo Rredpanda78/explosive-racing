@@ -1,3 +1,5 @@
+import { localize } from '../i18n';
+
 export interface Sample {
   x: number;
   z: number;
@@ -639,6 +641,24 @@ export const TRACKS: TrackDef[] = [
     ],
   },
 ];
+
+/** 英文的賽道名稱、說明與捷徑名稱（中文就是上面原本的字） */
+const EN_TRACKS: Record<string, { name: string; desc: string; shortcuts: string[] }> = {
+  'skyline-loop': { name: 'Cloudtop Pass', desc: 'Long straights, a summit hairpin and flowing S-bends', shortcuts: ['Cliff Trail'] },
+  'red-canyon': { name: 'Crimson Canyon', desc: 'A long, steep descent, canyon S-bends and a hairpin on the valley floor', shortcuts: ['Gravel Wash'] },
+  'neon-bay': { name: 'Neon Bay', desc: 'Night street circuit: right-angle turns, a chicane, a hairpin and a bridge across the bay', shortcuts: ['Work Zone'] },
+  'neon-heights': { name: 'Starport Skyway', desc: 'Harbor skyway at night: back-to-back right angles, S-bends, a double hairpin, four jumps and a back-alley shortcut', shortcuts: ['Skyway Edge'] },
+  'forest-jump': { name: 'Goldwood Leap', desc: 'Four jumps through the woods, four hairpins and S-bends, with a forest-trail shortcut at the Ω bend', shortcuts: ['Mud Trail'] },
+  'canyon-rush': { name: 'Scorched Mesa', desc: 'A long climb onto the red-rock mesa, three hairpins and four humps, with a canyon shortcut after the rockfall dive', shortcuts: ['Slot Canyon'] },
+  'sea-tunnel': { name: 'Azure Deep', desc: 'A glass tunnel under the sea: coral reefs, kelp forests, sunbeams over the shallows and a deep trench, with a broken-pipe shortcut above it', shortcuts: ['Broken Pipe'] },
+  'temple-night': { name: 'Temple Night Market', desc: 'Night-market streets, firecrackers on the temple square, a railroad crossing and gusty riverbanks — cut through the market alley', shortcuts: ['Market Alley'] },
+};
+for (const def of TRACKS) {
+  const e = EN_TRACKS[def.id];
+  if (!e) continue;
+  localize(def, { name: e.name, desc: e.desc });
+  def.shortcuts?.forEach((s, i) => { if (s.name && e.shortcuts[i]) localize(s, { name: e.shortcuts[i] }); });
+}
 
 function catmull(p0: number, p1: number, p2: number, p3: number, t: number): number {
   const t2 = t * t;

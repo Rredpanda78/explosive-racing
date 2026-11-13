@@ -14,6 +14,7 @@ import {
   tetherTime, weaponLvlMul, type PrimaryDef, type SecondaryId,
 } from './weapons';
 import { DIFFICULTY } from './difficulty';
+import { isEn, t } from '../i18n';
 
 export type RaceMode = 'race' | 'elim';
 
@@ -105,6 +106,16 @@ export type RaceEvent =
   | { t: 'go' };
 
 const AI_NAMES = ['閃電凱', '火球妮', '鐵頭', '小旋風', '爆米花', '夜貓', '轟隆隆'];
+/** 電腦車手的英文名字（跟上面一一對應）。名字不經過網路：每台電腦依自己的語言顯示同一位車手 */
+const AI_NAMES_EN = ['Blitz Kai', 'Fireball Nina', 'Ironhead', 'Twister', 'Popcorn', 'Night Owl', 'Rumble'];
+/** 跟著語言的車手名字：ai:編號、you（單機的自己）、racer（沒取名字的玩家） */
+function kartLabel(key: string): string {
+  if (key.startsWith('ai:')) {
+    const i = Number(key.slice(3)) % AI_NAMES.length;
+    return (isEn() ? AI_NAMES_EN : AI_NAMES)[i];
+  }
+  return key === 'you' ? t.you : t.racer;
+}
 const AI_COLORS = [0xff4d5a, 0xff9f1c, 0x35c46a, 0x29b6f6, 0xb05cff, 0xff7ac8, 0xa8b4c4];
 export const PLAYER_COLOR = 0xffd400;
 
@@ -192,10 +203,12 @@ export class Race {
       const isAi = slot === 'ai';
       const r = typeof slot === 'object' ? slot : null;
       const isP = slot === 'me' || (r !== null && r.pid === setup?.me);
-      const name = isAi ? AI_NAMES[aiNo % AI_NAMES.length] : r ? r.name : '你';
+      const nameKey = isAi ? 'ai:' + (aiNo % AI_NAMES.length) : r ? (r.name ? null : 'racer') : 'you';
+      const name = nameKey ? kartLabel(nameKey) : r!.name;
       const color = isAi ? AI_COLORS[aiNo % AI_COLORS.length] : isP ? PLAYER_COLOR : AI_COLORS[(r!.pid + 2) % AI_COLORS.length];
       if (isAi) aiNo++;
       const k = new Kart(j, name, color);
+      k.nameKey = nameKey;
       k.netId = j;
       const row = Math.floor(j / 2);
       const side = j % 2 === 0 ? 1 : -1;
@@ -820,6 +833,11 @@ export class Race {
       const dx = b.x - x, dz = b.z - z;
       if (dx * dx + dz * dz < (radius + b.r) * (radius + b.r)) this.hurtBoulder(b, dmg, owner);
     }
+  }
+
+  /** 換介面語言：電腦車手、「你」、沒取名字的玩家換成目前語言的名字（只影響顯示） */
+  relabel(): void {
+    for (const k of this.karts) if (k.nameKey) k.name = kartLabel(k.nameKey);
   }
 
   /** 名次排序：競速看完賽時間與進度；淘汰賽被淘汰的排在後面（越晚淘汰名次越好） */

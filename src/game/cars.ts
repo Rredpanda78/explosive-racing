@@ -1,3 +1,5 @@
+import { localize } from '../i18n';
+
 /** 可購買的車款。id 是舊的 Kenney 卡丁車檔名（存檔沿用，模型載入失敗時也拿它當備用） */
 export type CarId = 'kart-oobi' | 'kart-oodi' | 'kart-ooli' | 'kart-oopi' | 'kart-oozi';
 
@@ -73,3 +75,17 @@ export const CARS: Record<CarId, CarDef> = {
 };
 
 export const CAR_IDS = Object.keys(CARS) as CarId[];
+
+/** 英文版的車名、說明、特性與花色名稱（中文就是上面原本的字） */
+const EN: Record<CarId, { name: string; desc: string; trait: string; liveries: [string, string, string] }> = {
+  'kart-oobi': { name: 'Nova', desc: 'A well-rounded starter kart', trait: 'Spare Tank: every respawn comes with an N2O tank', liveries: ['Factory White', 'Midnight Blue', 'Track Orange'] },
+  'kart-ooli': { name: 'Drift King', desc: 'Nimble steering, fills the gauge fast when drifting', trait: 'Drift Master: mini-boosts last 60% longer', liveries: ['Black Red', 'Green Blade', 'Ice Blue'] },
+  'kart-oodi': { name: 'Gale', desc: 'Highest top speed, but slow off the line and thin-skinned', trait: 'Streamlined: double slipstream boost and gauge when tailing', liveries: ['Electric Blue', 'Flame Red', 'Venom Green'] },
+  'kart-oopi': { name: 'Iron Ox', desc: 'Heavy armor and brutal rams, slightly lower top speed', trait: 'Heavy Chassis: half the knockback from blasts and hazards', liveries: ['Factory Gray', 'Hornet', 'Violet Bolt'] },
+  'kart-oozi': { name: 'Jet', desc: 'N2O burns longer — made for tracks with long straights', trait: 'Afterburner: every N2O ends with a free mini-boost', liveries: ['Silver', 'Lagoon', 'Cherry Pink'] },
+};
+for (const id of CAR_IDS) {
+  const c = CARS[id], e = EN[id];
+  localize(c, { name: e.name, desc: e.desc, trait: e.trait });
+  c.liveries.forEach((l, i) => localize(l, { name: e.liveries[i] }));
+}

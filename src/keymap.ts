@@ -1,6 +1,7 @@
 // 鍵盤按鍵自訂：每個動作一個主要鍵＋一個可有可無的第二個鍵
 // 鍵位用 KeyboardEvent.code（實體按鍵位置），換鍵盤配置（AZERTY、Dvorak…）也能用；
 // 另外有四個「左右兩顆都算」的虛擬代碼：Shift、Control、Alt、Meta
+import { isEn, localize, t } from './i18n';
 
 export type KeyAction = 'up' | 'down' | 'left' | 'right' | 'drift' | 'boost' | 'fire1' | 'fire2' | 'look' | 'reset' | 'pause';
 
@@ -22,6 +23,12 @@ export const KEY_ACTIONS: { id: KeyAction; name: string }[] = [
   { id: 'reset', name: '重置' },
   { id: 'pause', name: '暫停' },
 ];
+/** 英文的動作名稱 */
+const EN_ACTIONS: Record<KeyAction, string> = {
+  up: 'Accelerate', down: 'Brake / Reverse', left: 'Steer Left', right: 'Steer Right', drift: 'Drift', boost: 'N2O',
+  fire1: 'Primary Weapon', fire2: 'Secondary Weapon', look: 'Look Back', reset: 'Reset', pause: 'Pause',
+};
+for (const a of KEY_ACTIONS) localize(a, { name: EN_ACTIONS[a.id] });
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -118,7 +125,7 @@ export type BindResult =
  * 換過去會讓對方一個鍵都不剩（對方只有那一顆）就拒絕。
  */
 export function bindKey(map: KeyMap, id: KeyAction, slot: 0 | 1, code: string): BindResult {
-  if (bannedKey(code)) return { ok: false, why: `${keyName(code)} 不能設成遊戲按鍵` };
+  if (bannedKey(code)) return { ok: false, why: t.keyBanned(keyName(code)) };
   const old = map[id][slot];
   if (old === code) return { ok: true, swapped: null };
   const hit = findKey(map, code);
@@ -135,7 +142,7 @@ export function bindKey(map: KeyMap, id: KeyAction, slot: 0 | 1, code: string): 
     const left = other[1 - hit.slot];
     if (!old && !left) {
       const name = KEY_ACTIONS.find((a) => a.id === hit.id)?.name ?? '';
-      return { ok: false, why: `${keyName(code)} 是「${name}」唯一的按鍵，先幫「${name}」設別的鍵` };
+      return { ok: false, why: t.keyOnly(keyName(code), name) };
     }
     other[hit.slot] = old;
     fix(other);
@@ -178,6 +185,13 @@ const NAMES: Record<string, string> = {
   NumpadDecimal: '數字鍵 .', NumpadEnter: '數字鍵 Enter', NumLock: 'Num Lock', ScrollLock: 'Scroll Lock', Pause: 'Pause',
   ContextMenu: '選單鍵', PrintScreen: 'PrtSc',
 };
+/** 英文版跟中文不一樣的按鍵名稱 */
+const NAMES_EN: Record<string, string> = {
+  ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift', ControlLeft: 'Left Ctrl', ControlRight: 'Right Ctrl',
+  AltLeft: IS_MAC ? 'Left Option' : 'Left Alt', AltRight: IS_MAC ? 'Right Option' : 'Right Alt',
+  NumpadAdd: 'Num +', NumpadSubtract: 'Num -', NumpadMultiply: 'Num *', NumpadDivide: 'Num /', NumpadDecimal: 'Num .', NumpadEnter: 'Num Enter',
+  ContextMenu: 'Menu',
+};
 
 /** 實際鍵盤配置的字（Chrome 系才有；例如 AZERTY 的 KeyQ 是 A） */
 let layout: Map<string, string> | null = null;
@@ -195,6 +209,7 @@ export function loadKeyboardLayout(onReady?: () => void): void {
 
 export function keyName(code: string): string {
   if (!code) return '';
+  if (isEn() && NAMES_EN[code]) return NAMES_EN[code];
   if (NAMES[code]) return NAMES[code];
   const lay = layout?.get(code);
   if (lay && lay.trim()) return lay.length === 1 ? lay.toUpperCase() : lay;
@@ -203,6 +218,6 @@ export function keyName(code: string): string {
   m = /^Digit(\d)$/.exec(code);
   if (m) return m[1];
   m = /^Numpad(\d)$/.exec(code);
-  if (m) return '數字鍵 ' + m[1];
+  if (m) return (isEn() ? 'Num ' : '數字鍵 ') + m[1];
   return code;
 }

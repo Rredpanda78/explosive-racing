@@ -1,4 +1,5 @@
 import type { DifficultyId } from '../game/difficulty';
+import { t } from '../i18n';
 import type { Kart } from '../game/kart';
 import type { NetRacer, OnlineSetup, SecParams } from '../game/net';
 import type { Race, RaceMode } from '../game/race';
@@ -209,7 +210,7 @@ export class OnlineSession {
   /** 角落顯示的連線摘要：平均延遲與直連人數 */
   summary(): string {
     const others = this.others();
-    if (!others.length) return this.client.connected ? '房間只有你' : '連線中…';
+    if (!others.length) return this.client.connected ? t.netAlone : t.connecting;
     let sum = 0, n = 0, direct = 0;
     for (const p of others) {
       const l = this.link(p);
@@ -217,7 +218,7 @@ export class OnlineSession {
       if (l.path !== 'server') direct++;
     }
     const ms = n ? Math.round(sum / n) + ' ms' : '— ms';
-    return `延遲 ${ms}・不經伺服器 ${direct}/${others.length}${this.reconnecting ? '・重新連線中' : ''}`;
+    return t.netSummary(ms, direct, others.length, this.reconnecting);
   }
 
   /** 房主按開始 */

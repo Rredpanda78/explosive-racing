@@ -19,6 +19,7 @@ import { Haptics } from './haptics';
 import { applyLayout, LAYOUT_IDS, loadSettings, saveSettings, type Settings } from './settings';
 import { Hud } from './ui/hud';
 import { Screens, type Summary } from './ui/screens';
+import { detectLang, onLang, setLang, t } from './i18n';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const touchRoot = document.getElementById('touch')!;
@@ -30,7 +31,8 @@ let track = new Track(TRACKS[trackIndex]);
 /** 選單上顯示的地圖清單（長度要先把賽道算出來才知道） */
 const trackList = TRACKS.map((def) => {
   const t = new Track(def);
-  return { name: def.name, desc: def.desc, laps: def.laps, length: Math.round(t.length), outline: trackOutline(t), theme: def.theme };
+  // 名稱與說明用 getter：跟著介面語言
+  return { get name() { return def.name; }, get desc() { return def.desc; }, laps: def.laps, length: Math.round(t.length), outline: trackOutline(t), theme: def.theme };
 });
 
 /** 選單上的賽道縮圖：把賽道中心線縮放成 SVG 路徑（viewBox 0 0 100 64） */
@@ -47,6 +49,8 @@ function trackOutline(t: Track): string {
   return d + 'Z';
 }
 const settings = loadSettings(coarse);
+// 介面語言：這台裝置選過就用選的，不然看瀏覽器語言（中文 → 中文，其他 → 英文）
+setLang(settings.lang ?? detectLang());
 const view = new GameView(canvas, coarse, settings.quality);
 const input = new Input();
 const hud = new Hud(track);
@@ -100,7 +104,8 @@ function setPlayerName(n: string): void {
 /** 進房時告訴大家自己的車與裝備 */
 function myRacer(): Omit<NetRacer, 'pid'> {
   return {
-    name: playerName() || acct.name || '車手', car: profile.kart, livery: profile.livery?.[profile.kart] ?? 0,
+    // 沒取名字就送空字串：各自的畫面用自己語言的「車手」顯示（語言相關的字不經過網路）
+    name: playerName() || acct.name || '', car: profile.kart, livery: profile.livery?.[profile.kart] ?? 0,
     primary: profile.primary, secondary: profile.secondary, plvl: profile.lvl[profile.primary], slvl: profile.lvl[profile.secondary],
     engine: profile.car.engine, n2o: profile.car.n2o, armor: profile.car.armor,
   };
@@ -227,7 +232,7 @@ function toMenu(): void {
 function setPaused(p: boolean): void {
   if (!race || resultsShown) return;
   paused = p;
-  if (p) screens.pause(audio.muted, hud.missionHtml(race), !!online);
+  if (p) screens.pause(audio.muted, () => (race ? hud.missionHtml(race) : ''), !!online);
   else {
     screens.hide();
     input.clear();
@@ -263,6 +268,11 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     if (!race) audio.setMusic(open ? 'race' : 'menu');
   },
   online: () => openOnline(),
+  setLang: (l) => {
+    settings.lang = l;
+    saveSettings(settings);
+    setLang(l);
+  },
   account: () => void loadAccountPanel().then((m) => m.openAccountPanel(acct, () => { if (screens.current === 'menu' || screens.current === 'none') screens.menu(!ready); })),
   createRoom: (name) => {
     setPlayerName(name);
@@ -271,7 +281,7 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
   joinRoom: (code, name) => {
     setPlayerName(name);
     const c = cleanCode(code);
-    if (c.length < 4) openOnline('請輸入 4 個字的房間代碼', c);
+    if (c.length < 4) openOnline(t.needCode, c);
     else enterRoom(c, false);
   },
   roomCfg: (key, val) => {
@@ -290,6 +300,14 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
   },
 });
 screens.settings = settings;
+
+// 換語言：重畫目前的畫面、比賽中的 HUD 與車手名字（場景裡的指示牌由 render/signText.ts 自己重畫）
+onLang(() => {
+  for (const r of [race, bgRace]) r?.relabel();
+  if (race) hud.relabel(race);
+  if (screens.current === 'room' && online) screens.room(online);
+  else screens.rerender();
+});
 
 // ---------------- 帳號與雲端存檔 ----------------
 const acct = new AccountClient();
@@ -319,7 +337,7 @@ acct.start();
 // ---------------- 線上對戰 ----------------
 
 function openOnline(msg = '', code = ''): void {
-  screens.onlineMenu(playerName() || '車手' + Math.floor(10 + Math.random() * 90), msg, code);
+  screens.onlineMenu(playerName() || t.racer + Math.floor(10 + Math.random() * 90), msg, code);
   pollRooms();
   // 連線的程式先在背景下載好，按下開房／加入時就不用等
   void loadOnline();
@@ -352,7 +370,7 @@ function openRoom(s: OnlineSession, code: string, create: boolean): void {
   s.onChange = () => {
     if (online !== s) return;
     if (!race && screens.current === 'room') screens.room(s);
-    hud.netNote = s.reconnecting ? '連線中斷，重新連線中…' : '';
+    hud.netNote = s.reconnecting ? t.reconnecting : '';
   };
   s.onLinks = () => {
     if (online === s && !race) screens.roomLinks(s);
@@ -446,7 +464,7 @@ function editLayout(): void {
   document.body.classList.add('touch');
   const bar = document.createElement('div');
   bar.id = 'layout-bar';
-  bar.innerHTML = '拖曳按鈕調整位置　大小 <input type="range" min="0.6" max="1.6" step="0.05" value="1" /> <button class="btn small">恢復預設</button> <button class="btn small primary">完成</button>';
+  bar.innerHTML = `${t.layoutBar} <input type="range" min="0.6" max="1.6" step="0.05" value="1" /> <button class="btn small">${t.reset}</button> <button class="btn small primary">${t.done}</button>`;
   document.body.appendChild(bar);
   const slider = bar.querySelector('input')!;
   const [resetBtn, doneBtn] = Array.from(bar.querySelectorAll('button'));
@@ -545,7 +563,8 @@ function finishRace(r: Race): void {
   const rank = p.rank;
   const payout = PAYOUT[rank - 1] ?? 0;
   const killCash = p.kills * KILL_REWARD;
-  const missions = r.missions.map((m) => ({ text: m.text, reward: m.reward, done: m.done(p, rank) }));
+  // 任務說明用 getter：結算畫面重畫時跟著目前的語言
+  const missions = r.missions.map((m) => ({ get text() { return m.text; }, reward: m.reward, done: m.done(p, rank) }));
   const missionCash = missions.reduce((a, m) => a + (m.done ? m.reward : 0), 0);
   const best = p.lapTimes.length ? Math.min(...p.lapTimes) : 0;
   const summary: Summary = { rank, payout, killCash, streakCash, missionCash, total: payout + killCash + streakCash + missionCash, bestLap: best, missions };

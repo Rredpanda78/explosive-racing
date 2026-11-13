@@ -29,7 +29,7 @@
       <div id="elim" class="hidden"></div>
     </div>
     <canvas id="minimap"></canvas>
-    <button id="btn-pause" aria-label="暫停">II</button>
+    <button id="btn-pause" aria-label="暫停" data-i18n-aria="pauseAria">II</button>
     <div id="feed"></div>
     <div id="center-msg"></div>
     <div id="sub-msg"></div>
@@ -57,18 +57,18 @@
       <div class="tbtn steer-l"><i class="ic" data-icon="left"></i></div>
       <div class="tbtn steer-r"><i class="ic" data-icon="right"></i></div>
     </div>
-    <div class="tbtn" id="t-look" data-btn="look"><i class="ic" data-icon="look"></i><b>後視</b></div>
+    <div class="tbtn" id="t-look" data-btn="look"><i class="ic" data-icon="look"></i><b data-i18n="tLook">後視</b></div>
     <div class="tbtn" id="t-fire1" data-btn="fire1"><i class="ic"></i><b>主武器</b></div>
     <div class="tbtn" id="t-fire2" data-btn="fire2"><i class="ic"></i><b>副武器</b></div>
     <div class="tbtn" id="t-boost" data-btn="boost"><i class="ic" data-icon="n2o"></i><b>N2O</b><em></em></div>
-    <div class="tbtn" id="t-drift" data-btn="drift"><i class="ic" data-icon="drift"></i><b>甩尾</b></div>
-    <div class="tbtn dual-only" id="t-driftl" data-btn="driftl"><i class="ic" data-icon="left"></i><b>左甩</b></div>
-    <div class="tbtn dual-only" id="t-driftr" data-btn="driftr"><i class="ic" data-icon="right"></i><b>右甩</b></div>
+    <div class="tbtn" id="t-drift" data-btn="drift"><i class="ic" data-icon="drift"></i><b data-i18n="tDrift">甩尾</b></div>
+    <div class="tbtn dual-only" id="t-driftl" data-btn="driftl"><i class="ic" data-icon="left"></i><b data-i18n="tDriftL">左甩</b></div>
+    <div class="tbtn dual-only" id="t-driftr" data-btn="driftr"><i class="ic" data-icon="right"></i><b data-i18n="tDriftR">右甩</b></div>
     <div class="tbtn" id="t-brake" data-btn="brake"><i class="ic" data-icon="brake"></i></div>
   </div>
 
   <div id="screens"></div>
-  <div id="rotate"><div>請將手機橫放<br /><small>Rotate your device</small></div></div>
+  <div id="rotate"><div data-i18n="rotate">請將手機橫放<br /><small>Rotate your device</small></div></div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

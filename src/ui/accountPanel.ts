@@ -6,76 +6,60 @@
  * openConflictDialog：雲端跟這台的進度不一樣時讓玩家選（AccountClient.onConflict 用）
  */
 import './account.css';
-import { SIGNUP_GIFT, type AccountClient, type AcctErr, type AcctStatus, type SaveSummary } from '../net/account';
+import { SIGNUP_GIFT, type AccountClient, type AcctErr, type SaveSummary } from '../net/account';
+import { ta } from '../lang/account';
 
-const NAME_ERR: Record<string, string> = {
-  len: '名稱要 3～20 個字',
-  chars: '名稱只能用英文字母、數字和底線（_）',
-  reserved: '這個名稱保留給官方使用，請換一個',
-};
-const PW_ERR: Record<string, string> = {
-  len: '密碼要 8～64 個字',
-  ctrl: '密碼裡不能有看不見的控制字元',
-  same: '密碼不能跟名稱一樣',
-  weak: '這個密碼太常見（或只重複同一個字），請換一個',
-};
-const STATUS_TEXT: Record<AcctStatus, string> = {
-  guest: '未登入',
-  syncing: '同步中…',
-  synced: '已同步到雲端',
-  offline: '暫時無法同步（稍後會自動重試）',
-  conflict: '雲端和這台的進度不一樣，等你選擇要保留哪一份',
-};
+// 字串表在 src/lang/account.ts（中文、英文）
 
 /** 錯誤代碼 → 給玩家看的字；ctx 決定 auth 的說法 */
 export function errText(e: Pick<AcctErr, 'err' | 'why' | 'ms' | 'key'>, ctx: 'login' | 'reset' | 'token' = 'token'): string {
   switch (e.err) {
     case 'auth':
-      return ctx === 'login' ? '名稱或密碼不對' : ctx === 'reset' ? '名稱或救援碼不對' : '登入已失效，請重新登入';
+      return ctx === 'login' ? ta.authLogin : ctx === 'reset' ? ta.authReset : ta.authToken;
     case 'name':
-      return NAME_ERR[e.why ?? ''] ?? '名稱格式不對';
+      return ta.nameErr[e.why ?? ''] ?? ta.nameBad;
     case 'weakpw':
-      return PW_ERR[e.why ?? ''] ?? '這個密碼不能用，請換一個';
+      return ta.pwErr[e.why ?? ''] ?? ta.pwBad;
     case 'badpw':
-      return '目前的密碼不對';
+      return ta.badpw;
     case 'taken':
-      return '這個名稱已經有人用了，請換一個';
+      return ta.taken;
     case 'locked':
-      return `打錯太多次，暫時鎖住了：請 ${Math.max(1, Math.ceil((e.ms ?? 0) / 60_000))} 分鐘後再試`;
+      return ta.locked(Math.max(1, Math.ceil((e.ms ?? 0) / 60_000)));
     case 'slow':
-      return '操作太頻繁了，請稍等一下再試';
+      return ta.slow;
     case 'big':
-      return '存檔太大，沒辦法上傳到雲端';
+      return ta.big;
     case 'odd':
-      return `存檔裡的數字不正常（${e.key ?? '資料'}），沒有上傳到雲端`;
+      return ta.odd(e.key ?? ta.oddData);
     case 'save':
-      return '存檔格式不對，沒有上傳到雲端';
+      return ta.saveBad;
     case 'conflict':
-      return '雲端有比較新的進度';
+      return ta.conflict;
     case 'bad':
     case 'method':
-      return '送出的資料格式不對，請重新整理網頁再試';
+      return ta.bad;
     case 'op':
-      return '伺服器不認得這個操作，請重新整理網頁再試';
+      return ta.op;
     case 'later':
-      return '伺服器暫時忙不過來，請稍後再試';
+      return ta.later;
     case 'gone':
-      return '伺服器還沒有開放帳號功能';
+      return ta.gone;
     case 'store':
-      return '這台裝置沒辦法存資料（儲存空間滿了，或正在用私密瀏覽）';
+      return ta.store;
     case 'net':
-      return '連不上伺服器，請檢查網路';
+      return ta.net;
     default:
-      return '發生錯誤，請稍後再試';
+      return ta.other;
   }
 }
 
 /** 同步狀態的一行字（主選單可以用） */
 export function statusText(acct: AccountClient): string {
   const s = acct.status;
-  if (s === 'guest') return acct.lastErr === 'auth' ? '登入已失效，請重新登入' : STATUS_TEXT.guest;
-  if (s === 'offline' && acct.lastErr) return `${STATUS_TEXT.offline}：${errText({ err: acct.lastErr })}`;
-  return STATUS_TEXT[s];
+  if (s === 'guest') return acct.lastErr === 'auth' ? ta.authToken : ta.status.guest;
+  if (s === 'offline' && acct.lastErr) return ta.statusErr(ta.status.offline, errText({ err: acct.lastErr }));
+  return ta.status[s];
 }
 
 // ---------- 小工具 ----------
@@ -114,7 +98,7 @@ function whenText(t: number): string {
   const d = new Date(t);
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-const sumText = (s: SaveSummary): string => `$${s.cash.toLocaleString('en-US')}・出賽 ${s.races}・冠軍 ${s.wins}・車款 ${s.karts} 台`;
+const sumText = (s: SaveSummary): string => ta.sum(s.cash.toLocaleString('en-US'), s.races, s.wins, s.karts);
 /** 鍵盤事件不要傳到遊戲（P、R、Esc 是暫停、重置） */
 function trapKeys(root: HTMLElement): void {
   for (const ev of ['keydown', 'keyup', 'keypress']) root.addEventListener(ev, (e) => e.stopPropagation());
@@ -138,11 +122,11 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
   panel.setAttribute('aria-labelledby', 'acp-title');
-  const title = el('h2', '', '帳號');
+  const title = el('h2', '', ta.title);
   title.id = 'acp-title';
   const x = el('button', 'acp-x', '✕');
   x.type = 'button';
-  x.setAttribute('aria-label', '關閉');
+  x.setAttribute('aria-label', ta.close);
   const head = el('div', 'acp-head');
   head.append(title, x);
   const body = el('div');
@@ -185,10 +169,10 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
     if (locked) return;
     if (acct.loggedIn !== shownIn) {
       render();
-      if (!acct.loggedIn && acct.lastErr === 'auth') say('登入已失效（可能在別的裝置登出了所有裝置，或改了密碼），請重新登入', 'err');
+      if (!acct.loggedIn && acct.lastErr === 'auth') say(ta.kicked, 'err');
     } else {
       paintInfo?.();
-      if (syncMsg && acct.status !== 'syncing') say(acct.status === 'synced' ? '進度已同步' : statusText(acct), acct.status === 'offline' ? 'err' : 'ok');
+      if (syncMsg && acct.status !== 'syncing') say(acct.status === 'synced' ? ta.synced : statusText(acct), acct.status === 'offline' ? 'err' : 'ok');
     }
   });
   /** 按鈕按下去到做完之間不能再按 */
@@ -214,11 +198,11 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
 
   // ---------- 沒登入 ----------
   function outView(): HTMLElement[] {
-    const tip = el('p', 'acp-tip', '帳號是選用的：不登入也能玩。登入後進度會存到雲端，換手機、換電腦都能接著玩。只要名稱和密碼，不收 email 或手機號碼。');
+    const tip = el('p', 'acp-tip', ta.tip);
     const tabs = el('div', 'acp-tabs');
     tabs.setAttribute('role', 'tablist');
     const tabBtns = (['login', 'reg', 'reset'] as const).map((m) => {
-      const b = el('button', 'acp-tab', m === 'login' ? '登入' : m === 'reg' ? '註冊' : '忘記密碼');
+      const b = el('button', 'acp-tab', m === 'login' ? ta.tabLogin : m === 'reg' ? ta.tabReg : ta.tabReset);
       b.type = 'button';
       b.setAttribute('role', 'tab');
       b.addEventListener('click', () => setMode(m));
@@ -227,33 +211,33 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
     });
     const form = el('form', 'acp-form');
     form.noValidate = true;
-    const nameIn = input('text', 'username', '英文字母、數字、底線 3～20 字', 24);
+    const nameIn = input('text', 'username', ta.namePh, 24);
     const rcIn = input('text', 'off', 'XXXXX-XXXXX-XXXXX-XXXXX', 40);
     rcIn.classList.add('acp-rc-input');
     rcIn.setAttribute('autocapitalize', 'characters');
-    const pwIn = input('password', 'current-password', '8～64 個字', 128);
-    const pw2In = input('password', 'new-password', '再輸入一次密碼', 128);
-    const rcField = field('救援碼', rcIn);
-    const pwField = field('密碼', pwIn);
-    const pw2Field = field('再輸入一次', pw2In);
+    const pwIn = input('password', 'current-password', ta.pwPh, 128);
+    const pw2In = input('password', 'new-password', ta.pw2Ph, 128);
+    const rcField = field(ta.rc, rcIn);
+    const pwField = field(ta.pw, pwIn);
+    const pw2Field = field(ta.again, pw2In);
     const rule = el('p', 'acp-hint');
-    const go = el('button', 'acp-btn primary wide', '登入');
+    const go = el('button', 'acp-btn primary wide', ta.goLogin);
     go.type = 'submit';
-    form.append(field('名稱', nameIn), rcField, pwField, pw2Field, rule, go);
+    form.append(field(ta.name, nameIn), rcField, pwField, pw2Field, rule, go);
 
     const setMode = (m: typeof mode) => {
       mode = m;
       for (const [k, b] of tabBtns) b.setAttribute('aria-selected', String(k === m));
       rcField.hidden = m !== 'reset';
       pw2Field.hidden = m === 'login';
-      (pwField.firstChild as HTMLElement).textContent = m === 'reset' ? '新的密碼' : '密碼';
+      (pwField.firstChild as HTMLElement).textContent = m === 'reset' ? ta.newPw : ta.pw;
       pwIn.autocomplete = m === 'login' ? 'current-password' : 'new-password';
-      go.textContent = m === 'login' ? '登入' : m === 'reg' ? '註冊' : '重設密碼並登入';
+      go.textContent = m === 'login' ? ta.goLogin : m === 'reg' ? ta.goReg : ta.goReset;
       rule.textContent =
         m === 'reg'
-          ? '名稱：3～20 個英文字母、數字或底線，不分大小寫，只有你自己看得到。密碼：8～64 個字。註冊後會給你一組救援碼，忘記密碼時要靠它重設。'
+          ? ta.ruleReg
           : m === 'reset'
-            ? '輸入註冊時（或上次重新產生時）拿到的救援碼。重設後其他裝置都會登出，也會給你一組新的救援碼，舊的就不能用了。'
+            ? ta.ruleReset
             : '';
       rule.hidden = m === 'login';
       say('');
@@ -265,22 +249,22 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
       void run(go, async () => {
         const name = nameIn.value.trim();
         const pw = pwIn.value;
-        if (mode === 'reg' && !NAME_RE.test(name)) return say(name.length < 3 || name.length > 20 ? NAME_ERR.len : NAME_ERR.chars, 'err');
-        if (mode !== 'reg' && !NAME_RE.test(name)) return say(mode === 'reset' ? '名稱或救援碼不對' : '名稱或密碼不對', 'err');
-        if (mode === 'reset' && rcIn.value.replace(/[\s-]/g, '').length !== 20) return say('救援碼是 20 個英文字母和數字（例：ABCDE-FGHJK-LMNPQ-RSTUV）', 'err');
-        if (mode === 'login' && !pw) return say('請輸入密碼', 'err');
+        if (mode === 'reg' && !NAME_RE.test(name)) return say(name.length < 3 || name.length > 20 ? ta.nameErr.len : ta.nameErr.chars, 'err');
+        if (mode !== 'reg' && !NAME_RE.test(name)) return say(mode === 'reset' ? ta.authReset : ta.authLogin, 'err');
+        if (mode === 'reset' && rcIn.value.replace(/[\s-]/g, '').length !== 20) return say(ta.rcFormat, 'err');
+        if (mode === 'login' && !pw) return say(ta.needPw, 'err');
         if (mode !== 'login') {
           const w = localPwWhy(pw, name);
-          if (w) return say(PW_ERR[w], 'err');
-          if (pw !== pw2In.value) return say('兩次輸入的密碼不一樣', 'err');
+          if (w) return say(ta.pwErr[w], 'err');
+          if (pw !== pw2In.value) return say(ta.pwMismatch, 'err');
         }
-        say(mode === 'reg' ? '註冊中…' : '確認中…');
+        say(mode === 'reg' ? ta.registering : ta.checking);
         if (mode === 'login') {
           const r = await acct.login(name, pw);
           if (!r.ok) return say(errText(r, 'login'), 'err');
           render();
-          if (acct.status === 'syncing') saysyncing('登入成功，正在同步進度…');
-          else say('登入成功', 'ok');
+          if (acct.status === 'syncing') saysyncing(ta.loginSyncing);
+          else say(ta.loginOk, 'ok');
           return;
         }
         acct.hold = true; // 救援碼還沒存好之前先不同步（不然選進度的視窗會蓋在上面）
@@ -306,79 +290,79 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
     const dev = el('p', 'acp-hint');
     info.append(who, st, cloud, dev);
     paintInfo = () => {
-      who.replaceChildren('登入身分：', el('b', '', acct.name));
-      st.textContent = `同步狀態：${statusText(acct)}`;
+      who.replaceChildren(ta.who, el('b', '', acct.name));
+      st.textContent = ta.syncState(statusText(acct));
       st.dataset.s = acct.status;
       const s = acct.info?.save;
-      cloud.textContent = acct.info ? (s ? `雲端存檔：${sumText(s.sum)}（${whenText(s.at)}）` : '雲端存檔：還沒有') : '雲端存檔：讀取中…';
-      dev.textContent = acct.info ? `目前登入中的裝置：${acct.info.devices} 台` : '';
+      cloud.textContent = acct.info ? (s ? ta.cloudSave(sumText(s.sum), whenText(s.at)) : ta.cloudNone) : ta.cloudLoading;
+      dev.textContent = acct.info ? ta.devices(acct.info.devices) : '';
     };
     paintInfo();
     void acct.me().then(() => paintInfo?.());
 
-    const syncBtn = button('立即同步', 'primary', () =>
+    const syncBtn = button(ta.syncNow, 'primary', () =>
       void run(syncBtn, async () => {
-        say('同步中…');
+        say(ta.syncing);
         await acct.syncNow();
         await acct.me();
         paintInfo?.();
         if (!acct.loggedIn) return;
-        if (acct.status === 'synced') say('已同步', 'ok');
+        if (acct.status === 'synced') say(ta.syncedShort, 'ok');
         else if (acct.status === 'offline') say(statusText(acct), 'err');
         else say(statusText(acct));
       }),
     );
 
     // 改密碼
-    const oldIn = input('password', 'current-password', '目前的密碼', 128);
-    const newIn = input('password', 'new-password', '8～64 個字', 128);
-    const new2In = input('password', 'new-password', '再輸入一次新密碼', 128);
-    const pwGo = button('確定修改', 'primary wide', () =>
+    const oldIn = input('password', 'current-password', ta.curPw, 128);
+    const newIn = input('password', 'new-password', ta.pwPh, 128);
+    const new2In = input('password', 'new-password', ta.newPw2Ph, 128);
+    const pwGo = button(ta.pwApply, 'primary wide', () =>
       void run(pwGo, async () => {
         const w = localPwWhy(newIn.value, acct.name);
-        if (!oldIn.value) return say('請輸入目前的密碼', 'err');
-        if (w) return say(PW_ERR[w], 'err');
-        if (newIn.value !== new2In.value) return say('兩次輸入的新密碼不一樣', 'err');
+        if (!oldIn.value) return say(ta.needCurPw, 'err');
+        if (w) return say(ta.pwErr[w], 'err');
+        if (newIn.value !== new2In.value) return say(ta.newPwMismatch, 'err');
         const r = await acct.changePassword(oldIn.value, newIn.value);
         if (!r.ok) return say(errText(r), 'err');
         oldIn.value = newIn.value = new2In.value = '';
         pwSec.close();
-        say('密碼已修改，其他裝置都已登出（這台不用重新登入）', 'ok');
+        say(ta.pwChanged, 'ok');
         await acct.me();
         paintInfo?.();
       }),
     );
-    const pwSec = section('改密碼', [field('目前的密碼', oldIn), field('新的密碼', newIn), field('再輸入一次', new2In), pwGo]);
+    const pwSec = section(ta.changePw, [field(ta.curPw, oldIn), field(ta.newPw, newIn), field(ta.again, new2In), pwGo]);
 
     // 重新產生救援碼
-    const rcPw = input('password', 'current-password', '目前的密碼', 128);
-    const rcGo = button('產生新的救援碼', 'primary wide', () =>
+    const rcPw = input('password', 'current-password', ta.curPw, 128);
+    const rcGo = button(ta.newRc, 'primary wide', () =>
       void run(rcGo, async () => {
-        if (!rcPw.value) return say('請輸入目前的密碼', 'err');
+        if (!rcPw.value) return say(ta.needCurPw, 'err');
         const r = await acct.newRecoveryCode(rcPw.value);
         if (!r.ok) return say(errText(r), 'err');
         rcPw.value = '';
         showRc(r.rc, 'regen');
       }),
     );
-    const rcSec = section('重新產生救援碼', [el('p', 'acp-hint', '產生新的救援碼之後，舊的就不能用了。'), field('密碼', rcPw), rcGo]);
+    const rcSec = section(ta.regenRc, [el('p', 'acp-hint', ta.regenHint), field(ta.pw, rcPw), rcGo]);
 
     // 登出
-    const out = button('登出', '', () =>
+    const out = button(ta.logout, '', () =>
       void run(out, async () => {
         await acct.logout();
         render();
-        say('已登出（這台的進度還在）', 'ok');
+        say(ta.loggedOut, 'ok');
       }),
     );
     let sureTimer = 0;
-    const all = button('登出所有裝置', 'danger', () => {
+    const all = button(ta.logoutAll, 'danger', () => {
       if (!all.classList.contains('sure')) {
         all.classList.add('sure');
-        all.textContent = '確定？再按一次';
+        all.textContent = ta.sure;
         sureTimer = window.setTimeout(() => {
           all.classList.remove('sure');
-          all.textContent = '登出所有裝置';
+          all.textContent = ta.logoutAll;
         }, 4000);
         return;
       }
@@ -387,11 +371,11 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
         const r = await acct.logoutAll();
         if (!r.ok) {
           all.classList.remove('sure');
-          all.textContent = '登出所有裝置';
+          all.textContent = ta.logoutAll;
           return say(errText(r), 'err');
         }
         render();
-        say('所有裝置都已登出（包括這台；這台的進度還在）', 'ok');
+        say(ta.loggedOutAll, 'ok');
       });
     });
     const outRow = el('div', 'acp-row acp-sec');
@@ -424,42 +408,42 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
     locked = true;
     paintInfo = null;
     x.hidden = true;
-    const h = el('h3', '', why === 'reg' ? '註冊成功！這是你的救援碼' : why === 'reset' ? '密碼已重設！這是新的救援碼' : '這是新的救援碼');
+    const h = el('h3', '', why === 'reg' ? ta.rcReg : why === 'reset' ? ta.rcReset : ta.rcRegen);
     h.style.margin = '0';
     const code = el('p', 'acp-code', rc);
-    const copy = button('複製', '', () => {
-      const done = () => say('已複製救援碼，記得存到安全的地方', 'ok');
+    const copy = button(ta.copy, '', () => {
+      const done = () => say(ta.copiedRc, 'ok');
       const manual = () => {
         const sel = window.getSelection();
         const range = document.createRange();
         range.selectNodeContents(code);
         sel?.removeAllRanges();
         sel?.addRange(range);
-        say('沒辦法自動複製：救援碼已經選取，請自己複製或抄下來', 'err');
+        say(ta.copyFail, 'err');
       };
       if (navigator.clipboard?.writeText) navigator.clipboard.writeText(rc).then(done, manual);
       else manual();
     });
     const box = el('div', 'acp-rc-box');
     box.append(code, copy);
-    const warn = el('p', 'acp-warn', '救援碼只會顯示這一次。忘記密碼時要用它才能重設密碼；弄丟了就沒辦法找回這個帳號（我們沒有你的 email 或手機）。請抄下來，或存到密碼管理器。');
+    const warn = el('p', 'acp-warn', ta.rcWarn);
     const extra: HTMLElement[] = [];
-    if (why === 'reg') extra.push(el('p', 'acp-gift', `🎁 新帳號禮：已送你 $${SIGNUP_GIFT.toLocaleString('en-US')} 遊戲幣！`));
-    if (why !== 'reg') extra.push(el('p', 'acp-hint', '舊的救援碼已經不能用了。'));
-    if (why === 'reset') extra.push(el('p', 'acp-hint', '其他裝置都已經登出。'));
+    if (why === 'reg') extra.push(el('p', 'acp-gift', ta.gift(SIGNUP_GIFT.toLocaleString('en-US'))));
+    if (why !== 'reg') extra.push(el('p', 'acp-hint', ta.oldRcDead));
+    if (why === 'reset') extra.push(el('p', 'acp-hint', ta.othersOut));
     const cb = el('input');
     cb.type = 'checkbox';
     const check = el('label', 'acp-check');
-    check.append(cb, el('span', '', '我已經存好了'));
-    const fin = button('完成', 'primary wide', () => {
+    check.append(cb, el('span', '', ta.saved));
+    const fin = button(ta.done, 'primary wide', () => {
       if (!cb.checked) return;
       locked = false;
       acct.hold = false;
       render();
       if (why !== 'regen') {
-        saysyncing('正在同步進度…');
+        saysyncing(ta.syncingProgress);
         void acct.syncNow();
-      } else say('新的救援碼已經生效', 'ok');
+      } else say(ta.rcActive, 'ok');
     });
     fin.disabled = true;
     cb.addEventListener('change', () => (fin.disabled = !cb.checked));
@@ -482,20 +466,20 @@ export function openConflictDialog(local: SaveSummary, cloud: SaveSummary): Prom
     panel.setAttribute('aria-modal', 'true');
     panel.setAttribute('aria-labelledby', 'acp-cf-title');
     const head = el('div', 'acp-head');
-    const title = el('h2', '', '要保留哪一份進度？');
+    const title = el('h2', '', ta.cfTitle);
     title.id = 'acp-cf-title';
     head.append(title);
     const more = cloud.races !== local.races ? (cloud.races > local.races ? 'cloud' : 'local') : cloud.cash !== local.cash ? (cloud.cash > local.cash ? 'cloud' : 'local') : null;
     const card = (k: 'cloud' | 'local', s: SaveSummary) => {
       const c = el('div', `acp-card${more === k ? ' more' : ''}`);
-      if (more === k) c.append(el('span', 'acp-tag', '進度較多'));
+      if (more === k) c.append(el('span', 'acp-tag', ta.cfMore));
       c.append(
-        el('h3', '', k === 'cloud' ? '☁ 雲端' : '📱 這台裝置'),
+        el('h3', '', k === 'cloud' ? ta.cfCloud : ta.cfLocal),
         el('span', 'acp-cash', `$${s.cash.toLocaleString('en-US')}`),
-        el('span', '', `出賽 ${s.races} 場・冠軍 ${s.wins} 次`),
-        el('span', '', `擁有車款 ${s.karts} 台`),
+        el('span', '', ta.cfRaces(s.races, s.wins)),
+        el('span', '', ta.cfKarts(s.karts)),
       );
-      if (s.at) c.append(el('small', '', `${whenText(s.at)} 存的`));
+      if (s.at) c.append(el('small', '', ta.cfWhen(whenText(s.at))));
       return c;
     };
     const cards = el('div', 'acp-cards');
@@ -505,12 +489,12 @@ export function openConflictDialog(local: SaveSummary, cloud: SaveSummary): Prom
       resolve(k);
     };
     const row = el('div', 'acp-row');
-    row.append(button('用雲端的', more === 'local' ? '' : 'primary', () => done('cloud')), button('用這台的', more === 'local' ? 'primary' : '', () => done('local')));
+    row.append(button(ta.cfUseCloud, more === 'local' ? '' : 'primary', () => done('cloud')), button(ta.cfUseLocal, more === 'local' ? 'primary' : '', () => done('local')));
     panel.append(
       head,
-      el('p', 'acp-tip', '這個帳號在雲端的進度，和這台裝置上的不一樣。'),
+      el('p', 'acp-tip', ta.cfTip),
       cards,
-      el('p', 'acp-hint', '用雲端的：這台的進度會換成雲端那一份。用這台的：雲端那一份會被這台的進度蓋掉。沒選到的那一份會不見。'),
+      el('p', 'acp-hint', ta.cfHint),
       row,
     );
     root.append(panel);

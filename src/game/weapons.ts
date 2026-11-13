@@ -1,3 +1,5 @@
+import { isEn, localize } from '../i18n';
+
 export type PrimaryId = 'mg' | 'vulcan' | 'flame' | 'laser' | 'arc' | 'freeze' | 'sonic' | 'harpoon';
 export type SecondaryId = 'rocket' | 'grenade' | 'mine' | 'cluster' | 'missile' | 'shield';
 export type WeaponId = PrimaryId | SecondaryId;
@@ -152,3 +154,37 @@ export const CAR_UPGRADES: Record<CarUpgradeId, { name: string; desc: string }> 
   armor: { name: '裝甲', desc: '每級耐久 +12' },
 };
 export const carUpgradeCost = (lvl: number) => 500 * (lvl + 1);
+
+// ---------- 英文名稱與說明（中文就是上面原本的字） ----------
+
+const EN_PRIMARY: Record<PrimaryId, { name: string; desc: string; perk: string }> = {
+  mg: { name: '.50 MG', desc: 'Steady rate of fire, accurate and slow to overheat', perk: 'AP Rounds: bullets punch through the first car and keep flying' },
+  vulcan: { name: 'Vulcan', desc: 'Six spinning barrels: needs to spin up first, hits hardest of all but overheats easily', perk: 'Quick Spin: almost no spin-up, and overheats 20% slower' },
+  flame: { name: 'Flamethrower', desc: 'Close-range cone of fire that sets cars burning; also ignites barrels', perk: 'Inferno: +30% range, burning lasts 4 s' },
+  laser: { name: 'Rail Laser', desc: 'Charge for a moment, then fire a piercing beam: the first car straight ahead is wrecked outright, and every car after it takes less; long cooldown', perk: 'Overload Beam: 30% wider beam, easier to land' },
+  arc: { name: 'Arc Gun', desc: 'Short-range discharge straight ahead: after the first car, the current jumps to cars within 12 m (up to 2 more, ×0.6 power per hop). Stronger in a pack, weak one-on-one', perk: 'Superconductor: one extra hop (up to 4 cars), +4 m hop range' },
+  freeze: { name: 'Freeze Beam', desc: 'A steady blue beam with very low damage that ices rivals up: the longer it stays on, the more they slide (less grip, can’t turn in) and the slower they go; thaws about 2 s after you let go', perk: 'Absolute Zero: deeper freeze (slipperier, −15% top speed), takes 3 s to thaw' },
+  sonic: { name: 'Sonic Cannon', desc: 'Hold to fire a cone-shaped shockwave every 0.45 s: low damage, but it shoves cars sideways and forward — the closer, the harder. Perfect for pushing rivals into walls or off the road', perk: 'Resonance: cars shoved into a wall take an extra 15 damage' },
+  harpoon: { name: 'Harpoon', desc: 'Fires a harpoon straight ahead; hook the car in front and the line reels you in (hold for up to ~2 s): you surge past their speed and drag them back a little. Breaks when you let go, catch them, hit a wall or the line is blocked; each shot costs a lot of heat', perk: 'Slingshot: automatic mini-boost the moment you reel them in' },
+};
+const EN_SECONDARY: Record<SecondaryId, { name: string; desc: string; perk: string }> = {
+  rocket: { name: 'Rocket', desc: 'Flies straight ahead and explodes on impact or when it hits a wall', perk: 'Twin Pod: fires two rockets at once' },
+  grenade: { name: 'Grenade Launcher', desc: 'Auto-leads the rival ahead and lobs a shell that blows up on landing or on contact — a big blast that knocks cars back (and never hurts you)', perk: 'Cluster Shell: bursts into 3 more small grenades' },
+  mine: { name: 'Mine', desc: 'Drops a mine behind you that explodes when a car drives over it once armed (up to 3 at a time)', perk: 'Heavy Mine: +40% blast radius, up to 5 at a time' },
+  cluster: { name: 'Cluster Mines', desc: 'Scatters 5 small round mines behind you that blow on contact, or on their own after 6 s (weak, won’t launch cars)', perk: 'Extra Load: scatters 7 at a time' },
+  shield: { name: 'Rear Shield', desc: 'Deploys a curved energy shield behind you that blocks bullets, lasers, flames, rockets, missiles and blasts from behind; it shatters if it soaks up too much (no help against attacks from the front or mines you drive over)', perk: 'Full Cover: coverage widens from 150° to 220° (blocks from the sides too)' },
+  missile: { name: 'Homing Missile', desc: 'Locks onto a random rival and chases them; the target gets a warning and can shake it with a hard turn', perk: 'Twin Warhead: fires two at once (55% power each), each locking a different rival' },
+};
+/** 英文的短名：HUD 與手機開火鈕的空間比較小 */
+const EN_SHORT: Record<WeaponId, string> = {
+  mg: '.50 MG', vulcan: 'Vulcan', flame: 'Flamer', laser: 'Laser', arc: 'Arc Gun', freeze: 'Freeze', sonic: 'Sonic', harpoon: 'Harpoon',
+  rocket: 'Rocket', grenade: 'Grenade', mine: 'Mine', cluster: 'Cluster', missile: 'Homing', shield: 'Shield',
+};
+for (const id of PRIMARY_IDS) localize(PRIMARY[id], EN_PRIMARY[id]);
+for (const id of SECONDARY_IDS) localize(SECONDARY[id], EN_SECONDARY[id]);
+localize(CAR_UPGRADES.engine, { name: 'Engine', desc: 'Top speed +1.5% and acceleration +3% per level' });
+localize(CAR_UPGRADES.n2o, { name: 'N2O System', desc: 'N2O lasts +0.2 s longer per level' });
+localize(CAR_UPGRADES.armor, { name: 'Armor', desc: 'Durability +12 per level' });
+
+/** HUD 與手機開火鈕上的武器名稱：中文用全名，英文用短名 */
+export const weaponLabel = (id: WeaponId): string => (isEn() ? EN_SHORT[id] : weaponDef(id).name);

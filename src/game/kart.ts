@@ -24,6 +24,8 @@ export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'drif
 export class Kart {
   id: number;
   name: string;
+  /** 名字跟著介面語言（電腦車手、單機的「你」、沒取名字的玩家）：換語言時照這個重新取名；null = 玩家自己取的名字 */
+  nameKey: string | null = null;
   color: number;
   car: CarId = 'kart-oobi';
   isPlayer = false;

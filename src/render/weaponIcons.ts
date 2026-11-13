@@ -65,7 +65,8 @@ function renderIcons(): Partial<Record<WeaponId, string>> {
 const carIcons = new Map<string, string>();
 
 export function carIcon(model: string, livery?: Livery): string | undefined {
-  const cacheKey = model + '|' + (livery ? livery.name : '');
+  // 用色相與染色當快取鍵（花色名稱會跟著介面語言變，不能拿來當鍵）
+  const cacheKey = model + '|' + (livery ? livery.hue + ',' + livery.tint : '');
   if (carIcons.has(cacheKey)) return carIcons.get(cacheKey);
   const obj = cloneModel(model);
   if (!obj) return undefined;

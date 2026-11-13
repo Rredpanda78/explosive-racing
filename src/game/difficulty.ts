@@ -1,3 +1,5 @@
+import { localize } from '../i18n';
+
 export type DifficultyId = 'easy' | 'normal' | 'hard' | 'expert';
 
 /** 電腦車手的難度參數 */
@@ -57,3 +59,9 @@ export const DIFFICULTY: Record<DifficultyId, Difficulty> = {
 };
 
 export const DIFFICULTY_IDS = Object.keys(DIFFICULTY) as DifficultyId[];
+
+// 英文的難度名稱與說明（中文就是上面原本的字）
+localize(DIFFICULTY.easy, { name: 'Easy', desc: 'Drives slowly and rarely fires' });
+localize(DIFFICULTY.normal, { name: 'Normal', desc: 'Mini-boosts out of drifts and takes shortcuts' });
+localize(DIFFICULTY.hard, { name: 'Hard', desc: 'Faster than you, fires at will and brings upgraded weapons' });
+localize(DIFFICULTY.expert, { name: 'Extreme', desc: 'Almost flawless: racing lines, maxed weapons, nonstop fire, and no letting up when ahead' });

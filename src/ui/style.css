@@ -540,6 +540,9 @@ body.touch #missions { top: calc(33 * var(--u)); }
   .results .row { flex-wrap: nowrap; gap: .5em; position: static; background: none; }
   .results .row .btn { font-size: 14px; padding: .45em .8em; min-width: 0; flex: 1; }
 }
+/* 結算的三顆按鈕排成一列（英文字比較長：換成兩列時固定在底部的按鈕會蓋住本場收入那一行） */
+.results .row { flex-wrap: nowrap; }
+.results .row .btn { min-width: 0; flex: 1 1 auto; white-space: nowrap; padding-left: .6em; padding-right: .6em; }
 /* 結算面板是奶油色底：一般按鈕改成深藍字、深藍框（原本奶油色字在奶油色底上看不到） */
 .results .btn:not(.primary) { color: var(--navy); border-color: var(--navy); }
 .results .btn:not(.primary):hover { background: rgba(19,40,75,.08); }
@@ -594,3 +597,36 @@ body.touch #missions { top: calc(33 * var(--u)); }
 #fx-flash { position: absolute; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(circle at 50% 55%, rgba(255, 235, 245, .9), rgba(255, 120, 170, .55) 60%, rgba(255, 90, 140, .35)); }
 /* 沒有後製的畫質（低畫質、手機中畫質）：N2O 時速度線外圈再加一層偏藍的暗角，代替放射模糊 */
 body.fx-lite #fx-speed::after { content: ""; position: absolute; inset: 18%; background: radial-gradient(circle, transparent 42%, rgba(40, 120, 255, .22) 70%, rgba(10, 20, 60, .5) 100%); }
+
+/* ---------- 語言切換（主選單右上角：中／EN） ---------- */
+.lang-toggle { position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); z-index: 3; display: flex; gap: 2px; padding: 2px; border: 2px solid rgba(243,234,213,.55); border-radius: 10px; background: rgba(11,26,51,.6); margin: 0 !important; }
+.lang-toggle button { background: transparent; border: 0; border-radius: 7px; color: var(--cream); font-weight: 900; font-size: 13px; line-height: 1; padding: .45em .7em; min-width: 2.7em; opacity: .7; }
+.lang-toggle button:hover { opacity: 1; }
+.lang-toggle button.on { background: var(--coral); opacity: 1; }
+/* 手機橫放：右上角會壓到賽道卡，改放左上角（徽章旁邊的空位） */
+@media (max-height: 520px) {
+  .lang-toggle { left: max(10px, env(safe-area-inset-left)); right: auto; top: max(8px, env(safe-area-inset-top)); }
+  .lang-toggle button { font-size: 12px; }
+}
+
+/* ---------- 英文版：字比較長；拉丁字母用粗體無襯線，標題全大寫（維持海報感） ---------- */
+html[lang="en"] { font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+html[lang="en"] .title, html[lang="en"] .garage-head h2, html[lang="en"] .net-panel h2, html[lang="en"] .results h2,
+html[lang="en"] .acp-head h2, html[lang="en"] .m-right h3, html[lang="en"] .section h3, html[lang="en"] .setgrid h3 { text-transform: uppercase; }
+html[lang="en"] .statbar span { flex-basis: 4.6em; }
+/* 車庫卡片標題：英文名字長，等級／擁有狀態不換行、放不下就整個移到下一行 */
+html[lang="en"] .card h4 { flex-wrap: wrap; gap: 0 .5em; }
+html[lang="en"] .card h4 small { white-space: nowrap; margin-left: auto; font-size: .78em; }
+/* 按鍵說明：英文比較長，矮螢幕放不下時可以捲動（放得下時一樣置中） */
+.helpbox { overflow-y: auto; align-items: flex-start; touch-action: pan-y; }
+.helpbox > div { margin: auto 0; }
+@media (max-height: 520px) {
+  html[lang="en"] .helpbox { padding: 2vh 3vw; }
+  html[lang="en"] .helpbox > div { font-size: 12px; line-height: 1.6; padding: .8em 1.2em; }
+}
+/* 賽道卡：英文名字比較長，稍微收緊（長的名字仍可換行） */
+html[lang="en"] .tcard b { letter-spacing: -.01em; line-height: 1.15; }
+@media (max-height: 520px) {
+  html[lang="en"] .tcard b { font-size: 12px; }
+  html[lang="en"] .m-detail { line-height: 1.35; }
+}

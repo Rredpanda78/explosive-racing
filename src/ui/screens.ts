@@ -9,6 +9,7 @@ import { ENGINE_STYLES, MUSIC_STYLES, WEAPON_PACKS } from '../audio';
 import { bindKey, clearKey, defaultKeys, KEY_ACTIONS, keyName, loadKeyboardLayout, type KeyAction, type KeyMap } from '../keymap';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
+import { isEn, lang, t, type Lang } from '../i18n';
 import type { OnlineSession } from '../net/online';
 import type { PublicRoom } from '../net/room';
 import {
@@ -59,6 +60,8 @@ export interface ScreenActions {
   previewSound(kind: 'engine' | 'weapon'): void;
   /** 帳號面板 */
   account(): void;
+  /** 換介面語言（存進這台裝置的設定） */
+  setLang(l: Lang): void;
   /** 線上對戰：開房、加入、房主設定、開始、回到房間、離開 */
   online(): void;
   createRoom(name: string): void;
@@ -70,7 +73,6 @@ export interface ScreenActions {
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-const KEY_HINT = '點一下按鍵格再按想用的鍵；已經被別的動作用掉的鍵會兩邊互換';
 
 /** 一場比賽的結算內容（由 main 計算後交給結算畫面顯示） */
 export interface Summary {
@@ -101,6 +103,9 @@ export class Screens {
   current: 'none' | 'menu' | 'garage' | 'pause' | 'results' | 'settings' | 'online' | 'room' = 'none';
   private garageBack: 'menu' | 'results' | 'room' = 'menu';
   private lastResults = '';
+  /** 重畫目前畫面用（換語言時）：結算、線上對戰畫面的參數 */
+  private resultsArgs: [Race, Summary, boolean] | null = null;
+  private onlineArgs: [string, string, string] = ['', '', ''];
   private loading = false;
 
   constructor(profile: Profile, tracks: TrackInfo[], trackIndex: () => number, act: ScreenActions) {
@@ -129,7 +134,7 @@ export class Screens {
   /** 登入中的帳號名稱（空字串 = 訪客） */
   accountLabel = '';
   private settingsBack: 'menu' | 'pause' = 'menu';
-  private pauseArgs: [boolean, string] = [false, ''];
+  private pauseArgs: [boolean, () => string, boolean] = [false, () => '', false];
 
   /** 載入進度（0~1）：直接更新載入條，不重畫整個選單 */
   private loadF = 0;
@@ -138,12 +143,34 @@ export class Screens {
     const bar = this.root.querySelector<HTMLElement>('.loadbar i');
     if (bar) bar.style.width = Math.round(f * 100) + '%';
     const pct = this.root.querySelector<HTMLElement>('.loadbar span');
-    if (pct) pct.textContent = '載入中… ' + Math.round(f * 100) + '%';
+    if (pct) pct.textContent = t.loadingPct(Math.round(f * 100));
   }
 
   hide(): void {
     this.current = 'none';
     this.root.innerHTML = '';
+  }
+
+  /** 換語言後重畫目前的畫面（線上房間由 main 重畫：要用到連線） */
+  rerender(): void {
+    switch (this.current) {
+      case 'menu': this.menu(this.loading); break;
+      case 'settings': this.settingsPage(); break;
+      case 'garage': this.garage(); break;
+      case 'pause': this.pause(...this.pauseArgs); break;
+      case 'results': if (this.resultsArgs) this.results(...this.resultsArgs); break;
+      case 'online': {
+        const [name, msg, code] = this.onlineArgs;
+        this.onlineMenu(this.val('#net-name') || name, msg, this.val('#net-code') || code);
+        break;
+      }
+    }
+  }
+
+  /** 主選單右上角的語言切換（中／EN） */
+  private langToggle(): string {
+    const b = (l: Lang, label: string) => `<button class="${lang() === l ? 'on' : ''}" data-act="lang" data-id="${l}" lang="${l === 'zh' ? 'zh-Hant' : 'en'}">${label}</button>`;
+    return `<div class="lang-toggle" role="group" aria-label="${t.langAria}">${b('zh', '中')}${b('en', 'EN')}</div>`;
   }
 
   private handle(act: string, id?: string): void {
@@ -195,7 +222,7 @@ export class Screens {
         this.root.querySelectorAll<HTMLElement>(`[data-act="${act}"]`).forEach((b) => b.classList.toggle('on', b.dataset.id === id));
         const info = (eng ? ENGINE_STYLES : WEAPON_PACKS).find((x) => x.id === id);
         const note = this.root.querySelector<HTMLElement>(eng ? '[data-engdesc]' : '[data-wpndesc]');
-        if (note && info) note.textContent = info.desc + '・點一下試聽';
+        if (note && info) note.textContent = info.desc + t.tapPreview;
         break;
       }
       case 'tdrift':
@@ -229,19 +256,20 @@ export class Screens {
         this.stopCapture();
         this.settings.keys = defaultKeys();
         this.act.settingChanged('keys');
-        this.renderKeys('已恢復預設按鍵');
+        this.renderKeys(t.keysReset);
         break;
       case 'calib': this.act.calibrateTilt(); break;
       case 'restart': this.act.restart(); break;
       case 'menu': this.act.toMenu(); break;
       case 'garage': this.garageBack = this.current === 'results' ? 'results' : this.current === 'room' ? 'room' : 'menu'; this.garage(); break;
       case 'back':
-        if (this.garageBack === 'results' && this.lastResults) { this.current = 'results'; this.root.innerHTML = this.lastResults; }
+        if (this.garageBack === 'results' && this.resultsArgs) this.results(...this.resultsArgs);
         else if (this.garageBack === 'room') this.act.roomScreen();
         else this.menu(this.loading);
         break;
       case 'online': this.act.online(); break;
       case 'account': this.act.account(); break;
+      case 'lang': if (id === 'zh' || id === 'en') this.act.setLang(id); break;
       case 'backmenu': this.menu(this.loading); break;
       case 'mkroom': this.act.createRoom(this.val('#net-name')); break;
       case 'joinroom': this.act.joinRoom(this.val('#net-code'), this.val('#net-name')); break;
@@ -258,14 +286,14 @@ export class Screens {
         const link = location.origin + location.pathname + '?room=' + (id ?? '');
         void navigator.clipboard?.writeText(link).then(() => {
           const b = this.root.querySelector('[data-act="copylink"]');
-          if (b) b.textContent = '已複製！';
-        }).catch(() => window.prompt('邀請連結', link));
+          if (b) b.textContent = t.copied;
+        }).catch(() => window.prompt(t.inviteLink, link));
         break;
       }
       case 'mute': {
         const m = this.act.toggleMute();
         const b = this.root.querySelector('[data-act="mute"]');
-        if (b) b.textContent = m ? '音效：關' : '音效：開';
+        if (b) b.textContent = m ? t.soundOff : t.soundOn;
         break;
       }
       case 'buy': {
@@ -341,48 +369,50 @@ export class Screens {
     const dis = loading ? 'disabled' : '';
     const ti = this.trackIndex();
     const cur = this.tracks[ti];
-    const themeName: Record<string, string> = { meadow: '草原', desert: '沙漠', city: '夜城', ocean: '海底', taiwan: '夜市' };
-    const cards = this.tracks.map((t, i) => `
+    const cards = this.tracks.map((tr, i) => `
       <button class="tcard ${i === ti ? 'on' : ''}" data-act="track" data-id="${i}" ${dis}>
-        ${i === ti ? '<em class="tag">已選</em>' : ''}
-        <svg viewBox="0 0 100 64"><path d="${t.outline}" /></svg>
-        <b>${t.name}</b>
-        <span>${themeName[t.theme] ?? ''}・${(t.length / 1000).toFixed(1)} km</span>
+        ${i === ti ? `<em class="tag">${t.picked}</em>` : ''}
+        <svg viewBox="0 0 100 64"><path d="${tr.outline}" /></svg>
+        <b>${tr.name}</b>
+        <span>${t.themes[tr.theme] ?? ''}${t.sep}${t.km((tr.length / 1000).toFixed(1))}</span>
       </button>`).join('');
-    const loadout = `${CARS[p.kart].name}・${PRIMARY[p.primary].name} / ${SECONDARY[p.secondary].name}`;
+    // 標題與內容之間的分隔（賽道介紹、按鍵說明）：中文用全形空白，英文用破折號
+    const hs = isEn() ? ' — ' : '　';
+    const loadout = `${CARS[p.kart].name}${t.sep}${PRIMARY[p.primary].name} / ${SECONDARY[p.secondary].name}`;
     this.root.innerHTML = `
       <div class="screen menu2">
+        ${this.langToggle()}
         <div class="m-grid">
           <div class="m-left">
             ${EMBLEM}
-            <button class="m-loadout" data-act="garage"><span>車庫 &amp; 裝備</span><b>${loadout}</b><i>›</i></button>
-            <div class="m-stats"><span class="cash">$${p.cash}</span><span>出賽 ${p.races}</span><span>冠軍 ${p.wins}</span></div>
+            <button class="m-loadout" data-act="garage"><span>${t.loadoutBtn}</span><b>${loadout}</b><i>›</i></button>
+            <div class="m-stats"><span class="cash">$${p.cash}</span><span>${t.races(p.races)}</span><span>${t.wins(p.wins)}</span></div>
             ${loading
-              ? `<div class="loadbar"><div class="lb-track"><i style="width:${Math.round(this.loadF * 100)}%"></i><span>載入中… ${Math.round(this.loadF * 100)}%</span></div><div class="n2o-badge">N2O</div></div>`
+              ? `<div class="loadbar"><div class="lb-track"><i style="width:${Math.round(this.loadF * 100)}%"></i><span>${t.loadingPct(Math.round(this.loadF * 100))}</span></div><div class="n2o-badge">N2O</div></div>`
               : `<div class="m-modes">
-                  <button class="m-mode primary" data-act="start" data-id="race"><b>競速賽</b><span>跑完 ${cur.laps} 圈，名次高的贏</span></button>
-                  <button class="m-mode" data-act="start" data-id="elim"><b>淘汰賽</b><span>每 17 秒淘汰最後一名</span></button>
-                  <button class="m-mode net" data-act="online"><b>線上對戰</b><span>開房間跟朋友一起跑</span></button>
+                  <button class="m-mode primary" data-act="start" data-id="race"><b>${t.modeRace}</b><span>${t.raceSub(cur.laps)}</span></button>
+                  <button class="m-mode" data-act="start" data-id="elim"><b>${t.modeElim}</b><span>${t.elimSub}</span></button>
+                  <button class="m-mode net" data-act="online"><b>${t.online}</b><span>${t.onlineSub}</span></button>
                 </div>`}
-            <div class="m-diff"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="seg ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}">${DIFFICULTY[d].name}</button>`).join('')}</div>
-            <div class="m-links"><button data-act="account" class="${this.accountLabel ? 'acct-on' : ''}">${this.accountLabel ? '👤 ' + esc(this.accountLabel) : '帳號登入'}</button><button data-act="settings">設定</button><button data-act="music">配樂</button><button data-act="help">遊戲按鍵說明</button></div>
+            <div class="m-diff"><span>${t.aiLevel}</span>${DIFFICULTY_IDS.map((d) => `<button class="seg ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}">${DIFFICULTY[d].name}</button>`).join('')}</div>
+            <div class="m-links"><button data-act="account" class="${this.accountLabel ? 'acct-on' : ''}">${this.accountLabel ? '👤 ' + esc(this.accountLabel) : t.signIn}</button><button data-act="settings">${t.settings}</button><button data-act="music">${t.musicLink}</button><button data-act="help">${t.helpLink}</button></div>
           </div>
           <div class="m-right">
-            <h3>選擇賽道</h3>
+            <h3>${t.chooseTrack}</h3>
             <div class="m-tracks">${cards}</div>
-            <div class="m-detail"><b>${cur.name}</b>　${cur.desc}<br /><small>${cur.laps} 圈・最快單圈 ${formatTime(p.bestLaps[p.track] ?? 0)}・電腦：${DIFFICULTY[p.difficulty].desc}</small></div>
+            <div class="m-detail"><b>${cur.name}</b>${hs}${cur.desc}<br /><small>${t.trackDetail(cur.laps, formatTime(p.bestLaps[p.track] ?? 0), DIFFICULTY[p.difficulty].desc)}</small></div>
           </div>
         </div>
         <div class="helpbox hidden" data-act="help">
           <div>
-            <b>鍵盤</b>　${this.keyHelp()}<br />
-            <b>手機</b>　自動油門；左手方向鍵（或在設定改成傾斜手機），右手開火、N2O、甩尾，右下角煞車<br />
-            <b>集氣</b>　甩尾最快；打中對手、擊毀（直接送一瓶）、跟在別人正後方吃尾流、飛越跳台、踩加速帶也都會集氣<br />
-            <b>甩尾</b>　點一下甩尾鍵（0.16 秒內放開）是<b>短漂</b>：回正快、減速少、集氣快，但沒有小噴；按久一點是<b>長漂</b>，按住方向能拖很久，結束後再按一次 ${this.kbd('up')}（手機按「小噴」）觸發小噴<br />
-            <b>重甩</b>　甩尾中把方向鍵放開再快速按回同一邊（手機連點兩下同一邊的方向或甩尾鍵），甩得更兇、角度更大，適合 180 度髮夾彎；代價是掉一點速度<br />
-            <b>進階</b>　短漂後 0.5 秒內接長漂集氣加成（短接長）；長漂完先不噴、直接甩下一個彎，在第二次甩尾中途按 ${this.kbd('up')} 就能<b>連噴</b>；甩尾中點一下 ${this.kbd('down')}（手機點煞車）是<b>斷飄</b>，立刻回正又不掉速<br />
-            <b>技巧</b>　倒數到 GO 的瞬間按油門可以起跑衝刺；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
-            <div class="hint">點一下關閉</div>
+            <b>${t.helpKb}</b>${hs}${this.keyHelp()}<br />
+            <b>${t.helpMobile}</b>${hs}${t.helpMobileText}<br />
+            <b>${t.helpGauge}</b>${hs}${t.helpGaugeText}<br />
+            <b>${t.helpDrift}</b>${hs}${t.helpDriftText(this.kbd('up'))}<br />
+            <b>${t.helpHard}</b>${hs}${t.helpHardText}<br />
+            <b>${t.helpAdv}</b>${hs}${t.helpAdvText(this.kbd('up'), this.kbd('down'))}<br />
+            <b>${t.helpTips}</b>${hs}${t.helpTipsText}
+            <div class="hint">${t.helpClose}</div>
           </div>
         </div>
       </div>`;
@@ -395,19 +425,20 @@ export class Screens {
   /** 線上對戰：輸入名字，建立房間或輸入代碼加入 */
   onlineMenu(name: string, msg = '', code = ''): void {
     this.current = 'online';
+    this.onlineArgs = [name, msg, code];
     this.root.innerHTML = `
       <div class="screen online">
         <div class="net-panel">
-          <h2>線上對戰</h2>
-          <p class="sub">開一個房間，把代碼或邀請連結傳給朋友（最多 8 人，空位可以補電腦車手）。</p>
-          <label class="field"><span>你的名字</span><input id="net-name" maxlength="8" value="${esc(name)}" /></label>
-          <button class="btn primary wide" data-act="mkroom">建立房間</button>
-          <div class="or">或輸入朋友的房間代碼</div>
-          <div class="joinrow"><input id="net-code" maxlength="6" placeholder="例如 K7QX" value="${esc(code)}" autocapitalize="characters" autocomplete="off" /><button class="btn" data-act="joinroom">加入</button></div>
+          <h2>${t.onlineTitle}</h2>
+          <p class="sub">${t.onlineSubText}</p>
+          <label class="field"><span>${t.yourName}</span><input id="net-name" maxlength="8" value="${esc(name)}" /></label>
+          <button class="btn primary wide" data-act="mkroom">${t.createRoom}</button>
+          <div class="or">${t.orCode}</div>
+          <div class="joinrow"><input id="net-code" maxlength="6" placeholder="${t.codePh}" value="${esc(code)}" autocapitalize="characters" autocomplete="off" /><button class="btn" data-act="joinroom">${t.join}</button></div>
           ${msg ? `<div class="net-msg">${esc(msg)}</div>` : ''}
-          <div class="pub-head"><b>公開房間</b><span>點一下直接加入</span></div>
-          <div class="pub-list" data-publist><div class="pub-empty">讀取中…</div></div>
-          <button class="btn small" data-act="backmenu">返回</button>
+          <div class="pub-head"><b>${t.pubRooms}</b><span>${t.pubTap}</span></div>
+          <div class="pub-list" data-publist><div class="pub-empty">${t.loading}</div></div>
+          <button class="btn small" data-act="backmenu">${t.back}</button>
         </div>
       </div>`;
     const codeEl = this.root.querySelector<HTMLInputElement>('#net-code');
@@ -417,17 +448,17 @@ export class Screens {
   /** 跟某位玩家的連線：直連或伺服器中轉、延遲 */
   private linkText(s: OnlineSession, pid: number): string {
     const l = s.link(pid);
-    if (l.away) return '<i class="away">斷線中…</i>';
+    if (l.away) return `<i class="away">${t.linkAway}</i>`;
     const ms = l.rtt ? ` ${Math.round(l.rtt)} ms` : '';
-    const name = { direct: '直連', turn: 'TURN 中轉', peer: '隊友轉送', server: '伺服器中轉' }[l.path];
+    const name = t.linkNames[l.path];
     return `<i class="${l.path === 'direct' ? 'direct' : l.path === 'server' ? 'relay' : 'turn'}">${name}</i>${ms}`;
   }
 
   private routeText(s: OnlineSession): string {
     const n = s.list.filter((p) => p.pid !== s.me && !s.away.has(p.pid));
     const d = n.filter((p) => s.link(p.pid).path !== 'server').length;
-    const via = s.colo ? `伺服器入口 ${esc(s.colo)}` : '伺服器';
-    return n.length ? `${via}・不經伺服器 ${d}/${n.length} 人` : `${via}・等其他人加入`;
+    const via = s.colo ? t.serverVia(esc(s.colo)) : t.server;
+    return n.length ? t.routeDirect(via, d, n.length) : t.routeWait(via);
   }
 
   /** 只更新連線狀況的小字（每 2 秒量一次延遲，不重畫整頁） */
@@ -444,17 +475,17 @@ export class Screens {
   roomList(list: PublicRoom[] | null): void {
     const box = this.root.querySelector<HTMLElement>('[data-publist]');
     if (!box) return;
-    if (!list) { box.innerHTML = '<div class="pub-empty">讀不到房間列表（檢查網路）</div>'; return; }
-    if (!list.length) { box.innerHTML = '<div class="pub-empty">目前沒有公開房間，建立一個吧！</div>'; return; }
+    if (!list) { box.innerHTML = `<div class="pub-empty">${t.roomsFail}</div>`; return; }
+    if (!list.length) { box.innerHTML = `<div class="pub-empty">${t.roomsNone}</div>`; return; }
     box.innerHTML = list.map((r) => {
-      const t = this.tracks[r.track]?.name ?? '';
+      const tn = this.tracks[r.track]?.name ?? '';
       const full = r.players >= 8;
       const dis = full || r.started ? 'disabled' : '';
       return `<button class="pub-row" data-act="joinpub" data-id="${esc(r.code)}" ${dis}>
-        <b>${esc(r.code)}</b><span class="pr-host">${esc(r.host || '房主')}</span>
-        <span>${esc(t)}・${r.mode === 'elim' ? '淘汰賽' : '競速賽'}</span>
+        <b>${esc(r.code)}</b><span class="pr-host">${esc(r.host || t.host)}</span>
+        <span>${esc(tn)}${t.sep}${r.mode === 'elim' ? t.modeElim : t.modeRace}</span>
         <span class="pr-n">${r.players}/8</span>
-        <em class="${r.started ? 'busy' : full ? 'busy' : 'open'}">${r.started ? '比賽中' : full ? '已滿' : '等待中'}</em>
+        <em class="${r.started ? 'busy' : full ? 'busy' : 'open'}">${r.started ? t.roomRacing : full ? t.roomFull : t.roomWaiting}</em>
       </button>`;
     }).join('');
   }
@@ -471,14 +502,14 @@ export class Screens {
       const icon = carIcon(car.model, car.liveries[p.livery] ?? car.liveries[0]);
       return `<div class="pl ${p.pid === s.me ? 'me' : ''}">
         ${icon ? `<img src="${icon}" alt="" />` : '<i></i>'}
-        <div><b>${esc(p.name || '車手')}${p.pid === s.hostPid ? '<em>房主</em>' : ''}${p.pid === s.me ? '<em class="you">你</em>' : ''}</b>
-        <span>${car.name}・${PRIMARY[p.primary]?.name ?? ''} / ${SECONDARY[p.secondary]?.name ?? ''}</span></div>
+        <div><b>${esc(p.name || t.racer)}${p.pid === s.hostPid ? `<em>${t.host}</em>` : ''}${p.pid === s.me ? `<em class="you">${t.you}</em>` : ''}</b>
+        <span>${car.name}${t.sep}${PRIMARY[p.primary]?.name ?? ''} / ${SECONDARY[p.secondary]?.name ?? ''}</span></div>
         ${p.pid === s.me ? '' : `<small class="lk" data-link="${p.pid}">${this.linkText(s, p.pid)}</small>`}
       </div>`;
     }).join('');
-    const tracks = this.tracks.map((t, i) => `
+    const tracks = this.tracks.map((tr, i) => `
       <button class="tcard mini ${i === c.track ? 'on' : ''}" data-act="rtrack" data-id="${i}" ${dis}>
-        <svg viewBox="0 0 100 64"><path d="${t.outline}" /></svg><b>${t.name}</b>
+        <svg viewBox="0 0 100 64"><path d="${tr.outline}" /></svg><b>${tr.name}</b>
       </button>`).join('');
     const seg = (act: string, cur: string, opts: [string, string][]) =>
       opts.map(([v, label]) => `<button class="seg ${cur === v ? 'on' : ''}" data-act="${act}" data-id="${v}" ${dis}>${label}</button>`).join('');
@@ -487,28 +518,28 @@ export class Screens {
       <div class="screen online">
         <div class="net-panel room">
           <div class="room-head">
-            <div class="code-box"><span>房間代碼</span><b>${s.code}</b></div>
-            <button class="btn small" data-act="copylink" data-id="${s.code}">複製邀請連結</button>
+            <div class="code-box"><span>${t.roomCode}</span><b>${s.code}</b></div>
+            <button class="btn small" data-act="copylink" data-id="${s.code}">${t.copyInvite}</button>
           </div>
-          ${connecting ? '<div class="net-msg">連線中…</div>' : s.reconnecting ? '<div class="net-msg">連線中斷，重新連線中…</div>' : ''}
+          ${connecting ? `<div class="net-msg">${t.connecting}</div>` : s.reconnecting ? `<div class="net-msg">${t.reconnecting}</div>` : ''}
           <div class="net-route" data-route>${this.routeText(s)}</div>
           <div class="room-grid">
-            <div class="players"><h3>車手 ${list.length}/8</h3>${players}</div>
+            <div class="players"><h3>${t.racersN(list.length)}</h3>${players}</div>
             <div class="cfg">
-              <h3>比賽設定${host ? '' : '<small>（房主決定）</small>'}</h3>
+              <h3>${t.raceSettings}${host ? '' : `<small>${t.hostDecides}</small>`}</h3>
               <div class="room-tracks">${tracks}</div>
-              <div class="m-diff"><span>模式</span>${seg('rmode', c.mode, [['race', '競速賽'], ['elim', '淘汰賽']])}</div>
-              <div class="m-diff"><span>空位</span>${seg('rai', c.aiFill ? '1' : '0', [['1', '補電腦車手'], ['0', '只有玩家']])}</div>
-              <div class="m-diff"><span>電腦</span>${seg('rdiff', c.difficulty, DIFFICULTY_IDS.map((d) => [d, DIFFICULTY[d].name] as [string, string]))}</div>
-              <div class="m-diff"><span>房間</span>${seg('rpub', c.public === false ? '0' : '1', [['1', '公開（列表看得到）'], ['0', '只限邀請']])}</div>
+              <div class="m-diff"><span>${t.cfgMode}</span>${seg('rmode', c.mode, [['race', t.modeRace], ['elim', t.modeElim]])}</div>
+              <div class="m-diff"><span>${t.cfgSlots}</span>${seg('rai', c.aiFill ? '1' : '0', [['1', t.fillAi], ['0', t.playersOnly]])}</div>
+              <div class="m-diff"><span>${t.cfgAi}</span>${seg('rdiff', c.difficulty, DIFFICULTY_IDS.map((d) => [d, DIFFICULTY[d].name] as [string, string]))}</div>
+              <div class="m-diff"><span>${t.cfgRoom}</span>${seg('rpub', c.public === false ? '0' : '1', [['1', t.roomPublic], ['0', t.roomInvite]])}</div>
             </div>
           </div>
           <div class="row">
             ${host
-              ? `<button class="btn primary" data-act="rstart" ${list.length < 2 && !c.aiFill ? 'disabled' : ''}>開始比賽</button>`
-              : '<div class="wait">等待房主開始…</div>'}
-            <button class="btn" data-act="garage">車庫</button>
-            <button class="btn" data-act="leaveroom">離開房間</button>
+              ? `<button class="btn primary" data-act="rstart" ${list.length < 2 && !c.aiFill ? 'disabled' : ''}>${t.startRace}</button>`
+              : `<div class="wait">${t.waitHost}</div>`}
+            <button class="btn" data-act="garage">${t.garage}</button>
+            <button class="btn" data-act="leaveroom">${t.leaveRoom}</button>
           </div>
         </div>
       </div>`;
@@ -529,42 +560,42 @@ export class Screens {
       const lv1 = Math.max(1, lvl);
       const hit = (P.dmg * mul).toFixed(1).replace(/\.0$/, '');
       switch (P.kind) {
-        case 'flame': info = `每秒傷害 ${dps} + 燃燒 ${BURN_DPS}/秒　射程 ${P.range} m`; break;
-        case 'laser': info = `第一台直接打爆　貫穿後保留 ${Math.round(laserKeep(lv1) * 100)}%　冷卻 ${laserCooldown(lv1).toFixed(1)} 秒　射程 ${P.range} m`; break;
-        case 'arc': info = `每發 ${hit}（跳一次 ×${ARC_KEEP}）　最多連 ${1 + arcHops(lv1)} 台、跳 ${arcJump(lv1)} m　每秒 ${P.rate} 發　射程 ${P.range} m`; break;
-        case 'freeze': info = `每秒傷害 ${dps}　約 ${(1 / (chillRate(lv1) * P.rate)).toFixed(1)} 秒凍滿　射程 ${P.range} m`; break;
-        case 'sonic': info = `每 0.45 秒一波：傷害 ${hit}、推力 ${sonicPush(lv1).toFixed(1)} m/s　射程 ${P.range} m`; break;
-        case 'harpoon': info = `命中 ${hit}　拉扯 ${tetherTime(lv1).toFixed(2).replace(/0$/, '')} 秒、追速 +${pullBonus(lv1)} m/s　射程 ${P.range} m`; break;
-        default: info = `每秒傷害 ${dps}　射程 ${P.range} m`;
+        case 'flame': info = t.infoFlame(dps, BURN_DPS, P.range); break;
+        case 'laser': info = t.infoLaser(Math.round(laserKeep(lv1) * 100), laserCooldown(lv1).toFixed(1), P.range); break;
+        case 'arc': info = t.infoArc(hit, ARC_KEEP, 1 + arcHops(lv1), arcJump(lv1), P.rate, P.range); break;
+        case 'freeze': info = t.infoFreeze(dps, (1 / (chillRate(lv1) * P.rate)).toFixed(1), P.range); break;
+        case 'sonic': info = t.infoSonic(hit, sonicPush(lv1).toFixed(1), P.range); break;
+        case 'harpoon': info = t.infoHarpoon(hit, tetherTime(lv1).toFixed(2).replace(/0$/, ''), pullBonus(lv1), P.range); break;
+        default: info = t.infoGun(dps, P.range);
       }
     } else {
       const S = SECONDARY[id as SecondaryId];
       const lv1 = Math.max(1, lvl);
       info = id === 'shield'
-        ? `護住車尾 ${Math.round((shieldHalfArc(lv1) * 2 * 180) / Math.PI)}°　持續 ${shieldTime(lv1)} 秒　冷卻 ${S.cooldown} 秒`
-        : `傷害 ${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}　冷卻 ${S.cooldown} 秒`;
+        ? t.infoShield(Math.round((shieldHalfArc(lv1) * 2 * 180) / Math.PI), shieldTime(lv1), S.cooldown)
+        : t.infoSec(`${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}`, S.cooldown);
     }
     const lv = owned ? lvl : 0;
     const perks = `<div class="perks">
-      <div class="${lv >= PERK_LVL3 ? 'on' : ''}"><b>Lv.${PERK_LVL3}</b> ${prim && id !== 'laser' ? '過熱變慢 15%' : '冷卻縮短 15%'}</div>
+      <div class="${lv >= PERK_LVL3 ? 'on' : ''}"><b>Lv.${PERK_LVL3}</b> ${prim && id !== 'laser' ? t.perkHeat : t.perkCd}</div>
       <div class="${lv >= PERK_LVL5 ? 'on' : ''}"><b>Lv.${PERK_LVL5}</b> ${def.perk}</div>
     </div>`;
     const icon = weaponIcon(id);
     let btns: string;
     if (!owned) {
-      btns = `<button class="btn small primary" data-act="buy" data-id="${id}" ${p.cash < def.price ? 'disabled' : ''}>購買 $${def.price}</button>`;
+      btns = `<button class="btn small primary" data-act="buy" data-id="${id}" ${p.cash < def.price ? 'disabled' : ''}>${t.buy(def.price)}</button>`;
     } else {
       const cost = weaponUpgradeCost(id, lvl);
-      btns = `<button class="btn small" data-act="equip" data-id="${id}" ${equipped ? 'disabled' : ''}>${equipped ? '已安裝' : '安裝'}</button>`;
+      btns = `<button class="btn small" data-act="equip" data-id="${id}" ${equipped ? 'disabled' : ''}>${equipped ? t.equipped : t.equip}</button>`;
       btns += lvl < MAX_WEAPON_LVL
-        ? `<button class="btn small primary" data-act="upw" data-id="${id}" ${p.cash < cost ? 'disabled' : ''}>升級 $${cost}</button>`
-        : `<button class="btn small" disabled>已滿級</button>`;
+        ? `<button class="btn small primary" data-act="upw" data-id="${id}" ${p.cash < cost ? 'disabled' : ''}>${t.upgrade(cost)}</button>`
+        : `<button class="btn small" disabled>${t.maxed}</button>`;
     }
     return `<div class="card ${equipped ? 'equipped' : ''}">
       ${icon ? `<div class="wimg"><img src="${icon}" alt="" /></div>` : ''}
-      <h4>${def.name}<small>${owned ? 'Lv.' + lvl : '未擁有'}</small></h4>
+      <h4>${def.name}<small>${owned ? 'Lv.' + lvl : t.notOwned}</small></h4>
       <p>${def.desc}</p>
-      <div class="stat">${info}　${pips(owned ? lvl : 0, MAX_WEAPON_LVL)}</div>
+      <div class="stat">${info}${t.infoSep}${pips(owned ? lvl : 0, MAX_WEAPON_LVL)}</div>
       ${perks}
       <div class="row">${btns}</div>
     </div>`;
@@ -576,22 +607,22 @@ export class Screens {
     const owned = !!p.karts[id];
     const using = p.kart === id;
     const btn = !owned
-      ? `<button class="btn small primary" data-act="buycar" data-id="${id}" ${p.cash < c.price ? 'disabled' : ''}>購買 $${c.price}</button>`
-      : `<button class="btn small" data-act="usecar" data-id="${id}" ${using ? 'disabled' : ''}>${using ? '使用中' : '選用'}</button>`;
+      ? `<button class="btn small primary" data-act="buycar" data-id="${id}" ${p.cash < c.price ? 'disabled' : ''}>${t.buy(c.price)}</button>`
+      : `<button class="btn small" data-act="usecar" data-id="${id}" ${using ? 'disabled' : ''}>${using ? t.inUse : t.select}</button>`;
     const lv = p.livery?.[id] ?? 0;
     const icon = carIcon(c.model, c.liveries[lv]);
     const swatches = c.liveries.map((l, i) => `<button class="swatch ${i === lv ? 'on' : ''}" data-act="livery" data-id="${id}:${i}" ${owned ? '' : 'disabled'} title="${l.name}" style="--sw:${liverySwatch(l, c.color)}"><span></span>${l.name}</button>`).join('');
     return `<div class="card ${using ? 'equipped' : ''}">
       ${icon ? `<div class="wimg car"><img src="${icon}" alt="" /></div>` : ''}
-      <h4>${c.name}<small>${owned ? '已擁有' : '未擁有'}</small></h4>
+      <h4>${c.name}<small>${owned ? t.owned : t.notOwned}</small></h4>
       <p>${c.desc}</p>
       <p class="trait">★ ${c.trait}</p>
       <div class="swatches">${swatches}</div>
-      ${stat('極速', (c.speed - 0.94) / 0.12)}
-      ${stat('加速', (c.accel - 0.88) / 0.2)}
-      ${stat('操控', (c.handling - 0.9) / 0.26)}
-      ${stat('耐久', (100 + c.hp - 80) / 80)}
-      ${stat('集氣', (c.gauge - 0.9) / 0.45 + c.boostTime * 0.5)}
+      ${stat(t.statSpeed, (c.speed - 0.94) / 0.12)}
+      ${stat(t.statAccel, (c.accel - 0.88) / 0.2)}
+      ${stat(t.statHandling, (c.handling - 0.9) / 0.26)}
+      ${stat(t.statArmor, (100 + c.hp - 80) / 80)}
+      ${stat(t.statGauge, (c.gauge - 0.9) / 0.45 + c.boostTime * 0.5)}
       <div class="row" style="margin-top:.7em">${btn}</div>
     </div>`;
   }
@@ -601,8 +632,8 @@ export class Screens {
     const lvl = p.car[id];
     const cost = carUpgradeCost(lvl);
     const btn = lvl < MAX_CAR_LVL
-      ? `<button class="btn small primary" data-act="upc" data-id="${id}" ${p.cash < cost ? 'disabled' : ''}>升級 $${cost}</button>`
-      : `<button class="btn small" disabled>已滿級</button>`;
+      ? `<button class="btn small primary" data-act="upc" data-id="${id}" ${p.cash < cost ? 'disabled' : ''}>${t.upgrade(cost)}</button>`
+      : `<button class="btn small" disabled>${t.maxed}</button>`;
     return `<div class="card">
       <h4>${CAR_UPGRADES[id].name}<small>Lv.${lvl}</small></h4>
       <p>${CAR_UPGRADES[id].desc}</p>
@@ -618,17 +649,17 @@ export class Screens {
     this.root.innerHTML = `
       <div class="screen solid">
         <div class="garage-head">
-          <h2>車庫</h2>
+          <h2>${t.garage}</h2>
           <span class="cash">$${p.cash}</span>
           <div class="row">
-            <button class="btn small" data-act="back">返回</button>
-            <button class="btn small primary" data-act="start" ${this.loading ? 'disabled' : ''}>出賽</button>
+            <button class="btn small" data-act="back">${t.back}</button>
+            <button class="btn small primary" data-act="start" ${this.loading ? 'disabled' : ''}>${t.goRace}</button>
           </div>
         </div>
-        <div class="section"><h3>車款</h3><div class="cards">${CAR_IDS.map((c) => this.carCard(c)).join('')}</div></div>
-        <div class="section"><h3>主武器（車身兩側，朝正前方直射）</h3><div class="cards">${PRIMARY_IDS.map((w) => this.weaponCard(w)).join('')}</div></div>
-        <div class="section"><h3>副武器（引擎蓋）</h3><div class="cards">${SECONDARY_IDS.map((w) => this.weaponCard(w)).join('')}</div></div>
-        <div class="section"><h3>車輛升級（所有車款共用）</h3><div class="cards">${(['engine', 'n2o', 'armor'] as CarUpgradeId[]).map((u) => this.upgradeCard(u)).join('')}</div></div>
+        <div class="section"><h3>${t.secKarts}</h3><div class="cards">${CAR_IDS.map((c) => this.carCard(c)).join('')}</div></div>
+        <div class="section"><h3>${t.secPrimary}</h3><div class="cards">${PRIMARY_IDS.map((w) => this.weaponCard(w)).join('')}</div></div>
+        <div class="section"><h3>${t.secSecondary}</h3><div class="cards">${SECONDARY_IDS.map((w) => this.weaponCard(w)).join('')}</div></div>
+        <div class="section"><h3>${t.secUpgrades}</h3><div class="cards">${(['engine', 'n2o', 'armor'] as CarUpgradeId[]).map((u) => this.upgradeCard(u)).join('')}</div></div>
       </div>`;
     const s = this.root.querySelector('.screen');
     if (s) s.scrollTop = scroll;
@@ -650,7 +681,7 @@ export class Screens {
 
   /** 某個動作的所有鍵（主要／第二個） */
   private kbdAll(a: KeyAction): string {
-    return this.keys[a].filter(Boolean).map((c) => `<kbd>${esc(keyName(c))}</kbd>`).join('／');
+    return this.keys[a].filter(Boolean).map((c) => `<kbd>${esc(keyName(c))}</kbd>`).join(t.keySep);
   }
 
   /** 按鍵說明的「鍵盤」那一行：跟著目前的鍵位 */
@@ -658,7 +689,7 @@ export class Screens {
     const drive = (['up', 'down', 'left', 'right'] as KeyAction[]).map((a) => keyName(this.keys[a][0]));
     const d = drive.every((n) => n.length === 1) ? `<kbd>${esc(drive.join(''))}</kbd>` : drive.map((n) => `<kbd>${esc(n)}</kbd>`).join('');
     const k = (a: KeyAction) => this.kbdAll(a);
-    return `${d} 駕駛　${k('drift')} 甩尾　${k('boost')} N2O　${k('fire1')} 主武器　${k('fire2')} 副武器　${k('look')} 後視　${k('reset')} 重置　<kbd>Esc</kbd>／${k('pause')} 暫停`;
+    return t.keyHelp({ drive: d, drift: k('drift'), boost: k('boost'), fire1: k('fire1'), fire2: k('fire2'), look: k('look'), reset: k('reset'), pause: k('pause') });
   }
 
   /** 設定頁的按鍵列表（每個動作兩格） */
@@ -667,12 +698,12 @@ export class Screens {
     return KEY_ACTIONS.map(({ id, name }) => {
       const slots = this.keys[id].map((c, i) => {
         const on = cap?.id === id && cap.slot === i;
-        const label = on ? '請按新按鍵…' : c ? esc(keyName(c)) : '＋';
-        const title = on ? 'Esc 取消' : c ? '點一下換鍵' : '加第二個鍵';
-        const aria = `${name}${i ? '第二個鍵' : '主要鍵'}：${on ? '等待按鍵' : c ? keyName(c) : '未設定'}`;
+        const label = on ? t.keyPress : c ? esc(keyName(c)) : isEn() ? '+' : '＋';
+        const title = on ? t.keyEscCancel : c ? t.keyChange : t.keyAdd;
+        const aria = t.keyAria(name, i > 0, on ? t.keyWaiting : c ? keyName(c) : t.keyUnset);
         return `<button class="keycap ${on ? 'wait' : ''} ${c || on ? '' : 'empty'}" data-act="keybind" data-id="${id}:${i}" title="${title}" aria-label="${esc(aria)}">${label}</button>`;
       }).join('');
-      const note = id === 'pause' ? '<em>Esc 也可以</em>' : '';
+      const note = id === 'pause' ? `<em>${t.keyEscToo}</em>` : '';
       return `<b>${name}</b><div class="keyslots">${slots}${note}</div>`;
     }).join('');
   }
@@ -684,7 +715,7 @@ export class Screens {
     if (box) box.innerHTML = this.keyRows();
     const m = this.root.querySelector<HTMLElement>('[data-keymsg]');
     if (m) {
-      m.textContent = msg ?? (this.capturing ? '按下要用的鍵（Esc 取消、Backspace 清除這一格）' : KEY_HINT);
+      m.textContent = msg ?? (this.capturing ? t.keyCapture : t.keyHint);
       m.classList.toggle('warn', warn);
     }
   }
@@ -724,7 +755,7 @@ export class Screens {
       const ok = clearKey(this.settings.keys, cap.id, cap.slot);
       this.stopCapture();
       if (ok) this.act.settingChanged('keys');
-      this.renderKeys(ok ? `已清除「${name}」的一個按鍵` : `「${name}」至少要有一個按鍵`, !ok);
+      this.renderKeys(ok ? t.keyCleared(name) : t.keyNeedOne(name), !ok);
       return;
     }
     if (!e.code) return;
@@ -736,10 +767,10 @@ export class Screens {
       return;
     }
     this.act.settingChanged('keys');
-    let msg = `「${name}」改用 ${keyName(e.code)}`;
+    let msg = t.keyNow(name, keyName(e.code));
     if (r.swapped) {
       const other = KEY_ACTIONS.find((a) => a.id === r.swapped)?.name ?? '';
-      msg += before ? `，「${other}」換成 ${keyName(before)}` : `（從「${other}」移過來）`;
+      msg += before ? t.keySwapped(other, keyName(before)) : t.keyMoved(other);
     }
     this.renderKeys(msg);
   };
@@ -747,6 +778,7 @@ export class Screens {
   /** 設定頁：畫質、音量、配樂、操控與按鈕位置 */
   settingsPage(): void {
     this.stopCapture();
+    const keep = this.current === 'settings' ? this.root.querySelector('.screen')?.scrollTop ?? 0 : 0;
     this.current = 'settings';
     const s = this.settings;
     const pick = (act: string, cur: string, opts: [string, string][]) =>
@@ -754,60 +786,63 @@ export class Screens {
     const range = (key: string, v: number, min: number, max: number, step: number) => `<input type="range" data-set="${key}" min="${min}" max="${max}" step="${step}" value="${v}" />`;
     this.root.innerHTML = `
       <div class="screen">
-        <h1 class="title" style="font-size:clamp(28px,7vw,60px)">設定</h1>
+        <h1 class="title" style="font-size:clamp(28px,7vw,60px)">${t.settings}</h1>
         <div class="setgrid">
-          <h3>畫面</h3>
-          <b>畫質</b>${pick('quality', s.quality, [['low', '低（省電）'], ['medium', '中'], ['high', '高']])}
-          <small>變更後會重新載入</small>
-          <b>畫面震動</b>${range('shake', s.shake, 0, 1, 0.05)}
-          <b>傷害數字</b><label><input type="checkbox" data-set="dmgNumbers" ${s.dmgNumbers ? 'checked' : ''} /> 打中對手時顯示</label>
-          <b>角落資訊</b><label><input type="checkbox" data-set="netInfo" ${s.netInfo ? 'checked' : ''} /> 顯示每秒幀數（線上比賽另外顯示延遲與直連人數）</label>
-          <h3>聲音</h3>
-          <b>音樂音量</b>${range('music', s.music, 0, 1, 0.05)}
-          <b>音效音量</b>${range('sfx', s.sfx, 0, 1, 0.05)}
-          <b>比賽配樂</b>${pick('style', s.musicStyle, MUSIC_STYLES.map((m) => [m.id, m.name]))}
-          <small>在這頁可以直接試聽</small>
-          <b>引擎音效</b>${pick('engsnd', s.engineSound, ENGINE_STYLES.map((m) => [m.id, m.name]))}
-          <small data-engdesc>${ENGINE_STYLES.find((m) => m.id === s.engineSound)?.desc ?? ''}・點一下試聽</small>
-          <b>武器音效</b>${pick('wpnsnd', s.weaponSound, WEAPON_PACKS.map((m) => [m.id, m.name]))}
-          <small data-wpndesc>${WEAPON_PACKS.find((m) => m.id === s.weaponSound)?.desc ?? ''}・點一下試聽</small>
-          <b>其他車引擎聲</b><label><input type="checkbox" data-set="otherEngines" ${s.otherEngines ? 'checked' : ''} /> 聽得到附近對手的引擎（分得出遠近、左右、前後）</label>
-          <h3>操控輔助</h3>
-          <b>自動小噴</b><label><input type="checkbox" data-set="autoMini" ${s.autoMini ? 'checked' : ''} /> 甩尾結束自動噴（不用自己按）</label>
-          <b>甩尾輔助</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> 自動回正、限制甩尾角度</label>
+          <h3>${t.setDisplay}</h3>
+          <b>${t.setLanguage}</b>${pick('lang', lang(), [['zh', '中文'], ['en', 'English']])}
+          <b>${t.setQuality}</b>${pick('quality', s.quality, [['low', t.qLow], ['medium', t.qMed], ['high', t.qHigh]])}
+          <small>${t.setReload}</small>
+          <b>${t.setShake}</b>${range('shake', s.shake, 0, 1, 0.05)}
+          <b>${t.setDmg}</b><label><input type="checkbox" data-set="dmgNumbers" ${s.dmgNumbers ? 'checked' : ''} /> ${t.setDmgText}</label>
+          <b>${t.setInfo}</b><label><input type="checkbox" data-set="netInfo" ${s.netInfo ? 'checked' : ''} /> ${t.setInfoText}</label>
+          <h3>${t.setSound}</h3>
+          <b>${t.setMusic}</b>${range('music', s.music, 0, 1, 0.05)}
+          <b>${t.setSfx}</b>${range('sfx', s.sfx, 0, 1, 0.05)}
+          <b>${t.setStyle}</b>${pick('style', s.musicStyle, MUSIC_STYLES.map((m) => [m.id, m.name]))}
+          <small>${t.setStyleNote}</small>
+          <b>${t.setEngine}</b>${pick('engsnd', s.engineSound, ENGINE_STYLES.map((m) => [m.id, m.name]))}
+          <small data-engdesc>${ENGINE_STYLES.find((m) => m.id === s.engineSound)?.desc ?? ''}${t.tapPreview}</small>
+          <b>${t.setWeapon}</b>${pick('wpnsnd', s.weaponSound, WEAPON_PACKS.map((m) => [m.id, m.name]))}
+          <small data-wpndesc>${WEAPON_PACKS.find((m) => m.id === s.weaponSound)?.desc ?? ''}${t.tapPreview}</small>
+          <b>${t.setOthers}</b><label><input type="checkbox" data-set="otherEngines" ${s.otherEngines ? 'checked' : ''} /> ${t.setOthersText}</label>
+          <h3>${t.setAssist}</h3>
+          <b>${t.setAutoMini}</b><label><input type="checkbox" data-set="autoMini" ${s.autoMini ? 'checked' : ''} /> ${t.setAutoMiniText}</label>
+          <b>${t.setDriftAssist}</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> ${t.setDriftAssistText}</label>
           <div class="kb-only">
-            <h3>鍵盤按鍵</h3>
+            <h3>${t.setKeys}</h3>
             <div class="keyrows" data-keys>${this.keyRows()}</div>
-            <b></b><div class="choices"><button class="diffbtn" data-act="keyreset">恢復預設</button></div>
-            <small class="keymsg" data-keymsg>${KEY_HINT}</small>
+            <b></b><div class="choices"><button class="diffbtn" data-act="keyreset">${t.reset}</button></div>
+            <small class="keymsg" data-keymsg>${t.keyHint}</small>
           </div>
           <div class="touch-only">
-            <h3>手機操控</h3>
-            <b>震動</b><label><input type="checkbox" data-set="vibrate" ${s.vibrate ? 'checked' : ''} /> 壓到路緣、撞擊、擊毀時手機震動（iPhone 不支援）</label>
-            <b>甩尾鍵</b>${pick('tdrift', s.touchDrift, [['single', '一顆（配合方向鍵）'], ['dual', '左甩／右甩兩顆']])}
-            <b>轉向方式</b>${pick('ctrl', s.control, [['buttons', '左右按鈕'], ['tilt', '傾斜手機']])}
-            ${s.control === 'tilt' ? `<b>傾斜靈敏度</b>${range('tiltRange', 52 - s.tiltRange, 12, 40, 1)}
-            <b>方向反轉</b><label><input type="checkbox" data-set="tiltInvert" ${s.tiltInvert ? 'checked' : ''} /> 轉向相反時打勾</label>
-            <b></b><div class="choices"><button class="diffbtn" data-act="calib">把現在的角度設為正中</button></div>` : ''}
-            <b>按鈕位置</b><div class="choices"><button class="diffbtn" data-act="layout">拖曳調整位置與大小</button><button class="diffbtn" data-act="layoutreset">恢復預設</button></div>
+            <h3>${t.setTouch}</h3>
+            <b>${t.setVibrate}</b><label><input type="checkbox" data-set="vibrate" ${s.vibrate ? 'checked' : ''} /> ${t.setVibrateText}</label>
+            <b>${t.setDriftBtn}</b>${pick('tdrift', s.touchDrift, [['single', t.driftSingle], ['dual', t.driftDual]])}
+            <b>${t.setSteer}</b>${pick('ctrl', s.control, [['buttons', t.steerButtons], ['tilt', t.steerTilt]])}
+            ${s.control === 'tilt' ? `<b>${t.setTiltSens}</b>${range('tiltRange', 52 - s.tiltRange, 12, 40, 1)}
+            <b>${t.setInvert}</b><label><input type="checkbox" data-set="tiltInvert" ${s.tiltInvert ? 'checked' : ''} /> ${t.setInvertText}</label>
+            <b></b><div class="choices"><button class="diffbtn" data-act="calib">${t.setCalib}</button></div>` : ''}
+            <b>${t.setLayout}</b><div class="choices"><button class="diffbtn" data-act="layout">${t.setLayoutEdit}</button><button class="diffbtn" data-act="layoutreset">${t.reset}</button></div>
           </div>
         </div>
-        <div class="row"><button class="btn primary" data-act="sback">返回</button></div>
+        <div class="row"><button class="btn primary" data-act="sback">${t.back}</button></div>
       </div>`;
+    const sc = this.root.querySelector('.screen');
+    if (sc && keep) sc.scrollTop = keep;
   }
 
-  pause(muted: boolean, missionHtml: string, online = false): void {
-    this.pauseArgs = [muted, missionHtml];
+  pause(muted: boolean, missionHtml: () => string, online = false): void {
+    this.pauseArgs = [muted, missionHtml, online];
     if (online) {
       this.current = 'pause';
       this.root.innerHTML = `
       <div class="screen">
-        <h1 class="title" style="font-size:clamp(28px,7vw,48px)">選單</h1>
-        <p class="sub">線上比賽不會暫停，車子還在跑！</p>
+        <h1 class="title" style="font-size:clamp(28px,7vw,48px)">${t.menuTitle}</h1>
+        <p class="sub">${t.onlineNoPause}</p>
         <div class="row" style="flex-direction:column;align-items:center">
-          <button class="btn primary" data-act="resume">回到比賽</button>
-          <button class="btn" data-act="mute">${muted ? '音效：關' : '音效：開'}</button>
-          <button class="btn" data-act="leaveroom">離開房間</button>
+          <button class="btn primary" data-act="resume">${t.backToRace}</button>
+          <button class="btn" data-act="mute">${muted ? t.soundOff : t.soundOn}</button>
+          <button class="btn" data-act="leaveroom">${t.leaveRoom}</button>
         </div>
       </div>`;
       return;
@@ -815,46 +850,47 @@ export class Screens {
     this.current = 'pause';
     this.root.innerHTML = `
       <div class="screen">
-        <h1 class="title" style="font-size:clamp(28px,7vw,64px)">暫停</h1>
-        <div class="missions-box">${missionHtml}</div>
+        <h1 class="title" style="font-size:clamp(28px,7vw,64px)">${t.paused}</h1>
+        <div class="missions-box">${missionHtml()}</div>
         <div class="row" style="flex-direction:column;align-items:center">
-          <button class="btn primary" data-act="resume">繼續</button>
-          <button class="btn" data-act="restart">重新開始</button>
-          <button class="btn" data-act="mute">${muted ? '音效：關' : '音效：開'}</button>
-          <button class="btn" data-act="settings">設定</button>
-          <button class="btn" data-act="menu">回主選單</button>
+          <button class="btn primary" data-act="resume">${t.resume}</button>
+          <button class="btn" data-act="restart">${t.restart}</button>
+          <button class="btn" data-act="mute">${muted ? t.soundOff : t.soundOn}</button>
+          <button class="btn" data-act="settings">${t.settings}</button>
+          <button class="btn" data-act="menu">${t.mainMenu}</button>
         </div>
       </div>`;
   }
 
   results(race: Race, s: Summary, online = false): void {
     this.current = 'results';
+    this.resultsArgs = [race, s, online];
     const p = race.player;
     const elim = race.mode === 'elim';
     const order = race.results();
     const rows = order.map((k, i) => `
       <tr class="${k === p ? 'me' : ''}">
         <td>${i + 1}</td><td>${k.name}</td>
-        <td>${elim ? (k.out ? '淘汰' : '存活') : k.finished ? formatTime(k.finishTime) : '未完賽'}</td>
-        <td>擊毀 ${k.kills}</td>
+        <td>${elim ? (k.out ? t.resOut : t.resAlive) : k.finished ? formatTime(k.finishTime) : t.resDnf}</td>
+        <td>${t.resKills(k.kills)}</td>
       </tr>`).join('');
     const missions = s.missions.map((m) => `<div class="${m.done ? 'ok' : 'no'}">${m.done ? '✔' : '✘'} ${m.text} <em>${m.done ? '+$' + m.reward : '$' + m.reward}</em></div>`).join('');
     this.lastResults = `
       <div class="screen">
         <div class="results">
-          <h2>${elim && s.rank === 1 ? '冠軍！' : `第 ${s.rank} 名`}</h2>
+          <h2>${elim && s.rank === 1 ? t.winner : t.place(s.rank)}</h2>
           <div class="res-body">
           <table>${rows}</table>
           <div class="res-side">
-          <div class="missions-box"><b>本場任務</b>${missions}</div>
+          <div class="missions-box"><b>${t.missions}</b>${missions}</div>
           <div class="earn">
-            名次 $${s.payout}　＋　擊毀 ${p.kills} × $${KILL_REWARD}${s.streakCash ? '　＋　連續擊毀 $' + s.streakCash : ''}　＋　任務 $${s.missionCash}<br />
-            本場收入 <b>$${s.total}</b>${s.bestLap > 0 ? '　最快單圈 ' + formatTime(s.bestLap) : ''}
+            ${t.earnPlace(s.payout)}${t.earnPlus}${t.earnKills(p.kills, KILL_REWARD)}${s.streakCash ? t.earnPlus + t.earnStreak(s.streakCash) : ''}${t.earnPlus}${t.earnMissions(s.missionCash)}<br />
+            ${t.earnTotal} <b>$${s.total}</b>${s.bestLap > 0 ? t.earnBest(formatTime(s.bestLap)) : ''}
           </div>
           <div class="row">
             ${online
-              ? '<button class="btn primary" data-act="toroom">回到房間</button><button class="btn" data-act="leaveroom">離開房間</button>'
-              : '<button class="btn primary" data-act="start">再來一場</button><button class="btn" data-act="garage">車庫</button><button class="btn" data-act="menu">離開</button>'}
+              ? `<button class="btn primary" data-act="toroom">${t.backToRoom}</button><button class="btn" data-act="leaveroom">${t.leaveRoom}</button>`
+              : `<button class="btn primary" data-act="start">${t.raceAgain}</button><button class="btn" data-act="garage">${t.garage}</button><button class="btn" data-act="menu">${t.exit}</button>`}
           </div>
           </div>
           </div>

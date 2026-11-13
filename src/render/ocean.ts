@@ -3,6 +3,8 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import type { Sample, Track } from '../game/track';
 import { mulberry32 } from '../game/util';
 import { loadSettings } from '../settings';
+import { isEn } from '../i18n';
+import { fitFont, liveSign } from './signText';
 import { buildLife, type Cruiser, type Glow, type Life, type School, type Shaft, type Vent } from './oceanLife';
 
 /**
@@ -857,7 +859,8 @@ export function buildOcean(ctx: OceanCtx): Ocean {
     wallShape.holes.push(hole);
     const wallGeo = new THREE.ShapeGeometry(wallShape, 4);
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x29445a, metalness: 0.45, roughness: 0.55, side: THREE.DoubleSide });
-    const signTex = canvasTex(1024, 256, (c) => {
+    // 入口名牌：賽道名稱跟著介面語言（換語言時重畫）
+    const drawSign = (c: CanvasRenderingContext2D) => {
       const g = c.createLinearGradient(0, 0, 0, 256);
       g.addColorStop(0, '#0b2a3d');
       g.addColorStop(1, '#06324a');
@@ -868,12 +871,14 @@ export function buildOcean(ctx: OceanCtx): Ocean {
       c.strokeRect(10, 10, 1004, 236);
       c.textAlign = 'center';
       c.fillStyle = '#e9fbff';
-      c.font = 'bold 104px "Segoe UI", "Microsoft JhengHei", sans-serif';
-      c.fillText('蔚藍海廊', 512, 128);
+      const title = isEn() ? 'AZURE DEEP' : '蔚藍海廊';
+      fitFont(c, title, 104, 960, '"Segoe UI", "Microsoft JhengHei", sans-serif', 40);
+      c.fillText(title, 512, 128);
       c.fillStyle = '#5ff2ff';
       c.font = 'bold 44px "Segoe UI", Arial, sans-serif';
       c.fillText('OCEAN RESEARCH PARK', 512, 206);
-    }, false);
+    };
+    const signTex = liveSign(canvasTex(1024, 256, drawSign, false), drawSign);
     const signMat = new THREE.MeshBasicMaterial({ map: signTex, color: glow(0xffffff, 1.25) });
     for (const end of [0, 1]) {
       const s = S[end ? hallIdx[hallIdx.length - 1] : hallIdx[0]];

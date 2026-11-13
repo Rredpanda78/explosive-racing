@@ -1,4 +1,5 @@
 import type { EngineStyle, MusicStyle, WeaponPack } from './audio';
+import type { Lang } from './i18n';
 import { defaultKeys, normalizeKeys, type KeyMap } from './keymap';
 
 /** 這台裝置的設定（跟存檔分開：畫質、音量、按鈕位置都是看裝置的） */
@@ -44,6 +45,8 @@ export interface Settings {
   keys: KeyMap;
   /** 聽得到附近其他車的引擎聲（有方位感） */
   otherEngines: boolean;
+  /** 介面語言；沒選過（undefined）= 依瀏覽器語言自動判斷 */
+  lang?: Lang;
 }
 
 const KEY = 'explosive-racing-settings-v1';
@@ -79,7 +82,10 @@ export function loadSettings(mobile: boolean): Settings {
     if (!raw) return d;
     const s = JSON.parse(raw);
     // 舊版存檔沒有 keys：補上預設鍵位（跟改版前一樣）
-    return { ...d, ...s, layout: { ...(s.layout ?? {}) }, keys: normalizeKeys(s.keys), otherEngines: s.otherEngines !== false };
+    return {
+      ...d, ...s, layout: { ...(s.layout ?? {}) }, keys: normalizeKeys(s.keys), otherEngines: s.otherEngines !== false,
+      lang: s.lang === 'zh' || s.lang === 'en' ? s.lang : undefined,
+    };
   } catch {
     return d;
   }

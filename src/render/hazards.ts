@@ -3,6 +3,8 @@ import { BOULDER, HAMMER, TRAM, type Race } from '../game/race';
 import type { Track } from '../game/track';
 import { StreetHazardView } from './streetHazards';
 import type { Theme } from './themes';
+import { t } from '../i18n';
+import { fitFont, liveSign } from './signText';
 
 const glow = (hex: number, k: number) => new THREE.Color(hex).multiplyScalar(k);
 
@@ -154,23 +156,26 @@ export class HazardView {
         const cv = document.createElement('canvas');
         cv.width = 128;
         cv.height = 128;
-        const c = cv.getContext('2d')!;
-        c.fillStyle = '#ffc93c';
-        c.beginPath();
-        c.moveTo(64, 6); c.lineTo(122, 116); c.lineTo(6, 116);
-        c.closePath();
-        c.fill();
-        c.strokeStyle = '#1b1c20';
-        c.lineWidth = 8;
-        c.stroke();
-        c.fillStyle = '#1b1c20';
-        c.font = 'bold 30px "Segoe UI", Arial, sans-serif';
-        c.textAlign = 'center';
-        c.fillText('落石', 64, 96);
-        c.beginPath();
-        c.arc(64, 54, 14, 0, Math.PI * 2);
-        c.fill();
-        const tex = new THREE.CanvasTexture(cv);
+        // 警告牌的字跟著介面語言（換語言時重畫）
+        const drawSign = (c: CanvasRenderingContext2D) => {
+          c.fillStyle = '#ffc93c';
+          c.beginPath();
+          c.moveTo(64, 6); c.lineTo(122, 116); c.lineTo(6, 116);
+          c.closePath();
+          c.fill();
+          c.strokeStyle = '#1b1c20';
+          c.lineWidth = 8;
+          c.stroke();
+          c.fillStyle = '#1b1c20';
+          c.textAlign = 'center';
+          fitFont(c, t.signRocks, 30, 74, '"Segoe UI", Arial, sans-serif', 14);
+          c.fillText(t.signRocks, 64, 96);
+          c.beginPath();
+          c.arc(64, 54, 14, 0, Math.PI * 2);
+          c.fill();
+        };
+        drawSign(cv.getContext('2d')!);
+        const tex = liveSign(new THREE.CanvasTexture(cv), drawSign);
         tex.colorSpace = THREE.SRGBColorSpace;
         const signMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
         this.disposables.push(tex, signMat);

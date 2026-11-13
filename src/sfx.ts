@@ -3,6 +3,7 @@
 // ・WeaponSfx：五種武器音效包（機槍、火焰、雷射、電弧、冷凍光束、音波炮、魚叉鉤、副武器、爆炸、命中、護盾、鎖定警告）
 // ・previewEngine / previewWeapons：設定頁試聽
 // 音量基準：各方法的 vol = 1 時，響度約等於原本 audio.ts 對「玩家自己」的音量
+import { localize } from './i18n';
 
 export type EngineStyle = 'kart' | 'v8' | 'sport' | 'turbine' | 'retro';
 export type WeaponPack = 'classic' | 'punchy' | 'scifi' | 'arcade' | 'heavy';
@@ -23,6 +24,24 @@ export const WEAPON_PACKS: { id: WeaponPack; name: string; desc: string }[] = [
   { id: 'arcade', name: '街機', desc: '低位元破碎感的復古電玩音效' },
   { id: 'heavy', name: '電影級重低音', desc: '巨大的低頻爆炸與長長的殘響' },
 ];
+
+// 英文的名稱與說明（中文就是上面原本的字）
+const EN_ENGINE: Record<EngineStyle, { name: string; desc: string }> = {
+  kart: { name: 'Kart', desc: 'Small two-stroke engine with a light, loud buzz' },
+  v8: { name: 'V8 Muscle', desc: 'Deep, lumpy rumble with exhaust pops when you lift off' },
+  sport: { name: 'High-Rev Sports', desc: 'Screaming high revs, shifting up gear by gear' },
+  turbine: { name: 'Turbo Electric', desc: 'Smooth motor whine plus a turbo whistle, with a jet roar on boost' },
+  retro: { name: '8-bit Retro', desc: 'Square-wave engine like an old arcade racer' },
+};
+const EN_PACK: Record<WeaponPack, { name: string; desc: string }> = {
+  classic: { name: 'Classic', desc: 'The original sounds' },
+  punchy: { name: 'Punchy', desc: 'Crisp gunshots layered over low-end impact — short and hard-hitting' },
+  scifi: { name: 'Sci-Fi', desc: 'Zappy lasers, synth sweeps and bubbly explosions' },
+  arcade: { name: 'Arcade', desc: 'Crunchy lo-bit retro game sounds' },
+  heavy: { name: 'Cinematic Bass', desc: 'Huge low-end blasts with long, rolling tails' },
+};
+for (const s of ENGINE_STYLES) localize(s, EN_ENGINE[s.id]);
+for (const s of WEAPON_PACKS) localize(s, EN_PACK[s.id]);
 
 const clamp = (x: number, a: number, b: number): number => (x < a ? a : x > b ? b : x);
 const rnd = (a: number, b: number): number => a + Math.random() * (b - a);

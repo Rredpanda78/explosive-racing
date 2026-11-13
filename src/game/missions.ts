@@ -1,3 +1,4 @@
+import { localize, t } from '../i18n';
 import type { Kart } from './kart';
 
 /** 每場比賽隨機抽三個任務，完成可以多拿獎金 */
@@ -28,12 +29,32 @@ const POOL: Mission[] = [
   { id: 'cut2', text: '走捷徑 2 次', reward: 250, ...count((p) => p.stats.shortcuts, 2) },
   { id: 'jump3', text: '飛越跳台 3 次', reward: 200, ...count((p) => p.stats.jumps, 3) },
   { id: 'dmg200', text: '造成 200 點傷害', reward: 300, ...count((p) => p.stats.damage, 200) },
-  { id: 'start', text: '完成起跑衝刺', reward: 150, progress: (p) => (p.stats.perfectStart ? '完成' : '未完成'), done: (p) => p.stats.perfectStart },
-  { id: 'nodeath', text: '全程不被擊毀', reward: 350, progress: (p) => (p.deaths === 0 ? '維持中' : '失敗'), done: (p) => p.deaths === 0 },
-  { id: 'top3', text: '以前三名完賽', reward: 300, mode: 'race', progress: (p) => `目前第 ${p.rank} 名`, done: (_p, rank) => rank <= 3 },
-  { id: 'win', text: '奪得冠軍', reward: 700, progress: (p) => `目前第 ${p.rank} 名`, done: (_p, rank) => rank === 1 },
-  { id: 'surv4', text: '撐到剩下 4 台', reward: 300, mode: 'elim', progress: (p) => `目前第 ${p.rank} 名`, done: (_p, rank) => rank <= 4 },
+  { id: 'start', text: '完成起跑衝刺', reward: 150, progress: (p) => (p.stats.perfectStart ? t.mDone : t.mNotYet), done: (p) => p.stats.perfectStart },
+  { id: 'nodeath', text: '全程不被擊毀', reward: 350, progress: (p) => (p.deaths === 0 ? t.mKeep : t.mFail), done: (p) => p.deaths === 0 },
+  { id: 'top3', text: '以前三名完賽', reward: 300, mode: 'race', progress: (p) => t.mRank(p.rank), done: (_p, rank) => rank <= 3 },
+  { id: 'win', text: '奪得冠軍', reward: 700, progress: (p) => t.mRank(p.rank), done: (_p, rank) => rank === 1 },
+  { id: 'surv4', text: '撐到剩下 4 台', reward: 300, mode: 'elim', progress: (p) => t.mRank(p.rank), done: (_p, rank) => rank <= 4 },
 ];
+
+/** 英文的任務說明（中文就是上面原本的字） */
+const EN: Record<string, string> = {
+  kill2: 'Wreck 2 rivals',
+  kill4: 'Wreck 4 rivals',
+  streak2: 'Wreck 2 in a row (without getting wrecked)',
+  n2o5: 'Use N2O 5 times',
+  drift20: 'Drift for 20 s in total',
+  draft6: 'Slipstream for 6 s in total',
+  barrel3: 'Blow up 3 barrels',
+  cut2: 'Take a shortcut 2 times',
+  jump3: 'Clear 3 jumps',
+  dmg200: 'Deal 200 damage',
+  start: 'Nail a rocket start',
+  nodeath: 'Don’t get wrecked all race',
+  top3: 'Finish in the top 3',
+  win: 'Win the race',
+  surv4: 'Survive to the final 4',
+};
+for (const m of POOL) localize(m, { text: EN[m.id] });
 
 /** skip：這場做不到的任務（沒有爆炸桶、沒有跳台、沒有捷徑） */
 export function pickMissions(rng: () => number, mode: 'race' | 'elim', skip: string[] = []): Mission[] {
