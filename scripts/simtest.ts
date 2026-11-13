@@ -80,7 +80,7 @@ function runAll(mode: 'race' | 'elim', seed: number): void {
     if (mode === 'race' && !k.finished) throw new Error(`${k.name} did not finish`);
   }
   if (!done()) throw new Error(`${mode} did not end`);
-  if (!count['kart:jump']) throw new Error('nobody used a ramp');
+  if (mode === 'race' && def.ramps.length && !count['kart:jump']) throw new Error('nobody used a ramp');
   if (mode === 'race' && track.branches.length && !count.shortcut) throw new Error('nobody took the shortcut');
   if (mode === 'race' && (def.hazards ?? []).length && !count.hazard && !count.tram && !count.rock) throw new Error('hazards never did anything');
 }
@@ -200,6 +200,7 @@ runAll('elim', 777);
   const plain = turnIn(false), hard = turnIn(true);
   console.log(`hard drift: normal ${plain.deg.toFixed(0)}° (v ${plain.v.toFixed(1)}) vs double-tap ${hard.deg.toFixed(0)}° (v ${hard.v.toFixed(1)}) events: ${hard.ev.join(' ')}`);
   if (!hard.ev.includes('hardDrift')) throw new Error('double tap did not trigger a hard drift');
-  if (hard.deg < plain.deg * 1.3) throw new Error('hard drift does not turn much more');
+  // 使用者要求：比一般甩尾多轉一些就好（約 15~20%）
+  if (hard.deg < plain.deg * 1.1 || hard.deg > plain.deg * 1.3) throw new Error('hard drift should turn 10-30% more than a normal drift');
 }
 console.log('SIM OK');

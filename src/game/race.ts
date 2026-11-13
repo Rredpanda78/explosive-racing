@@ -235,8 +235,8 @@ export class Race {
     }
     this.player = player;
 
-    // 爆炸桶
-    for (const b of track.barrelSpots()) {
+    // 爆炸桶（目前關閉：CFG.barrels）
+    if (CFG.barrels) for (const b of track.barrelSpots()) {
       const s = track.samples[track.wrap(Math.round(b.dist / track.spacing))];
       this.barrels.push({ x: s.x + s.nx * b.lat, y: s.y, z: s.z + s.nz * b.lat, respawnT: 0, fuse: 0, by: null });
     }
@@ -251,7 +251,12 @@ export class Race {
       });
     }
     this.updateHazards(0);
-    this.missions = pickMissions(rng, mode);
+    // 這場做不到的任務不要抽
+    const skip: string[] = [];
+    if (!this.barrels.length) skip.push('barrel3');
+    if (!track.ramps.length) skip.push('jump3');
+    if (!track.branches.length) skip.push('cut2');
+    this.missions = pickMissions(rng, mode, skip);
   }
 
   step(dt: number, pin: KartInput): void {

@@ -15,13 +15,13 @@ export const CFG = {
   gripNormal: 8.5,
   /** 轉向的角速度跟上方向盤的快慢（越小越有滑行感、越不會一按就猛轉） */
   yawResp: 11,
-  yawRespDrift: 8,
+  yawRespDrift: 14,
 
   // 甩尾
   driftMinSpeed: 13,
   driftTurn: 1.95,
   /** 放開甩尾鍵後繼續按同方向時的轉向率（拖漂） */
-  driftHoldTurn: 1.25,
+  driftHoldTurn: 1.75,
   driftCounterTurn: 1.5,
   driftIdleTurn: 0.55,
   gripDrift: 1.8,
@@ -64,10 +64,10 @@ export const CFG = {
   /** 重甩：甩尾中同方向連按兩下（放開到再按的間隔要短），轉得更兇、滑得更開，適合髮夾彎 */
   hardTapWindow: 0.26,
   hardDriftTime: 1.0,
-  hardTurnMul: 1.6,
-  hardGrip: 0.9,
-  hardKick: 0.16,
-  hardDrag: 1.5,
+  hardTurnMul: 1.3,
+  hardGrip: 1.3,
+  hardKick: 0.08,
+  hardDrag: 1.3,
 
   // 小噴（甩尾結束後短時間內再按一次加速）
   miniMinDrift: 0.35,
@@ -93,6 +93,9 @@ export const CFG = {
   draftDelay: 0.5,
   draftSpeedMul: 1.07,
   draftAccel: 6,
+
+  /** 爆炸桶：使用者要求先全部拿掉（程式保留，改成 true 就會回來） */
+  barrels: false,
 
   // 跳台
   rampLength: 7,

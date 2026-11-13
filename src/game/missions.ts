@@ -35,8 +35,9 @@ const POOL: Mission[] = [
   { id: 'surv4', text: '撐到剩下 4 台', reward: 300, mode: 'elim', progress: (p) => `目前第 ${p.rank} 名`, done: (_p, rank) => rank <= 4 },
 ];
 
-export function pickMissions(rng: () => number, mode: 'race' | 'elim'): Mission[] {
-  const pool = POOL.filter((m) => !m.mode || m.mode === mode);
+/** skip：這場做不到的任務（沒有爆炸桶、沒有跳台、沒有捷徑） */
+export function pickMissions(rng: () => number, mode: 'race' | 'elim', skip: string[] = []): Mission[] {
+  const pool = POOL.filter((m) => (!m.mode || m.mode === mode) && !skip.includes(m.id));
   const out: Mission[] = [];
   while (out.length < 3 && pool.length) {
     const m = pool.splice(Math.floor(rng() * pool.length), 1)[0];

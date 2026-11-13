@@ -329,6 +329,8 @@ export class Kart {
 
     // ---- 轉向 ----
     let omega: number;
+    /** 甩尾的速度補償（極速以上才生效）：轉向與行進方向跟上車頭都按比例加快 */
+    const spdK = clamp(sp / C.maxSpeed, 1, 1.45);
     const sameDir = this.drifting ? inp.steer * this.driftDir : 0;
     if (flying) {
       omega = inp.steer * 0.55;
@@ -339,6 +341,8 @@ export class Kart {
       else omega = sameDir > 0.1 ? inp.steer * C.driftHoldTurn * this.handling : this.driftDir * C.driftIdleTurn * 0.5;
       // 重甩：往甩尾方向轉得更快（反打不受影響）
       if (sameDir >= -0.1) omega *= 1 + (C.hardTurnMul - 1) * hk;
+      // 速度越快轉得越快：N2O、加速帶、小噴時甩尾的圈不會被拉大（否則同一個彎有時過得去、有時轉不過）
+      omega *= spdK;
     } else {
       const av = Math.abs(vf);
       const t = clamp((av - 8) / (vmaxBase - 8), 0, 1);
@@ -371,7 +375,7 @@ export class Kart {
         this.driftRelease += dt * rate;
       }
       const r = clamp(this.driftRelease / C.driftRecover, 0, 1);
-      grip = lerp(C.gripDrift, C.gripNormal, r * r);
+      grip = lerp(C.gripDrift, C.gripNormal, r * r) * spdK;
       this.driftTime += dt;
       if (!this.finished) this.stats.driftTime += dt;
     }
