@@ -24,6 +24,8 @@ const FIRE = additive(0xff7a1a, 0.8);
 const FIRE_CORE = additive(0xffe08a, 0.85);
 const BEAM = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.5, 0.6), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
 const BEAM_CORE = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 3, 3), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+const BEAM_HALO = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.25, 0.35), transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+const ORB = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 0.9, 1), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
 const SHADOW = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false });
 
 const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.36, 14).rotateZ(Math.PI / 2);
@@ -35,8 +37,12 @@ const shadowGeo = new THREE.CircleGeometry(1.75, 18).rotateX(-Math.PI / 2);
 const fireGeo = new THREE.ConeGeometry(0.55, 5, 9, 1, true).rotateX(Math.PI / 2).translate(0, 0, 2.5);
 const fireCoreGeo = new THREE.ConeGeometry(0.22, 3, 7, 1, true).rotateX(Math.PI / 2).translate(0, 0, 1.5);
 // 雷射光束：長度 1、沿 +Z，用 scale.z 拉長
-const beamGeo = new THREE.BoxGeometry(0.16, 0.16, 1).translate(0, 0, 0.5);
-const beamCoreGeo = new THREE.BoxGeometry(0.06, 0.06, 1).translate(0, 0, 0.5);
+// 雷射：車頭中央射出的一道粗光束（外層、白色核心、淡淡的光暈），長度 1、沿 +Z，用 scale.z 拉長
+const beamGeo = new THREE.CylinderGeometry(0.12, 0.12, 1, 16, 1, true).rotateX(Math.PI / 2).translate(0, 0, 0.5);
+const beamCoreGeo = new THREE.CylinderGeometry(0.05, 0.05, 1, 12, 1, true).rotateX(Math.PI / 2).translate(0, 0, 0.5);
+const beamHaloGeo = new THREE.CylinderGeometry(0.3, 0.3, 1, 16, 1, true).rotateX(Math.PI / 2).translate(0, 0, 0.5);
+// 蓄力時兩把雷射槍口的光球
+const orbGeo = new THREE.SphereGeometry(0.16, 12, 8);
 // 槍口火光：兩片交叉的菱形
 const muzzleGeo = (() => {
   const a = new THREE.PlaneGeometry(0.5, 1.3).rotateX(Math.PI / 2).translate(0, 0, 0.65);
@@ -198,7 +204,7 @@ const swirlTex = (() => {
   return t;
 })();
 
-const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, shadowGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo]);
+const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, shadowGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo, beamHaloGeo, orbGeo]);
 
 /** 模型放大倍率：Kenney 卡丁車原始約 1 m 寬，放大成遊戲中的車體尺寸 */
 const MODEL_SCALE = 1.9;
@@ -268,6 +274,7 @@ export class KartView {
   /** 火焰發射器的噴流與雷射光束（左右各一） */
   private fires: THREE.Object3D[] = [];
   private beams: THREE.Object3D[] = [];
+  private orbs: THREE.Object3D[] = [];
   /** N2O 變形：每台車各自的小配件與多個噴口，以及破風氣流 */
   private kit: KitPart[] = [];
   private nozzles: Nozzle[] = [];
@@ -496,13 +503,20 @@ export class KartView {
         b.add(f);
         this.fires.push(f);
       } else if (primary === 'laser') {
-        const beam = new THREE.Group();
-        beam.position.set(mx, my, mzz);
-        beam.add(new THREE.Mesh(beamGeo, BEAM), new THREE.Mesh(beamCoreGeo, BEAM_CORE));
-        beam.visible = false;
-        beam.userData.side = side;
-        b.add(beam);
-        this.beams.push(beam);
+        // 兩把雷射槍口各一顆蓄力光球；光束只有一道，從車頭中央射出（迴圈結束後建立）
+        const orb = new THREE.Mesh(orbGeo, ORB);
+        orb.position.set(mx, my, mzz);
+        orb.visible = false;
+        b.add(orb);
+        this.orbs.push(orb);
+        if (side === -1) {
+          const beam = new THREE.Group();
+          beam.position.set(0, my, mzz);
+          beam.add(new THREE.Mesh(beamHaloGeo, BEAM_HALO), new THREE.Mesh(beamGeo, BEAM), new THREE.Mesh(beamCoreGeo, BEAM_CORE));
+          beam.visible = false;
+          b.add(beam);
+          this.beams.push(beam);
+        }
       }
       const mz = new THREE.Mesh(muzzleGeo, MUZZLE);
       mz.position.set(mx, my, mzz);
@@ -738,6 +752,7 @@ export class KartView {
     for (const m of this.muzzles) m.visible = false;
     for (const f of this.fires) f.visible = false;
     for (const bm of this.beams) bm.visible = false;
+    for (const o of this.orbs) o.visible = false;
     for (const p of this.kit) p.o.visible = false;
     for (const n of this.nozzles) n.ring.visible = n.streak.visible = false;
     for (const m of this.sprays) m.parent!.visible = false;
@@ -825,14 +840,18 @@ export class KartView {
       bm.visible = on;
       if (on) {
         const len = Math.max(1, k.beamLen - 1);
-        // 兩道光束收束到光束盡頭
-        bm.rotation.y = Math.atan2(-this.m.gunX * bm.userData.side, len);
-        // 蓄力：細細閃爍的瞄準線；射出：粗光束很快變細消失
+        // 蓄力：一條細細閃爍的瞄準線；射出：一道很粗的光束，0.25 秒內變細消失
         const w = firing
-          ? (0.5 + 3.2 * Math.min(1, k.firing / 0.25)) * (0.9 + Math.random() * 0.2)
-          : (0.12 + 0.3 * Math.min(1, k.charge / 0.3)) * (0.6 + Math.random() * 0.6);
+          ? (1.2 + 3.6 * Math.min(1, k.firing / 0.25)) * (0.92 + Math.random() * 0.16)
+          : (0.25 + 0.35 * Math.min(1, k.charge / 0.3)) * (0.6 + Math.random() * 0.6);
         bm.scale.set(w, w, len);
       }
+    }
+    for (const o of this.orbs) {
+      // 槍口光球：蓄力時越來越大，射出瞬間最亮
+      const c = laserCharging ? Math.min(1, k.charge / 0.3) : firing ? Math.min(1, k.firing / 0.25) : 0;
+      o.visible = c > 0.02;
+      if (o.visible) o.scale.setScalar((0.4 + 1.1 * c) * (0.85 + Math.random() * 0.3));
     }
 
     // 後方護盾：展開時從透明淡入，被打中時亮一下

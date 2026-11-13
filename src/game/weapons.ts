@@ -61,7 +61,7 @@ export const BURN_TIME = 2.5;
 /** 副武器：裝在引擎蓋上（地雷類從車尾放出） */
 export const SECONDARY: Record<SecondaryId, SecondaryDef> = {
   rocket: { id: 'rocket', name: '火箭炮', desc: '朝正前方直線飛行，命中或撞牆時爆炸', dmg: 56, radius: 6.5, cooldown: 2.3, count: 1, price: 0, perk: '雙聯裝：一次射出兩枚火箭' },
-  grenade: { id: 'grenade', name: '榴彈發射器', desc: '自動預判前方對手的位置拋射，落地或碰到車就大範圍爆炸並震退敵車（不會炸到自己）', dmg: 18, radius: 11, cooldown: 4, count: 1, price: 2500, perk: '子母彈：爆炸後再彈出 3 顆小榴彈' },
+  grenade: { id: 'grenade', name: '榴彈發射器', desc: '自動預判前方對手的位置拋射，落地或碰到車就大範圍爆炸並震退敵車（不會炸到自己）', dmg: 54, radius: 11, cooldown: 8, count: 1, price: 2500, perk: '子母彈：爆炸後再彈出 3 顆小榴彈' },
   mine: { id: 'mine', name: '地雷', desc: '往車尾放下地雷，啟動後有車經過就爆炸（最多同時 3 顆）', dmg: 58, radius: 6, cooldown: 2.2, count: 1, price: 2200, perk: '重型地雷：爆炸範圍 +40%，可以同時留 5 顆' },
   cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆（威力小、不會把車炸飛）', dmg: 14, radius: 3.8, cooldown: 4.3, count: 5, price: 3000, perk: '加量：一次撒出 7 顆' },
   shield: { id: 'shield', name: '後方護盾', desc: '在車尾展開弧形能量護盾，擋下從後方來的子彈、雷射、火焰、火箭、導彈與爆炸；擋下的傷害太多會碎掉（正面的攻擊、壓到的地雷擋不住）', dmg: 0, radius: 0, cooldown: 11, count: 1, price: 2600, perk: '全包護盾：護住的角度從 150° 加大到 220°（側面也擋得住）' },
