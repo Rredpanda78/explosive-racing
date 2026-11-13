@@ -468,17 +468,21 @@ export class GameView {
     if (!(k.remote ? track.inRunoff(k.x, k.z, k.idx) : k.runoff)) return;
     const R = Math.random, sm = this.smoke;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading), lx = fz, lz = -fx;
-    const rate = (this.mobile ? 24 : 48) * Math.min(1, Math.abs(k.speed) / 28);
+    // 依地面：砂石揚起黃沙、草地翻起泥土與草屑、鋪面只有一點點灰
+    const surf = track.runoffSurface;
+    const [dr, dg, db] = surf === 'grass' ? [0.55, 0.48, 0.34] : surf === 'paved' ? [0.72, 0.72, 0.75] : [0.86, 0.71, 0.5];
+    const [br, bg, bb] = surf === 'grass' ? [0.3, 0.5, 0.18] : surf === 'paved' ? [0.35, 0.35, 0.38] : [0.42, 0.3, 0.2];
+    const rate = (this.mobile ? 24 : 48) * Math.min(1, Math.abs(k.speed) / 28) * (surf === 'paved' ? 0.35 : 1);
     for (let w = 0; w < 2; w++) {
       if (R() > dt * rate) continue;
       const side = w === 0 ? 1 : -1;
       const wx = k.x + lx * side * 0.6 - fx * 0.75, wz = k.z + lz * side * 0.6 - fz * 0.75;
       const c = 0.92 + R() * 0.12;
       sm.spawn(wx, k.y + 0.3, wz, k.vx * 0.2 - fx * 2.5 + (R() - 0.5) * 2.6, 1 + R() * 2, k.vz * 0.2 - fz * 2.5 + (R() - 0.5) * 2.6,
-        0.8 + R() * 0.7, 0.9, 4 + R() * 1.6, 0.86 * c, 0.71 * c, 0.5 * c, 0.5, -0.25, 1.3);
-      if (R() < 0.35) {
+        0.8 + R() * 0.7, 0.9, 4 + R() * 1.6, dr * c, dg * c, db * c, surf === 'paved' ? 0.3 : 0.5, -0.25, 1.3);
+      if (surf !== 'paved' && R() < 0.35) {
         sm.spawn(wx, k.y + 0.2, wz, k.vx * 0.35 - fx * 3 + (R() - 0.5) * 3, 2.5 + R() * 2.5, k.vz * 0.35 - fz * 3 + (R() - 0.5) * 3,
-          0.5 + R() * 0.3, 0.22, 0.18, 0.42, 0.3, 0.2, 0.95, 14, 0.4, k.y - k.air);
+          0.5 + R() * 0.3, 0.22, 0.18, br, bg, bb, 0.95, 14, 0.4, k.y - k.air);
       }
     }
   }

@@ -65,29 +65,57 @@ function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D) => 
 const FACE = 0.35;
 /** 屏障本身的厚度（砂石地面要鋪到屏障底下） */
 const BARRIER_DEPTH = 2.6;
+/** 屏障底下要多鋪的緩衝區地面寬度：寬度 0（一般護欄）時正好接到護欄外側，跟原本的路肩接得起來 */
+export const runoffPad = (w: number) => Math.min(BARRIER_DEPTH, 0.95 + 2 * w);
 
-export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoulderMat: THREE.Material, shadows: boolean, lowDetail: boolean): void {
-  if (!track.hasRunoff) return;
-  const S = track.samples, n = track.n, hw = track.halfWidth;
-  const rng = mulberry32(913 + n);
-  const W = (sg: number) => (sg > 0 ? track.runoffL : track.runoffR);
-  const cliff = (i: number, sg: number) => track.cliffAt(track.wrap(i), sg);
-  /** 屏障底下要多鋪的砂石寬度：寬度 0（一般護欄）時正好接到護欄外側，跟原本的路肩接得起來 */
-  const pad = (w: number) => Math.min(BARRIER_DEPTH, 0.95 + 2 * w);
-  const desert = theme.vegetation === 'desert';
-  const add = (g: THREE.BufferGeometry, m: THREE.Material, receive = true, cast = false) => {
-    const mesh = new THREE.Mesh(g, m);
-    mesh.receiveShadow = shadows && receive;
-    mesh.castShadow = shadows && cast;
-    root.add(mesh);
-    return mesh;
-  };
-
-  // ---------- 砂石地面 ----------
-  const sandTex = canvasTex(256, 256, (c) => {
+/** 緩衝區地面的貼圖：沙漠是砂石、草原是比旁邊草地深一點的草（有輪胎痕）、城市是畫了斜紋的水泥鋪面 */
+function surfaceTex(style: Track['runoffSurface'], desert: boolean): THREE.CanvasTexture {
+  return canvasTex(256, 256, (c) => {
+    const r = mulberry32(17);
+    if (style === 'grass') {
+      c.fillStyle = '#4f9a3c';
+      c.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 4200; i++) {
+        const v = r();
+        c.fillStyle = v < 0.5 ? 'rgba(30,80,25,0.3)' : v < 0.9 ? 'rgba(150,210,100,0.22)' : 'rgba(110,90,50,0.35)';
+        c.fillRect(r() * 256, r() * 256, 1 + r() * 2, 2 + r() * 4);
+      }
+      // 開出去的車留下的淡淡輪胎痕
+      c.strokeStyle = 'rgba(70,55,35,0.16)';
+      c.lineWidth = 7;
+      for (const x0 of [70, 96, 170, 196]) {
+        c.beginPath();
+        c.moveTo(x0, 0);
+        c.bezierCurveTo(x0 + 30, 90, x0 - 26, 170, x0 + 8, 256);
+        c.stroke();
+      }
+      return;
+    }
+    if (style === 'paved') {
+      c.fillStyle = '#5b606b';
+      c.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 3800; i++) {
+        c.fillStyle = r() < 0.5 ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.07)';
+        c.fillRect(r() * 256, r() * 256, 1 + r() * 2, 1 + r() * 2);
+      }
+      // 水泥板的接縫與斜紋標線（禁止停車區那種）
+      c.fillStyle = 'rgba(0,0,0,0.25)';
+      c.fillRect(0, 127, 256, 2);
+      c.fillRect(127, 0, 2, 256);
+      c.fillStyle = 'rgba(235,235,225,0.42)';
+      for (let k = -256; k < 512; k += 64) {
+        c.beginPath();
+        c.moveTo(k, 256);
+        c.lineTo(k + 18, 256);
+        c.lineTo(k + 18 + 256, 0);
+        c.lineTo(k + 256, 0);
+        c.closePath();
+        c.fill();
+      }
+      return;
+    }
     c.fillStyle = desert ? '#cfa36a' : '#b9a383';
     c.fillRect(0, 0, 256, 256);
-    const r = mulberry32(17);
     // 細砂的明暗斑點與小碎石
     for (let i = 0; i < 5200; i++) {
       const v = r();
@@ -105,7 +133,27 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
       c.stroke();
     }
   });
-  const sandMat = new THREE.MeshLambertMaterial({ map: sandTex });
+}
+
+export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoulderMat: THREE.Material, shadows: boolean, lowDetail: boolean): void {
+  if (!track.hasRunoff) return;
+  const S = track.samples, n = track.n, hw = track.halfWidth;
+  const rng = mulberry32(913 + n);
+  const W = (sg: number) => (sg > 0 ? track.runoffL : track.runoffR);
+  const cliff = (i: number, sg: number) => track.cliffAt(track.wrap(i), sg);
+  const pad = runoffPad;
+  const desert = theme.vegetation === 'desert';
+  const style = track.runoffSurface;
+  const add = (g: THREE.BufferGeometry, m: THREE.Material, receive = true, cast = false) => {
+    const mesh = new THREE.Mesh(g, m);
+    mesh.receiveShadow = shadows && receive;
+    mesh.castShadow = shadows && cast;
+    root.add(mesh);
+    return mesh;
+  };
+
+  // ---------- 緩衝區地面 ----------
+  const sandMat = new THREE.MeshLambertMaterial({ map: surfaceTex(style, desert) });
   for (const sg of [1, -1]) {
     const w = W(sg);
     const inner = () => sg * hw;
@@ -170,15 +218,18 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
     add(sg > 0 ? ribbon(track, top, yRim, rimIn, yRim, seg, 'flat', 4) : ribbon(track, rimIn, yRim, top, yRim, seg, 'flat', 4), rimMat);
   }
 
-  // ---------- 外圍屏障：急彎外側與收窄的地方是輪胎牆，其他是岩石 ----------
+  // ---------- 外圍屏障 ----------
+  // 沙漠：急彎外側與收窄的地方是輪胎牆，其他是岩石；草原：輪胎牆＋乾草捆；城市：水泥護欄加霓虹燈條
   // 一疊三個輪胎畫成一個圓柱（貼圖畫出三圈輪胎），最上面一個紅白相間：紅頂、白頂各一組
   const tyresRed: THREE.Matrix4[] = [], tyresWhite: THREE.Matrix4[] = [];
   const rocks: THREE.Matrix4[] = [], rockCol: number[] = [];
+  const bales: THREE.Matrix4[] = [], baleCol: number[] = [];
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
   const rows = lowDetail ? 1 : 2;
   const rockBase = new THREE.Color(desert ? 0xb4683f : 0x8d877c);
   const c0 = new THREE.Color();
-  for (const sg of [1, -1]) {
+  if (style === 'paved') buildJersey();
+  else for (const sg of [1, -1]) {
     const w = W(sg);
     const on = (i: number) => !cliff(i, sg) && (w[i] > 0 || w[track.wrap(i + 1)] > 0 || w[track.wrap(i - 1)] > 0);
     /** 這個取樣點用輪胎牆嗎：緩衝區窄（接近護欄的收口）、寬度在變化、或是急彎外側（容易高速撞上去） */
@@ -215,6 +266,22 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
           stack++;
         }
         carryT = t - len;
+      } else if (style === 'grass') {
+        carryT = 0;
+        // 乾草捆：沿著屏障線排一排，每隔一捆上面再疊一捆
+        const yaw = Math.atan2(bx - ax, bz - az);
+        let t = carryR;
+        for (; t < len; t += 1.75) {
+          const u = t / len, px = ax + (bx - ax) * u, pz = az + (bz - az) * u;
+          q.setFromAxisAngle(v.set(0, 1, 0), yaw + (rng() - 0.5) * 0.08);
+          for (let h = 0; h < (stack % 2 ? 2 : 1); h++) {
+            m4.compose(v.set(px + ox * (0.6 + h * 0.08), y0 + 0.45 + h * 0.88, pz + oz * (0.6 + h * 0.08)), q, sc.set(1, 1, 1));
+            bales.push(m4.clone());
+            baleCol.push(c0.setRGB(1, 1, 1).multiplyScalar(0.88 + rng() * 0.2).getHex());
+          }
+          stack++;
+        }
+        carryR = t - len;
       } else {
         carryT = 0;
         // 岩石：前排緊貼屏障線、彼此重疊成一道矮岩牆；後排是比較大的岩塊
@@ -273,4 +340,50 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
     inst(tyreGeo, [new THREE.MeshLambertMaterial({ map: tyreTex(top) }), new THREE.MeshLambertMaterial({ color: cap })], list);
   }
   inst(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ flatShading: true }), rocks, rockCol);
+  if (bales.length) {
+    // 乾草捆：草稈的橫紋與兩道綁繩
+    const strawTex = canvasTex(64, 64, (c) => {
+      c.fillStyle = '#d8b35a';
+      c.fillRect(0, 0, 64, 64);
+      const r = mulberry32(31);
+      for (let i = 0; i < 260; i++) {
+        c.fillStyle = r() < 0.5 ? 'rgba(140,100,30,0.35)' : 'rgba(255,240,170,0.35)';
+        c.fillRect(r() * 64, r() * 64, 4 + r() * 10, 1);
+      }
+      c.fillStyle = 'rgba(90,60,25,0.6)';
+      c.fillRect(18, 0, 3, 64);
+      c.fillRect(43, 0, 3, 64);
+    });
+    inst(new THREE.BoxGeometry(1.1, 0.88, 1.7), new THREE.MeshLambertMaterial({ map: strawTex }), bales, baleCol);
+  }
+
+  /**
+   * 城市的外圍屏障：水泥護欄（Jersey barrier）的斷面沿著緩衝區外緣拉出來，內側上緣一條霓虹燈條
+   * （夜裡看得到；左側青色、右側洋紅，跟路邊的燈條一樣）。寬度變窄的地方護欄跟著斜斜收進來。
+   */
+  function buildJersey(): void {
+    const concrete = new THREE.MeshLambertMaterial({ color: 0xb9bdc6, emissive: theme.night ? 0x262a36 : 0x000000, side: THREE.DoubleSide });
+    // 斷面：[離緩衝區外緣的距離, 高度]，從車道那一側的底部開始
+    const prof: [number, number][] = [[FACE, 0], [FACE + 0.12, 0.3], [FACE + 0.28, 0.95], [FACE + 0.72, 0.95], [FACE + 0.88, 0.3], [FACE + 1.0, 0]];
+    for (const sg of [1, -1]) {
+      const w = W(sg);
+      const seg = (i: number) => !cliff(i, sg) && !cliff(i + 1, sg) && (w[i] > 0 || w[track.wrap(i + 1)] > 0);
+      for (let k = 0; k < prof.length - 1; k++) {
+        const [o0, y0] = prof[k], [o1, y1] = prof[k + 1];
+        const l0 = (i: number) => sg * (hw + w[i] + o0), l1 = (i: number) => sg * (hw + w[i] + o1);
+        const h0 = () => y0, h1 = () => y1;
+        // A 邊要是 lat 比較大的那一邊
+        const big = sg > 0 ? o1 >= o0 : o1 < o0;
+        add(big ? ribbon(track, l1, h1, l0, h0, seg, 'wall', 6) : ribbon(track, l0, h0, l1, h1, seg, 'wall', 6), concrete, true, k === 1 || k === 2);
+      }
+      // 霓虹燈條（白天是紅白相間的反光條）
+      const stripMat = theme.night
+        ? new THREE.MeshBasicMaterial({ color: new THREE.Color(sg > 0 ? 0x22e6ff : 0xff3d9a).multiplyScalar(1.9), side: THREE.DoubleSide })
+        : new THREE.MeshLambertMaterial({ color: 0xe8343f, side: THREE.DoubleSide });
+      // 貼在內側斜面前面一點點（斜面在 0.66 m 高處約 FACE+0.21、0.86 m 處約 FACE+0.26）
+      const lo = (i: number) => sg * (hw + w[i] + FACE + 0.19), hi = (i: number) => sg * (hw + w[i] + FACE + 0.237);
+      const yLo = () => 0.66, yHi = () => 0.86;
+      add(sg > 0 ? ribbon(track, hi, yHi, lo, yLo, seg, 'wall', 6) : ribbon(track, lo, yLo, hi, yHi, seg, 'wall', 6), stripMat, false);
+    }
+  }
 }

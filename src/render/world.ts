@@ -7,7 +7,7 @@ import { PAD_HALF_WIDTH, PAD_LENGTH, type Branch, type Sample, type SceneRange, 
 import { mulberry32 } from '../game/util';
 import { makeInstanced, makeLandmark, makeProp } from './assets';
 import { applyTerrainDetail, grassTufts, roadDetailMaterial } from './detail';
-import { buildRunoff } from './runoff';
+import { buildRunoff, runoffPad } from './runoff';
 import type { Theme } from './themes';
 
 export interface World {
@@ -1167,16 +1167,31 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     addInst(makeInstanced('treeSmall', 9, trees));
   }
 
-  // 路肩上的花叢
+  /**
+   * 軟邊界：路邊地面的高度（a = |lat|）：緩衝區上是路面高度、外圍屏障裡回傳 null、屏障後面是往下斜的路肩。
+   * 沒有緩衝區的地方就是原本護欄外的路肩。
+   */
+  const roadsideY = (i: number, sg: number, a: number): number | null => {
+    const s = S[i], w = track.runoffW(i, sg);
+    if (w > 0 && a <= hw + w) return s.y + 0.02;
+    const inner = w > 0 ? hw + w + runoffPad(w) : hw + 0.95;
+    if (a < inner) return null;
+    return a < inner + 8.05 ? s.y - 0.02 - 3.18 * ((a - inner) / 8.05) : -Infinity;
+  };
+
+  // 路肩上的花叢（有緩衝區的路段開在屏障後面的路肩上）
   if (theme.flowers) {
     const count = lowDetail ? 500 : 1400;
     const flowers = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.32, 0), new THREE.MeshLambertMaterial(), count);
     const cols = [0xff8fb3, 0xffe066, 0xffffff, 0xff9d5c, 0xc79bff];
     for (let i = 0; i < count; i++) {
-      const s = S[Math.floor(rng() * n)];
+      const si = Math.floor(rng() * n), s = S[si];
       const sg = rng() > 0.5 ? 1 : -1;
-      const cl = latClamp(s, sg * (hw + 1.6 + rng() * 6.6));
-      const drop = -0.02 - 3.18 * ((Math.abs(cl) - (hw + 0.95)) / (9 - 0.95));
+      const ro = track.runoffW(si, sg);
+      const cl = latClamp(s, sg * ((ro > 0 ? ro + runoffPad(ro) - 0.95 : 0) + hw + 1.6 + rng() * 6.6));
+      const drop = ro > 0
+        ? (roadsideY(si, sg, Math.abs(cl)) ?? s.y) - s.y
+        : -0.02 - 3.18 * ((Math.abs(cl) - (hw + 0.95)) / (9 - 0.95));
       const k = 0.7 + rng() * 0.9;
       m4.compose(v.set(s.x + s.nx * cl, s.y + drop + 0.18, s.z + s.nz * cl), q.identity(), sc.set(k, k * 0.8, k));
       flowers.setMatrixAt(i, m4);
@@ -1192,13 +1207,16 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     const gr = mulberry32(77 + n);
     const spots: THREE.Vector3[] = [];
     for (let tries = 0; tries < want * 3 && spots.length < want; tries++) {
-      const s = S[Math.floor(gr() * n)];
+      const si = Math.floor(gr() * n), s = S[si];
       const sg = gr() > 0.5 ? 1 : -1;
-      const cl = latClamp(s, sg * (hw + 1.5 + Math.pow(gr(), 1.7) * 9));
+      // 有緩衝區的路段：草叢也長在草地緩衝區上，範圍往外延伸到屏障後面
+      const ro = track.runoffW(si, sg);
+      const cl = latClamp(s, sg * (hw + 1.5 + Math.pow(gr(), 1.7) * (9 + ro)));
       const x = s.x + s.nx * cl, z = s.z + s.nz * cl;
       if (trackDist(x, z) < hw + 1.3 || inLake(x, z, 2) || (BR.length && inBranch(x, z, 1.2))) continue;
       const a = Math.abs(cl);
-      const sy = a < hw + 9 ? s.y - 0.02 - 3.18 * ((a - (hw + 0.95)) / (9 - 0.95)) : -Infinity;
+      const sy = track.hasRunoff ? roadsideY(si, sg, a) : a < hw + 9 ? s.y - 0.02 - 3.18 * ((a - (hw + 0.95)) / (9 - 0.95)) : -Infinity;
+      if (sy === null) continue;
       spots.push(new THREE.Vector3(x, Math.max(sy, terrainH(x, z)) - 0.03, z));
     }
     if (spots.length) {

@@ -446,9 +446,10 @@ export class Kart {
     const rough = this.branch?.def.rough;
     if (rough && !boosting && !padOn && this.miniT <= 0 && !flying) vmax *= rough;
     const forced = boosting || padOn || this.miniT > 0;
-    // 路邊的砂石緩衝區：跟碎石捷徑一樣，沒有加速效果時跑不快，而且沙地會把速度很快吃掉
+    // 路邊的緩衝區：跟碎石捷徑一樣，沒有加速效果時跑不快；沙地、草地還會把速度很快吃掉（鋪面不會）
     const sand = this.runoff && !forced && !flying;
-    if (sand) vmax *= C.runoffSpeed;
+    const ro = C.runoffSurfaces[track.runoffSurface];
+    if (sand) vmax *= ro.speed;
     const throttle = inp.accel < -0.1 ? inp.accel : forced ? 1 : inp.accel;
     this.gas = throttle;
     const sm0 = this.surface(track);
@@ -481,7 +482,7 @@ export class Kart {
         if (s > 0) s = Math.max(0, s - C.coast * dt);
         else s = Math.min(0, s + C.coast * dt);
       }
-      if (sand && s > vmax) s = Math.max(vmax, s - C.runoffDrag * dt);
+      if (sand && s > vmax && ro.drag > 0) s = Math.max(vmax, s - ro.drag * dt);
     }
 
     const wasBoost = this.boostT > 0;
@@ -562,7 +563,8 @@ export class Kart {
         this.hop = false;
       }
     } else {
-      const rp = this.branch ? -1 : track.rampProgress(this.idx, C.rampLength);
+      // 跳台只鋪在路面上：開在旁邊的緩衝區不會被彈起來
+      const rp = this.branch || Math.abs(this.lat) > track.halfWidth ? -1 : track.rampProgress(this.idx, C.rampLength);
       if (rp >= 0 && along > 0.5) {
         lift = rp * C.rampHeight;
         basePitch += Math.atan(C.rampHeight / C.rampLength);

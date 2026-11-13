@@ -68,7 +68,11 @@ export interface TrackDef {
   runoff?: number;
   /** 個別路段的緩衝區設定（後面的蓋過前面的） */
   runoffZones?: RunoffZone[];
+  /** 緩衝區的地面：沒設定就依主題（沙漠 = 砂石、草原 = 草地、城市 = 鋪面） */
+  runoffSurface?: RunoffSurface;
 }
+
+export type RunoffSurface = 'sand' | 'grass' | 'paved';
 
 /** 一段路的緩衝區設定：from / to 為距起跑線的公尺數，side：1 = 左側、-1 = 右側、0 = 兩側 */
 export interface RunoffZone {
@@ -185,6 +189,20 @@ export const TRACKS: TrackDef[] = [
     hazards: [{ kind: 'hammer', dist: 1905, period: 3.4 }, { kind: 'hammer', dist: 1955, period: 3.4, phase: 0.3 }],
     // 懸崖小徑：窄、沒有護欄，開出去就摔下去
     shortcuts: [{ from: 2010, to: 2310, lat: 6.2, halfWidth: 3.4, name: '懸崖小徑', edge: 'fall' }],
+    // 軟邊界：路邊是草地緩衝區，外圍是輪胎牆與乾草捆
+    runoff: 12,
+    runoffZones: [
+      // 起跑直線與第一座跳台：維修區牆與看台
+      { from: -80, to: 165, side: 0, width: 0 },
+      // 拱門柱子前後收窄
+      { from: 1002, to: 1018, side: 0, width: 0 },
+      { from: 1712, to: 1728, side: 0, width: 0 },
+      { from: 2392, to: 2408, side: 0, width: 0 },
+      // 擺錘門架的柱子立在路邊
+      { from: 1890, to: 1970, side: 0, width: 0 },
+      // 懸崖小徑那一側：主線維持護欄，小徑本身才是沒有護欄的懸崖
+      { from: 2000, to: 2320, side: 1, width: 0 },
+    ],
   },
   {
     id: 'red-canyon',
@@ -211,6 +229,18 @@ export const TRACKS: TrackDef[] = [
     hazards: [{ kind: 'boulder', dist: 990, len: 270, period: 2.3 }],
     // 碎石河床：沒開 N2O 會變慢，中間還有大石頭要閃
     shortcuts: [{ from: 1400, to: 1690, lat: 6.2, halfWidth: 5, name: '碎石河床', rough: 0.7, posts: [{ u: 0.3, lat: 1.8, r: 1.4 }, { u: 0.46, lat: -2, r: 1.3 }, { u: 0.62, lat: 1.7, r: 1.5 }, { u: 0.78, lat: -1.8, r: 1.2 }] }],
+    // 軟邊界：峽谷窄的地方（S 彎、落石長下坡）兩側是岩壁；岩台、谷底與後半段開闊的谷地才有砂石緩衝區
+    runoff: 12,
+    runoffZones: [
+      // 起跑直線與第一座跳台
+      { from: -80, to: 140, side: 0, width: 0 },
+      // 峽谷 S 彎
+      { from: 230, to: 650, side: 0, width: 0 },
+      // 落石長下坡（含跳台與兩座拱門）：窄峽谷，落石從岩壁滾下來
+      { from: 830, to: 1250, side: 0, width: 0 },
+      // 拱門柱子前後收窄
+      { from: 1792, to: 1808, side: 0, width: 0 },
+    ],
   },
   {
     id: 'neon-bay',
@@ -257,6 +287,18 @@ export const TRACKS: TrackDef[] = [
     hazards: [{ kind: 'tram', dist: 1000, period: 9, phase: 0.35 }],
     // 施工便道：窄路上交錯擺著施工桶，要一路閃過去
     shortcuts: [{ from: 1170, to: 1480, lat: -6.2, halfWidth: 3.9, name: '施工便道', posts: [{ u: 0.26, lat: 1.6, r: 0.9 }, { u: 0.38, lat: -1.6, r: 0.9 }, { u: 0.5, lat: 1.6, r: 0.9 }, { u: 0.62, lat: -1.6, r: 0.9 }, { u: 0.74, lat: 1.6, r: 0.9 }] }],
+    // 軟邊界：街道旁是鋪面緩衝區（水泥地＋斜紋），外圍是水泥護欄加霓虹燈條
+    runoff: 12,
+    runoffZones: [
+      // 起跑直線：維修區牆與看台
+      { from: -80, to: 140, side: 0, width: 0 },
+      // 電車平交道：護欄開口讓電車進出
+      { from: 985, to: 1015, side: 0, width: 0 },
+      // 跨海大橋：橋上只有護欄
+      { from: 1570, to: 1925, side: 0, width: 0 },
+      // 拱門柱子前後收窄
+      { from: 692, to: 708, side: 0, width: 0 },
+    ],
   },
   {
     id: 'neon-heights',
@@ -293,6 +335,20 @@ export const TRACKS: TrackDef[] = [
     hazards: [{kind: 'tram', dist: 2124, period: 9, phase: 0.6}],
     // 高架邊緣：沒有護欄的窄高架，摔下去會掉到地面
     shortcuts: [{ from: 1836, to: 2072, lat: 6.2, halfWidth: 3.4, name: '高架邊緣', edge: 'fall' }],
+    // 軟邊界：地面層的街道旁是鋪面緩衝區；架在半空中的高架段維持護欄（外面是落差，不做看不見的懸崖）
+    runoff: 12,
+    runoffZones: [
+      // 起跑直線：維修區牆與看台
+      { from: -80, to: 140, side: 0, width: 0 },
+      // 高架段（爬上去、兩個髮夾彎、跳台、下來）
+      { from: 640, to: 1460, side: 0, width: 0 },
+      // 高架邊緣捷徑那一側：主線維持護欄
+      { from: 1830, to: 2080, side: 1, width: 0 },
+      // 電車平交道
+      { from: 2109, to: 2139, side: 0, width: 0 },
+      // 拱門柱子前後收窄
+      { from: 2269, to: 2285, side: 0, width: 0 },
+    ],
   },
   {
     id: 'forest-jump',
@@ -435,6 +491,8 @@ export class Track {
   cliffR = new Uint8Array(0);
   /** 這條賽道有沒有任何緩衝區 */
   hasRunoff = false;
+  /** 緩衝區的地面種類 */
+  runoffSurface: RunoffSurface = 'sand';
 
   constructor(def: TrackDef) {
     this.def = def;
@@ -524,6 +582,7 @@ export class Track {
    */
   private buildRunoff(): void {
     const n = this.n, S = this.samples, hw = this.halfWidth, L = this.length, def = this.def;
+    this.runoffSurface = def.runoffSurface ?? (def.theme === 'meadow' ? 'grass' : def.theme === 'city' ? 'paved' : 'sand');
     this.runoffL = new Float32Array(n);
     this.runoffR = new Float32Array(n);
     this.cliffL = new Uint8Array(n);
