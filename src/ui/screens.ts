@@ -340,7 +340,7 @@ export class Screens {
     const dis = loading ? 'disabled' : '';
     const ti = this.trackIndex();
     const cur = this.tracks[ti];
-    const themeName: Record<string, string> = { meadow: '草原', desert: '沙漠', city: '夜城' };
+    const themeName: Record<string, string> = { meadow: '草原', desert: '沙漠', city: '夜城', ocean: '海底' };
     const cards = this.tracks.map((t, i) => `
       <button class="tcard ${i === ti ? 'on' : ''}" data-act="track" data-id="${i}" ${dis}>
         ${i === ti ? '<em class="tag">已選</em>' : ''}

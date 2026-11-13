@@ -514,5 +514,125 @@ for (const def of TRACKS) {
     if (Math.abs(soft / wall - 1) > 0.1) throw new Error('AI lap times changed by more than 10% with soft boundaries');
   }
 }
+// ---- 6. 蔚藍海廊（海底玻璃隧道）：查得到、圈數、AI 圈速、玻璃牆是硬護欄、斷管捷徑比較快但會摔 ----
+{
+  // 線上房間用索引指定賽道：原本的賽道順序不能變，新賽道接在後面
+  const ORDER = ['skyline-loop', 'red-canyon', 'neon-bay', 'neon-heights', 'forest-jump', 'canyon-rush'];
+  ORDER.forEach((id, i) => { if (TRACKS[i]?.id !== id) throw new Error(`track ${i} should still be ${id}`); });
+  const ti = TRACKS.findIndex((t) => t.id === 'sea-tunnel');
+  if (ti < ORDER.length) throw new Error('sea-tunnel must be appended after the existing tracks');
+  const def = TRACKS[ti];
+  const track = new Track(def);
+  const hw = track.halfWidth;
+  const dt = 1 / 60;
+  console.log(`--- sea-tunnel (#${ti} ${def.name}): ${def.laps} laps, ${track.length.toFixed(0)} m, half width ${hw} ---`);
+  if (def.laps !== 2) throw new Error('sea-tunnel should be 2 laps');
+  if (!def.ramps.length || !def.shortcuts?.length) throw new Error('sea-tunnel needs its ramp and shortcut');
+
+  // AI：三個種子，每圈時間要合理（入門圖：大約 50~70 秒一圈）
+  const laps: number[] = [];
+  for (const seed of [11, 22, 33]) {
+    const race = new Race(track, defaultProfile(), 'race', seed);
+    race.autoPlayer = true;
+    race.player.aiAssist = true;
+    let t = 0;
+    while (t < 400 && !race.karts.every((k) => k.finished)) { race.step(dt, emptyInput()); race.events.length = 0; t += dt; }
+    for (const k of race.karts) {
+      if (!k.finished || k.lapTimes.length !== 2) throw new Error(`sea-tunnel: ${k.name} did not finish 2 laps`);
+      laps.push(...k.lapTimes);
+    }
+  }
+  laps.sort((a, b) => a - b);
+  const mean = laps.reduce((a, b) => a + b, 0) / laps.length;
+  console.log(`AI laps: best ${laps[0].toFixed(1)} s, mean ${mean.toFixed(1)} s, worst ${laps[laps.length - 1].toFixed(1)} s`);
+  if (laps[0] < 40 || mean > 75) throw new Error('sea-tunnel AI lap times look wrong');
+
+  type K = import('../src/game/kart').Kart;
+  const setup = (dist: number, lat = 0, speed?: number) => {
+    const race = new Race(track, defaultProfile(), 'race', 5);
+    for (const o of race.karts) if (!o.isPlayer) o.out = true;
+    const k = race.player;
+    const inp = emptyInput();
+    while (race.state === 'countdown') race.step(dt, inp);
+    const i = track.wrap(Math.round(dist / track.spacing));
+    const s = track.samples[i];
+    k.x = s.x + s.nx * lat; k.z = s.z + s.nz * lat; k.y = s.y; k.idx = i; k.lat = lat; k.prog = i; k.progFine = i;
+    k.heading = Math.atan2(s.tx, s.tz);
+    k.speed = speed ?? k.topSpeed;
+    k.vx = s.tx * k.speed; k.vz = s.tz * k.speed;
+    k.invulnT = 1e9;
+    k.lapCount = 0;
+    k.lapStart = race.time;
+    inp.accel = 1;
+    return { race, k, inp };
+  };
+  /** 朝 (x, z) 開 */
+  const aim = (k: K, inp: ReturnType<typeof emptyInput>, x: number, z: number) => {
+    inp.steer = Math.max(-1, Math.min(1, wrapAngle(Math.atan2(x - k.x, z - k.z) - k.heading) * 2.2));
+  };
+
+  // 玻璃隧道：路邊就是牆（撞上去有 wall 事件，不會開出路面）
+  {
+    const { race, k, inp } = setup(430);
+    let walls = 0, maxLat = 0;
+    for (let t = 0; t < 2.5; t += dt) {
+      const s = track.samples[k.idx];
+      aim(k, inp, s.x + s.tx * 20 + s.nx * (hw + 30), s.z + s.tz * 20 + s.nz * (hw + 30));
+      race.events.length = 0;
+      race.step(dt, inp);
+      maxLat = Math.max(maxLat, Math.abs(k.lat));
+      for (const e of race.events) if (e.t === 'kart' && e.k === k && e.e === 'wall') walls++;
+    }
+    console.log(`glass tube wall: hits ${walls}, max |lat| ${maxLat.toFixed(1)} (half width ${hw})`);
+    if (!walls || maxLat > hw) throw new Error('the glass tube should be a hard wall');
+  }
+
+  // 斷管捷徑：沿著窄底板開比走主線快；開出邊緣會掉進裂縫、回到主線，損失好幾秒
+  const b = track.branches[0];
+  const toDist = (b.def.to + 40) % track.length;
+  const reached = (k: K) => {
+    let d = track.samples[k.idx].dist - toDist;
+    if (d < -track.length / 2) d += track.length;
+    return !k.branch && d > -track.spacing * 2 && d < 30;
+  };
+  const run = (mode: 'main' | 'branch' | 'fall') => {
+    const { race, k, inp } = setup(b.def.from - 60, b.def.lat, 33);
+    let t = 0, fell = false, took = false;
+    while (t < 25 && !reached(k)) {
+      if (mode === 'main') {
+        const s = track.samples[track.wrap(k.idx + Math.round(14 / track.spacing))];
+        aim(k, inp, s.x, s.z);
+      } else {
+        // 沿著捷徑的中線開（捷徑的頭一段跟主線重疊，先靠到那一側），出了捷徑再沿主線開
+        let tx: number, tz: number;
+        const bi = k.branch ? k.bIdx : b.locate(k.x, k.z);
+        const before = !took && track.samples[k.idx].dist < b.def.from;
+        if (before) {
+          const p = track.pointAt(track.samples[k.idx].dist + 14);
+          tx = p.x + p.nx * b.def.lat; tz = p.z + p.nz * b.def.lat;
+        } else if (bi < b.n - 3 && (k.branch || !took)) {
+          const s = b.samples[Math.min(b.n - 1, bi + Math.round(12 / b.spacing))];
+          tx = s.x; tz = s.z;
+          if (mode === 'fall' && bi > b.n * 0.45) { tx += s.nx * 40; tz += s.nz * 40; }
+        } else {
+          const s = track.samples[track.wrap(k.idx + Math.round(14 / track.spacing))];
+          tx = s.x; tz = s.z;
+        }
+        aim(k, inp, tx, tz);
+      }
+      race.events.length = 0;
+      race.step(dt, inp);
+      if (k.branch) took = true;
+      for (const e of race.events) if (e.t === 'kart' && e.k === k && e.e === 'fall') fell = true;
+      t += dt;
+    }
+    return { t, fell, took };
+  };
+  const main = run('main'), cut = run('branch'), fall = run('fall');
+  console.log(`shortcut: main line ${main.t.toFixed(2)} s, shortcut ${cut.t.toFixed(2)} s (took ${cut.took}, fell ${cut.fell}), falling off ${fall.t.toFixed(2)} s (fell ${fall.fell})`);
+  if (!cut.took || cut.fell) throw new Error('could not drive along the shortcut');
+  if (main.t - cut.t < 1) throw new Error('the shortcut should save at least a second');
+  if (!fall.fell || fall.t < cut.t + 1.5) throw new Error('falling off the broken tube should cost time');
+}
 console.log('SIM OK');
 

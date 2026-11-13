@@ -26,7 +26,7 @@ import { buildWorld, type World } from './world';
 import type { Quality } from '../settings';
 
 /** 每張地圖的天氣 */
-const WEATHER: Record<string, WeatherKind> = { meadow: 'petals', desert: 'sand', city: 'rain' };
+const WEATHER: Record<string, WeatherKind> = { meadow: 'petals', desert: 'sand', city: 'rain', ocean: 'motes' };
 
 const MAX_TRACERS = 320;
 const POOL = 16;

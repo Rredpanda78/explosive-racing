@@ -12,6 +12,10 @@ const { Track, TRACKS } = await import('../src/game/track');
 const { OnlineSession } = await import('../src/net/online');
 
 const mode = (process.argv[2] ?? 'race') as 'race' | 'elim';
+// track=<賽道 id>：指定要跑哪一條（預設第 2 條，赤岩峽谷）
+const trackArg = process.argv.find((a) => a.startsWith('track='))?.slice(6);
+const trackIdx = trackArg ? TRACKS.findIndex((t) => t.id === trackArg) : 1;
+if (trackIdx < 0) throw new Error(`unknown track ${trackArg}`);
 const LAT = 60;
 // rtt 120 ms = 單程 60 ms
 type Msg = { at: number; to: InstanceType<typeof OnlineSession>; m: unknown };
@@ -19,7 +23,7 @@ const queue: Msg[] = [];
 const info = (name: string, car: string, primary: string, secondary: string) => () => ({
   name, car, livery: 0, primary, secondary, plvl: 3, slvl: 3, engine: 0, n2o: 0, armor: 0,
 }) as never;
-const cfg = { track: 1, mode, aiFill: true, difficulty: 'normal' as const };
+const cfg = { track: trackIdx, mode, aiFill: true, difficulty: 'normal' as const };
 const A = new OnlineSession(info('A', 'kart-oobi', 'laser', 'grenade'), { ...cfg });
 const B = new OnlineSession(info('B', 'kart-oodi', 'mg', 'missile'), { ...cfg });
 const fake = (self: InstanceType<typeof OnlineSession>, other: InstanceType<typeof OnlineSession>, pid: number) => {
@@ -42,7 +46,7 @@ H(B, { t: 'welcome', pid: 2, host: 1, peers: [{ pid: 1, info: info('A', 'kart-oo
 H(A, { t: 'join', pid: 2, info: info('B', 'kart-oodi', 'mg', 'missile')() });
 
 const races = new Map<unknown, InstanceType<typeof Race>>();
-const track = new Track(TRACKS[1]);
+const track = new Track(TRACKS[trackIdx]);
 for (const s of [A, B]) {
   s.onStart = (msg) => {
     const r = new Race(track, defaultProfile(), msg.cfg.mode, msg.seed, s.setup(msg));

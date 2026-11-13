@@ -34,7 +34,7 @@ export interface Theme {
   mountain: number;
   mountainCap: number | null;
   cloud: number | null;
-  vegetation: 'forest' | 'desert' | 'city';
+  vegetation: 'forest' | 'desert' | 'city' | 'ocean';
   lake: boolean;
   lakeColor: number;
   turbines: boolean;
@@ -91,5 +91,21 @@ export const THEMES: Record<ThemeId, Theme> = {
     mountain: 0x1a2140, mountainCap: null, cloud: null,
     vegetation: 'city', lake: true, lakeColor: 0x12305c, turbines: false, flowers: false,
     accents: [0xff3d9a, 0x22e6ff, 0x9b5cff, 0xffe14d, 0x39ffb0],
+  },
+  // 海底隧道：從水面透下來的青藍色光，霧就是海水（越深越暗，見 ocean.ts 的深度氛圍）
+  ocean: {
+    id: 'ocean', night: false,
+    skyTop: 0x7fe6f6, skyHorizon: 0x0e5878, fogNear: 24, fogFar: 360,
+    sunDir: [0.22, 0.93, 0.3], sunColor: 0xd8f6ff, sunIntensity: 1.9, sunDisc: 0.7,
+    hemiSky: 0x7fd0f2, hemiGround: 0x23525c, hemiIntensity: 0.85,
+    exposure: 1.0, bloom: 0.24,
+    ground: ['#a8996f', 'rgba(214,200,160,0.45)', 'rgba(96,104,84,0.45)'],
+    groundLow: [0.6, 0.74, 0.8], groundHigh: [0.98, 0.95, 0.86],
+    shoulder: 0xb3a682, farGround: 0x5f8a8e,
+    road: '#4a5866', roadSpeck: 72,
+    walls: ['#ff6f61', '#ffd23f', '#2ec4b6', '#4d9de0'],
+    mountain: 0x1d4f66, mountainCap: null, cloud: null,
+    vegetation: 'ocean', lake: false, lakeColor: 0x1d6f8f, turbines: false, flowers: false,
+    accents: [0xff6f61, 0x2ec4b6, 0xffd23f, 0x4d9de0, 0xc77dff],
   },
 };
