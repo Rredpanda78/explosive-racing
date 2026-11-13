@@ -125,6 +125,8 @@ const TERRAIN_MIX: Record<string, { rock: number; patch: number; patchAmt: numbe
   meadow: { rock: 0x8a8376, patch: 0x8d6b47, patchAmt: 0.75 },
   desert: { rock: 0xa65a38, patch: 0xa8774a, patchAmt: 0.7 },
   city: { rock: 0x4b5263, patch: 0x3b4252, patchAmt: 0.7 },
+  // 夜市小鎮：水泥地與柏油的深淺補丁
+  taiwan: { rock: 0x4a4446, patch: 0x38322f, patchAmt: 0.6 },
 };
 
 /**

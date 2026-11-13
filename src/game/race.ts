@@ -6,6 +6,7 @@ import type { NetRacer, OnlineSetup, RaceNet, SecParams } from './net';
 import { pickMissions, type Mission } from './missions';
 import type { Profile } from './save';
 import type { HazardDef, Track } from './track';
+import { initStreet, updateStreet, type CrackerMat, type StreetRider } from './street';
 import { clamp, mulberry32, wrapAngle } from './util';
 import { BURN_DPS, BURN_TIME, LASER_CHARGE, laserCooldown, laserKeep, laserWidth, lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, shieldHalfArc, shieldHp, shieldTime, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
 import { DIFFICULTY } from './difficulty';
@@ -48,6 +49,10 @@ export interface HazardState {
   /** 滾石：距離下一顆的秒數 */
   spawnT: number;
   cycle: number;
+  /** 街頭機關（src/game/street.ts）：機車、鞭炮、強風的強度 0~1 */
+  riders?: StreetRider[];
+  mats?: CrackerMat[];
+  gust?: number;
 }
 
 export type HitWeapon = 'gun' | 'flame' | 'laser';
@@ -69,6 +74,8 @@ export type RaceEvent =
   | { t: 'hazard'; k: Kart; kind: HazardDef['kind']; x: number; y: number; z: number }
   | { t: 'rock'; x: number; y: number; z: number; r: number }
   | { t: 'tram'; x: number; y: number; z: number }
+  /** 街頭機關的聲音與特效：鞭炮炸開、巷口的機車按喇叭 */
+  | { t: 'street'; kind: 'cracker' | 'horn'; x: number; y: number; z: number }
   | { t: 'shortcut'; k: Kart }
   | { t: 'kart'; k: Kart; e: KartEvent }
   | { t: 'lap'; k: Kart; lap: number; time: number }
@@ -103,6 +110,9 @@ const MAX_MINES_PERK = 5;
 // 機關的尺寸與威力
 export const HAMMER = { pivot: 11, arm: 9.5, amp: 1.15, headR: 1.3, headHalf: 1.8, dmg: 22 };
 export const TRAM = { half: 8, width: 1.6, speed: 24, warn: 2.5, reach: 38, dmg: 40 };
+/** 平交道的區間車：三節車廂，從遠處開過來 */
+export const TRAIN = { half: 27, width: 1.6, speed: 30, warn: 2.6, reach: 92, dmg: 40 };
+export const tramSpec = (def: HazardDef): typeof TRAM => (def.train ? TRAIN : TRAM);
 export const BOULDER = { r: 2.2, hp: 50, dmg: 28, enter: 0.9 };
 
 /** 一場比賽的完整模擬。不依賴畫面，之後連線對戰可直接由主機端跑這份。 */
@@ -253,12 +263,14 @@ export class Race {
     // 機關
     for (const def of track.def.hazards ?? []) {
       const p = track.pointAt(def.dist);
-      this.hazards.push({
+      const h: HazardState = {
         def, x: p.x, y: p.y, z: p.z, tx: p.tx, tz: p.tz, nx: p.nx, nz: p.nz,
         theta: 0, lat: 0, hy: HAMMER.pivot - HAMMER.arm, vlat: 0,
-        c: -TRAM.reach, dir: 1, warn: false, moving: false,
+        c: -tramSpec(def).reach, dir: 1, warn: false, moving: false,
         spawnT: 1 + rng() * def.period, cycle: -1,
-      });
+      };
+      initStreet(h, track);
+      this.hazards.push(h);
     }
     this.updateHazards(0);
     // 這場做不到的任務不要抽
@@ -1500,18 +1512,22 @@ export class Race {
         h.hy = HAMMER.pivot - HAMMER.arm * Math.cos(h.theta);
         if (dt > 0) this.hammerHits(h);
       } else if (h.def.kind === 'tram') {
+        const TR = tramSpec(h.def);
         const cycle = Math.floor(ph);
         const tau = (ph - cycle) * P;
-        const T = (2 * TRAM.reach) / TRAM.speed;
+        const T = (2 * TR.reach) / TR.speed;
         h.dir = cycle % 2 ? 1 : -1;
-        h.moving = tau >= TRAM.warn && tau < TRAM.warn + T;
-        h.warn = tau < TRAM.warn + T;
-        h.c = h.dir * (h.moving ? -TRAM.reach + TRAM.speed * (tau - TRAM.warn) : -TRAM.reach);
+        h.moving = tau >= TR.warn && tau < TR.warn + T;
+        h.warn = tau < TR.warn + T;
+        h.c = h.dir * (h.moving ? -TR.reach + TR.speed * (tau - TR.warn) : -TR.reach);
         if (cycle !== h.cycle) {
           if (h.cycle >= 0) this.events.push({ t: 'tram', x: h.x, y: h.y, z: h.z });
           h.cycle = cycle;
         }
         if (dt > 0 && h.moving) this.tramHits(h);
+      } else if (h.def.kind !== 'boulder') {
+        // 機車、鞭炮、強風（src/game/street.ts）
+        updateStreet(this, h, dt);
       } else if (dt > 0 && this.state !== 'countdown') {
         h.spawnT -= dt;
         if (h.spawnT <= 0) {
@@ -1545,14 +1561,16 @@ export class Race {
   }
 
   private tramHits(h: HazardState): void {
+    const TR = tramSpec(h.def);
     for (const k of this.karts) {
       if (k.dead || k.out || k.hazardCd > 0 || k.invulnT > 0 || k.air > 3) continue;
       const dx = k.x - h.x, dz = k.z - h.z;
       const along = dx * h.tx + dz * h.tz;
       const lat = dx * h.nx + dz * h.nz;
-      if (Math.abs(along) > TRAM.width + 1.1 || Math.abs(lat - h.c) > TRAM.half + 1.1) continue;
+      if (Math.abs(along) > TR.width + 1.1 || Math.abs(lat - h.c) > TR.half + 1.1) continue;
+      // 火車太快，撞飛的力道跟電車一樣就好（不然會直接飛出地圖）
       this.knock(k, h.nx * h.dir, h.nz * h.dir, TRAM.speed * 1.1, 10);
-      this.hazardHit(k, 'tram', TRAM.dmg);
+      this.hazardHit(k, 'tram', TR.dmg);
     }
   }
 

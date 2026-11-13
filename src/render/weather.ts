@@ -6,6 +6,8 @@ export interface WeatherOpts {
   mobile: boolean;
   /** 地面高度（splash、沙塵貼地用） */
   groundY: (x: number, z: number) => number;
+  /** 花瓣換成別的東西（例如廟口的金紙灰燼）：[顏色, 亮度倍率]，亮度 > 1 的會發光 */
+  petals?: [number, number][];
 }
 
 const R = Math.random;
@@ -343,9 +345,15 @@ export class Weather {
       const col = new Float32Array(cnt * 4);
       const c = new THREE.Color();
       for (let i = 0; i < cnt; i++) {
-        const leaf = R() < 0.14;
-        const pal = leaf ? LEAF_COLS : PETAL_COLS;
-        c.setHex(pal[Math.floor(R() * pal.length)]);
+        const custom = opts.petals;
+        const leaf = !custom && R() < 0.14;
+        if (custom) {
+          const [hx, k] = custom[Math.floor(R() * custom.length)];
+          c.setHex(hx).multiplyScalar(k);
+        } else {
+          const pal = leaf ? LEAF_COLS : PETAL_COLS;
+          c.setHex(pal[Math.floor(R() * pal.length)]);
+        }
         col.set([c.r, c.g, c.b, leaf ? 1 : 0], i * 4);
       }
       geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(col, 4));

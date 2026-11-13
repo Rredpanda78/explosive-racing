@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "simtest": "tsx scripts/simtest.ts",
-    "nettest": "tsx scripts/netsim.ts race && tsx scripts/netsim.ts elim"
+    "nettest": "tsx scripts/netsim.ts race && tsx scripts/netsim.ts elim && tsx scripts/netsim.ts race temple-night"
   },
   "dependencies": {
     "three": "^0.187.0"

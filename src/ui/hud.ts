@@ -289,7 +289,11 @@ export class Hud {
         break;
       case 'hazard':
         if (e.k === p) this.hitFrom(e.x, e.z, null);
-        if (e.k === p) this.popup(e.kind === 'hammer' ? '被鐵鎚砸飛！' : e.kind === 'tram' ? '被電車撞飛！' : '被落石撞到！', 'warn');
+        if (e.k === p) {
+          const train = race.track.def.hazards?.some((h) => h.train);
+          const msg: Record<string, string> = { hammer: '被鐵鎚砸飛！', tram: train ? '被火車撞飛！' : '被電車撞飛！', boulder: '被落石撞到！', scooter: '被機車擦撞！', firecracker: '被鞭炮炸到！' };
+          this.popup(msg[e.kind] ?? '小心！', 'warn');
+        }
         break;
       case 'lock':
         if (e.k === p) this.popup('被追蹤導彈鎖定！', 'warn');

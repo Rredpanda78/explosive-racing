@@ -12,6 +12,10 @@ const { Track, TRACKS } = await import('../src/game/track');
 const { OnlineSession } = await import('../src/net/online');
 
 const mode = (process.argv[2] ?? 'race') as 'race' | 'elim';
+// 第三個參數（可省略）：賽道 id，預設是赤岩峽谷（索引 1）
+const tid = process.argv.slice(3).find((a) => a !== 'drop');
+const ti = tid ? TRACKS.findIndex((t) => t.id === tid) : 1;
+if (ti < 0) throw new Error(`unknown track ${tid}`);
 const LAT = 60;
 // rtt 120 ms = 單程 60 ms
 type Msg = { at: number; to: InstanceType<typeof OnlineSession>; m: unknown };
@@ -19,7 +23,7 @@ const queue: Msg[] = [];
 const info = (name: string, car: string, primary: string, secondary: string) => () => ({
   name, car, livery: 0, primary, secondary, plvl: 3, slvl: 3, engine: 0, n2o: 0, armor: 0,
 }) as never;
-const cfg = { track: 1, mode, aiFill: true, difficulty: 'normal' as const };
+const cfg = { track: ti, mode, aiFill: true, difficulty: 'normal' as const };
 const A = new OnlineSession(info('A', 'kart-oobi', 'laser', 'grenade'), { ...cfg });
 const B = new OnlineSession(info('B', 'kart-oodi', 'mg', 'missile'), { ...cfg });
 const fake = (self: InstanceType<typeof OnlineSession>, other: InstanceType<typeof OnlineSession>, pid: number) => {
@@ -42,7 +46,7 @@ H(B, { t: 'welcome', pid: 2, host: 1, peers: [{ pid: 1, info: info('A', 'kart-oo
 H(A, { t: 'join', pid: 2, info: info('B', 'kart-oodi', 'mg', 'missile')() });
 
 const races = new Map<unknown, InstanceType<typeof Race>>();
-const track = new Track(TRACKS[1]);
+const track = new Track(TRACKS[ti]);
 for (const s of [A, B]) {
   s.onStart = (msg) => {
     const r = new Race(track, defaultProfile(), msg.cfg.mode, msg.seed, s.setup(msg));
@@ -110,7 +114,7 @@ for (let step = 0; step < 60 * 260; step++) {
   if (ra && rb && ra.state === 'finished' && rb.state === 'finished' && ra.karts.every((k) => k.finished || k.out) && rb.karts.every((k) => k.finished || k.out)) break;
 }
 const ra = races.get(A)!, rb = races.get(B)!;
-console.log(`mode ${mode}  time A ${ra.time.toFixed(1)} B ${rb.time.toFixed(1)}  state ${ra.state}/${rb.state}`);
+console.log(`track ${TRACKS[ti].id}  mode ${mode}  time A ${ra.time.toFixed(1)} B ${rb.time.toFixed(1)}  state ${ra.state}/${rb.state}`);
 console.log(`position error (own vs seen by other): avg ${(errSum / errN).toFixed(2)} m, max ${maxErr.toFixed(1)} m`);
 const row = (r: InstanceType<typeof Race>) => r.karts.map((k) => `${k.name}:${k.kills}/${k.deaths}${k.out ? 'X' : ''}${k.finished ? '✓' : ''}`).join(' ');
 console.log('A sees ' + row(ra));
