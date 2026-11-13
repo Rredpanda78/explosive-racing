@@ -1,0 +1,108 @@
+/* 帳號面板、選進度的視窗（src/ui/accountPanel.ts）：跟遊戲的海軍藍／米白／珊瑚紅一樣。全部 acp- 開頭，不影響別的畫面 */
+.acp-overlay {
+  position: fixed; inset: 0; z-index: 45;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: rgba(11, 26, 51, .84);
+  overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  color: var(--cream, #f3ead5);
+  font-size: clamp(14px, 1.8vw, 16px); line-height: 1.5;
+}
+.acp-overlay.acp-top { z-index: 46; }
+.acp-overlay [hidden] { display: none !important; }
+.acp-panel {
+  position: relative; margin: auto; width: min(460px, 100%);
+  background: var(--navy-2, #1d3a68); border: 3px solid var(--cream, #f3ead5); border-radius: 16px;
+  box-shadow: 0 8px 0 var(--navy-3, #0b1a33);
+  padding: 1em 1.2em 1.2em;
+  display: flex; flex-direction: column; gap: .75em;
+}
+.acp-head { display: flex; align-items: center; justify-content: space-between; gap: .5em; }
+.acp-head h2 { margin: 0; font-size: clamp(20px, 3vw, 28px); font-weight: 900; letter-spacing: .06em; }
+.acp-head h2::after { content: ""; display: block; width: 1.8em; height: .14em; margin-top: .15em; background: var(--coral, #e8574a); border-radius: 1em; }
+.acp-x { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 2px solid rgba(243, 234, 213, .55); background: transparent; color: var(--cream, #f3ead5); font-size: 20px; font-weight: 900; line-height: 1; cursor: pointer; }
+.acp-x:hover { border-color: var(--cream, #f3ead5); }
+.acp-tip, .acp-hint { margin: 0; font-size: .88em; opacity: .82; }
+.acp-hint b { color: var(--coral, #e8574a); opacity: 1; }
+
+.acp-tabs { display: flex; gap: 4px; padding: 4px; border: 2px solid rgba(243, 234, 213, .45); border-radius: 12px; }
+.acp-tab { flex: 1; min-height: 40px; border: 0; border-radius: 8px; background: transparent; color: var(--cream, #f3ead5); font: inherit; font-weight: 800; cursor: pointer; }
+.acp-tab[aria-selected="true"] { background: var(--coral, #e8574a); }
+
+.acp-form { display: flex; flex-direction: column; gap: .6em; margin: 0; }
+.acp-field { display: flex; flex-direction: column; gap: .25em; font-weight: 800; font-size: .92em; }
+.acp-field[hidden] { display: none; }
+.acp-overlay input[type="text"], .acp-overlay input[type="password"] {
+  width: 100%; min-width: 0; box-sizing: border-box;
+  font: inherit; font-size: max(16px, 1em); font-weight: 700; /* iPhone 小於 16px 會自動放大畫面 */
+  padding: .55em .75em; border-radius: 10px;
+  border: 2px solid rgba(243, 234, 213, .6); background: var(--navy-3, #0b1a33); color: var(--cream, #f3ead5);
+  -webkit-user-select: text; user-select: text; touch-action: manipulation;
+}
+.acp-overlay input::placeholder { color: rgba(243, 234, 213, .45); }
+.acp-overlay input:focus { outline: none; border-color: var(--coral, #e8574a); }
+.acp-rc-input { text-transform: uppercase; letter-spacing: .12em; }
+
+.acp-btn {
+  min-height: 44px; padding: .5em 1.1em; border-radius: 12px;
+  border: 2px solid var(--cream, #f3ead5); background: transparent; color: var(--cream, #f3ead5);
+  font: inherit; font-weight: 900; letter-spacing: .04em; cursor: pointer;
+}
+.acp-btn:hover { background: rgba(243, 234, 213, .08); }
+.acp-btn.primary { background: var(--coral, #e8574a); border-color: var(--coral, #e8574a); box-shadow: 0 4px 0 var(--coral-2, #c8443a); }
+.acp-btn.primary:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--coral-2, #c8443a); }
+.acp-btn.danger { border-color: var(--coral, #e8574a); color: var(--coral, #e8574a); }
+.acp-btn.danger.sure { background: var(--coral, #e8574a); color: var(--cream, #f3ead5); }
+.acp-btn:disabled { opacity: .45; cursor: default; transform: none; }
+.acp-btn.wide { width: 100%; }
+.acp-row { display: flex; flex-wrap: wrap; gap: .5em; }
+.acp-row > .acp-btn { flex: 1 1 auto; }
+
+.acp-msg { margin: 0; min-height: 0; padding: 0; font-weight: 800; text-align: center; border-radius: 10px; }
+.acp-msg:empty { display: none; }
+.acp-msg.err { background: rgba(232, 87, 74, .2); border: 2px solid var(--coral, #e8574a); padding: .45em .8em; }
+.acp-msg.ok { background: rgba(243, 234, 213, .1); border: 2px solid rgba(243, 234, 213, .5); padding: .45em .8em; }
+
+.acp-info { margin: 0; display: flex; flex-direction: column; gap: .2em; }
+.acp-info p { margin: 0; }
+.acp-info b { color: var(--coral, #e8574a); }
+.acp-status::before { content: "●"; margin-right: .35em; color: rgba(243, 234, 213, .5); }
+.acp-status[data-s="synced"]::before { color: #7ad99a; }
+.acp-status[data-s="syncing"]::before { color: #ffd23f; }
+.acp-status[data-s="offline"]::before, .acp-status[data-s="conflict"]::before { color: var(--coral, #e8574a); }
+
+.acp-sec { border-top: 2px solid rgba(243, 234, 213, .18); padding-top: .7em; display: flex; flex-direction: column; gap: .55em; }
+.acp-toggle { align-self: flex-start; background: none; border: 0; padding: .3em 0; color: var(--cream, #f3ead5); font: inherit; font-weight: 800; cursor: pointer; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--coral, #e8574a); }
+.acp-toggle[aria-expanded="true"] { text-decoration: none; color: var(--coral, #e8574a); }
+
+/* 救援碼 */
+.acp-rc-box { display: flex; gap: .5em; align-items: stretch; }
+.acp-code {
+  flex: 1; margin: 0; padding: .55em .6em; border-radius: 10px;
+  background: var(--cream, #f3ead5); color: var(--navy, #13284b);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: clamp(16px, 2.3vw, 21px); font-weight: 800; letter-spacing: .03em;
+  text-align: center; word-break: normal; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all;
+}
+.acp-warn { margin: 0; padding: .6em .8em; border-radius: 10px; border: 2px solid var(--coral, #e8574a); background: rgba(232, 87, 74, .14); font-weight: 700; font-size: .92em; }
+.acp-check { display: flex; align-items: center; gap: .6em; font-weight: 800; cursor: pointer; min-height: 44px; }
+.acp-check input { width: 24px; height: 24px; accent-color: var(--coral, #e8574a); flex: none; }
+
+/* 選進度 */
+.acp-cards { display: grid; grid-template-columns: 1fr 1fr; gap: .6em; }
+.acp-card { position: relative; background: var(--cream, #f3ead5); color: var(--navy, #13284b); border-radius: 12px; padding: .7em .8em; display: flex; flex-direction: column; gap: .15em; border: 3px solid var(--cream, #f3ead5); }
+.acp-card.more { border-color: var(--coral, #e8574a); box-shadow: 0 0 0 2px var(--coral, #e8574a); }
+.acp-card h3 { margin: 0 0 .2em; font-size: 1.05em; }
+.acp-card .acp-cash { color: var(--coral-2, #c8443a); font-weight: 900; font-size: 1.25em; }
+.acp-card small { opacity: .7; }
+.acp-card .acp-tag { position: absolute; top: -.75em; right: .6em; background: var(--coral, #e8574a); color: var(--cream, #f3ead5); font-weight: 900; font-size: .75em; padding: .05em .5em; border-radius: 6px; }
+
+.acp-overlay :focus-visible { outline: 3px solid var(--coral, #e8574a); outline-offset: 2px; }
+
+@media (max-width: 420px) {
+  .acp-cards { grid-template-columns: 1fr; }
+}
+@media (max-height: 480px) {
+  .acp-panel { padding: .7em 1em .9em; gap: .55em; }
+  .acp-tip { display: none; }
+}

@@ -53,6 +53,8 @@ export interface ScreenActions {
   calibrateTilt(): void;
   /** 進出設定頁：在設定頁可以試聽比賽配樂 */
   settingsOpen(open: boolean): void;
+  /** 帳號面板 */
+  account(): void;
   /** 線上對戰：開房、加入、房主設定、開始、回到房間、離開 */
   online(): void;
   createRoom(name: string): void;
@@ -117,6 +119,8 @@ export class Screens {
 
   /** 這台裝置的設定（由 main 指定） */
   settings!: Settings;
+  /** 登入中的帳號名稱（空字串 = 訪客） */
+  accountLabel = '';
   private settingsBack: 'menu' | 'pause' = 'menu';
   private pauseArgs: [boolean, string] = [false, ''];
 
@@ -194,6 +198,7 @@ export class Screens {
         else this.menu(this.loading);
         break;
       case 'online': this.act.online(); break;
+      case 'account': this.act.account(); break;
       case 'backmenu': this.menu(this.loading); break;
       case 'mkroom': this.act.createRoom(this.val('#net-name')); break;
       case 'joinroom': this.act.joinRoom(this.val('#net-code'), this.val('#net-name')); break;
@@ -317,7 +322,7 @@ export class Screens {
                   <button class="m-mode net" data-act="online"><b>線上對戰</b><span>開房間跟朋友一起跑</span></button>
                 </div>`}
             <div class="m-diff"><span>電腦難度</span>${DIFFICULTY_IDS.map((d) => `<button class="seg ${p.difficulty === d ? 'on' : ''}" data-act="diff" data-id="${d}">${DIFFICULTY[d].name}</button>`).join('')}</div>
-            <div class="m-links"><button data-act="settings">設定</button><button data-act="music">配樂</button><button data-act="help">遊戲按鍵說明</button></div>
+            <div class="m-links"><button data-act="account" class="${this.accountLabel ? 'acct-on' : ''}">${this.accountLabel ? '👤 ' + esc(this.accountLabel) : '帳號登入'}</button><button data-act="settings">設定</button><button data-act="music">配樂</button><button data-act="help">遊戲按鍵說明</button></div>
           </div>
           <div class="m-right">
             <h3>選擇賽道</h3>

@@ -9,7 +9,10 @@
  * 能直連（WebRTC）的玩家之間不經過伺服器，伺服器只是備援。遊戲本身的模擬在各玩家的瀏覽器裡跑。
  */
 
-export interface Env {
+import { handleAccount, type AccountEnv } from './account';
+export { Account, Limiter } from './account';
+
+export interface Env extends AccountEnv {
   ROOM: DurableObjectNamespace;
   /** 公開房間列表（全世界一個） */
   LOBBY: DurableObjectNamespace;
@@ -94,6 +97,12 @@ export default {
       return new Response(JSON.stringify({ iceServers: await turnServers(env) }), {
         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': origin!, 'Cache-Control': 'no-store', Vary: 'Origin' },
       });
+    }
+    if (url.pathname === '/account') {
+      // 帳號與雲端存檔（只給我們的網頁）
+      const origin = req.headers.get('Origin');
+      if (!originAllowed(origin, env)) return new Response('forbidden', { status: 403 });
+      return handleAccount(req, env, origin!);
     }
     if (url.pathname === '/rooms') {
       // 公開房間列表（只給我們的網頁）

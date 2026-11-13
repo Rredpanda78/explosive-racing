@@ -25,3 +25,16 @@ class_name = "Lobby"
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["Lobby"]
+
+# 帳號（一個帳號一個物件）與登入嘗試次數的限制
+[[durable_objects.bindings]]
+name = "ACCOUNT"
+class_name = "Account"
+
+[[durable_objects.bindings]]
+name = "LIMITER"
+class_name = "Limiter"
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["Account", "Limiter"]

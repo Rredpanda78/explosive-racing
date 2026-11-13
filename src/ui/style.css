@@ -547,3 +547,6 @@ body.touch #missions { top: calc(33 * var(--u)); }
 .pub-row em.open { background: #2f9e6e; color: #fff; }
 .pub-row em.busy { background: rgba(243,234,213,.2); }
 .pub-empty { opacity: .7; font-weight: 700; text-align: center; padding: .6em; font-size: .9em; }
+
+/* 主選單的帳號按鈕：登入後顯示名字 */
+.m-links button.acct-on { color: var(--coral); }

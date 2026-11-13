@@ -7,6 +7,8 @@ import { Race, type RaceMode } from './game/race';
 import { OnlineSession, type StartMsg } from './net/online';
 import { cleanCode, ERR_TEXT, fetchRooms, newRoomCode } from './net/room';
 import { loadProfile, saveProfile } from './game/save';
+import { AccountClient } from './net/account';
+import { openAccountPanel, openConflictDialog } from './ui/accountPanel';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
 import { setupMobileViewport } from './mobile';
@@ -86,7 +88,7 @@ function setPlayerName(n: string): void {
 /** 進房時告訴大家自己的車與裝備 */
 function myRacer(): Omit<NetRacer, 'pid'> {
   return {
-    name: playerName() || '車手', car: profile.kart, livery: profile.livery?.[profile.kart] ?? 0,
+    name: playerName() || acct.name || '車手', car: profile.kart, livery: profile.livery?.[profile.kart] ?? 0,
     primary: profile.primary, secondary: profile.secondary, plvl: profile.lvl[profile.primary], slvl: profile.lvl[profile.secondary],
     engine: profile.car.engine, n2o: profile.car.n2o, armor: profile.car.armor,
   };
@@ -197,6 +199,7 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     if (!race) audio.setMusic(open ? 'race' : 'menu');
   },
   online: () => openOnline(),
+  account: () => openAccountPanel(acct, () => { if (screens.current === 'menu' || screens.current === 'none') screens.menu(!ready); }),
   createRoom: (name) => {
     setPlayerName(name);
     enterRoom(newRoomCode(), true);
@@ -223,6 +226,25 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
   },
 });
 screens.settings = settings;
+
+// ---------------- 帳號與雲端存檔 ----------------
+const acct = new AccountClient();
+// 比賽中、線上房間裡不要換掉進度（比賽結束會用記憶體裡的舊進度蓋回去）
+acct.canApply = () => !race && !online && !bgRace && screens.current === 'menu';
+acct.onConflict = (local, cloud) => openConflictDialog(local, cloud);
+acct.onRemoteSave = () => {
+  // 換成雲端的進度：profile 是跟畫面共用的同一個物件，直接把內容換掉
+  Object.assign(profile, loadProfile());
+  const i = Math.max(0, TRACKS.findIndex((t) => t.id === profile.track));
+  if (i !== trackIndex && ready) selectTrack(i);
+  else if (screens.current === 'menu') screens.menu(!ready);
+};
+acct.onStatus = () => {
+  screens.accountLabel = acct.loggedIn ? acct.name : '';
+  if (screens.current === 'menu') screens.menu(!ready);
+};
+screens.accountLabel = acct.loggedIn ? acct.name : '';
+acct.start();
 
 // ---------------- 線上對戰 ----------------
 

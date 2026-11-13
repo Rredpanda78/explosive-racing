@@ -1,0 +1,17 @@
+# 只給本機測試帳號用（不部署）：npx wrangler dev -c wrangler.account-test.toml --port 8790，再 node test/account.cjs
+name = "racing-account-test"
+main = "src/account-test-entry.ts"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "ACCOUNT"
+class_name = "Account"
+
+[[durable_objects.bindings]]
+name = "LIMITER"
+class_name = "Limiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Account", "Limiter"]
