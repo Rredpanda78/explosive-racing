@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Kart } from '../game/kart';
 import { clamp } from '../game/util';
 import { shieldHalfArc, type PrimaryId, type SecondaryId } from '../game/weapons';
@@ -26,13 +27,27 @@ const BEAM = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.5, 0.6)
 const BEAM_CORE = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 3, 3), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
 const BEAM_HALO = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.25, 0.35), transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
 const ORB = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 0.9, 1), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
-const SHADOW = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false });
+
+/** 中間實、往外柔和淡掉的圓形漸層（接觸陰影、地面光暈共用） */
+function softDisc(stops: [number, number][]): THREE.CanvasTexture {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const c = cv.getContext('2d')!;
+  const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+  for (const [t, a] of stops) g.addColorStop(t, `rgba(255,255,255,${a})`);
+  c.fillStyle = g;
+  c.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(cv);
+}
+// 接觸陰影：車底正下方最暗，邊緣柔和（用 alphaMap，所以顏色是黑的）
+const contactTex = softDisc([[0, 1], [0.42, 0.9], [0.72, 0.42], [1, 0]]);
+const glowTex = softDisc([[0, 1], [0.3, 0.6], [0.65, 0.18], [1, 0]]);
+const groundGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
 
 const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.36, 14).rotateZ(Math.PI / 2);
 const hubGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.38, 8).rotateZ(Math.PI / 2);
 const flameGeo = new THREE.ConeGeometry(0.24, 1.8, 8).rotateX(-Math.PI / 2).translate(0, 0, -0.9);
 const flameCoreGeo = new THREE.ConeGeometry(0.11, 1.1, 6).rotateX(-Math.PI / 2).translate(0, 0, -0.55);
-const shadowGeo = new THREE.CircleGeometry(1.75, 18).rotateX(-Math.PI / 2);
 // 火焰噴流：從噴嘴往前的圓錐
 const fireGeo = new THREE.ConeGeometry(0.55, 5, 9, 1, true).rotateX(Math.PI / 2).translate(0, 0, 2.5);
 const fireCoreGeo = new THREE.ConeGeometry(0.22, 3, 7, 1, true).rotateX(Math.PI / 2).translate(0, 0, 1.5);
@@ -204,7 +219,7 @@ const swirlTex = (() => {
   return t;
 })();
 
-const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, shadowGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo, beamHaloGeo, orbGeo]);
+const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, groundGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo, beamHaloGeo, orbGeo]);
 
 /** 模型放大倍率：Kenney 卡丁車原始約 1 m 寬，放大成遊戲中的車體尺寸 */
 const MODEL_SCALE = 1.9;
@@ -341,6 +356,18 @@ export function drawNameTag(text: string, style: number): HTMLCanvasElement {
   return c;
 }
 
+/** 依畫質開關的車身細節 */
+export interface KartFx {
+  /** 精緻畫質：清漆車漆、N2O 噴口照在地上的光、夜晚車頭燈照在路上的光 */
+  rich: boolean;
+  /** 尾燈（煞車會變亮）與夜晚的車頭燈 */
+  lights: boolean;
+  night: boolean;
+}
+
+/** 車燈的位置（車體座標，左右各一）；量不到車身表面時就不裝燈 */
+interface LampSpot { x: number; y: number; z: number }
+
 /** 一台車的畫面：車體模型 + 武器 + 火焰 + 血條。車頭朝 +Z。 */
 export class KartView {
   group = new THREE.Group();
@@ -393,18 +420,41 @@ export class KartView {
   private lastVz = 0;
   private baseColor = new THREE.Color();
   private tumbleAngle = 0;
+  /** 貼在地面上的東西（接觸陰影、地面光暈）：跟著車子的水平位置，但高度是地面、不跟著車身翻滾 */
+  private ground = new THREE.Group();
+  private contact: THREE.Mesh;
+  private contactOpacity: number;
+  private exhaustGlow: THREE.Mesh | null = null;
+  private groundPitch = 0;
+  private groundQ = new THREE.Quaternion();
+  private groundE = new THREE.Euler(0, 0, 0, 'YXZ');
+  private groundV = new THREE.Vector3();
+  private groundS = new THREE.Vector3(1, 1, 1);
+  /** 車長、車寬（接觸陰影的大小） */
+  private len = 2.7;
+  private wid = 1.7;
+  /** 尾燈、車頭燈的位置（Tripo 車體用射線量出來） */
+  private tailSpots: LampSpot[] = [];
+  private headSpots: LampSpot[] = [];
+  private tailMat: THREE.MeshBasicMaterial | null = null;
+  private tailHalo: THREE.MeshBasicMaterial | null = null;
+  private lamps: THREE.Mesh[] = [];
+  private brakeK = 0;
+  private lastSpeed = 0;
+  private night = false;
 
-  constructor(look: KartLook, shadows: boolean) {
+  constructor(look: KartLook, shadows: boolean, fx: KartFx = { rich: false, lights: false, night: false }) {
     const g = this.group;
     const b = this.body;
     g.rotation.order = 'YXZ';
     g.add(b);
+    this.night = fx.night;
     this.paint = new THREE.MeshLambertMaterial({ color: look.color });
     this.trim = this.paint;
     this.ownMats.push(this.paint);
 
     let model = cloneModel(look.model);
-    if (model && look.model.startsWith('tripo/')) this.buildFromTripo(model, look);
+    if (model && look.model.startsWith('tripo/')) this.buildFromTripo(model, look, fx.rich);
     else {
       if (!model && look.fallback) model = cloneModel(look.fallback);
       if (model) this.buildFromModel(model, look);
@@ -426,11 +476,41 @@ export class KartView {
         const m = o as THREE.Mesh;
         if (m.isMesh && !(m.material as THREE.Material).transparent) m.castShadow = true;
       });
-    } else {
-      const sh = new THREE.Mesh(shadowGeo, SHADOW);
-      sh.position.y = 0.045;
-      sh.renderOrder = 1;
-      g.add(sh);
+    }
+    if (fx.lights) this.addLights(fx.night);
+
+    // 接觸陰影：沒有即時陰影時是車子唯一的影子（大一點、深一點）；有即時陰影時只是車底一圈淡淡的暗部，讓車子貼地
+    const gr = this.ground;
+    gr.matrixAutoUpdate = false;
+    gr.matrixWorldAutoUpdate = false;
+    g.add(gr);
+    this.contactOpacity = shadows ? 0.42 : 0.7;
+    const cm = new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: contactTex, transparent: true, opacity: this.contactOpacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    this.ownMats.push(cm);
+    const c = (this.contact = new THREE.Mesh(groundGeo, cm));
+    c.scale.set(this.wid * (shadows ? 1.12 : 1.32), 1, this.len * (shadows ? 1.0 : 1.12));
+    c.renderOrder = 1;
+    gr.add(c);
+    if (fx.rich) {
+      // N2O 時噴口照在地上的光（噴口顏色）
+      const em = new THREE.MeshBasicMaterial({ color: new THREE.Color(KIT_STYLE[look.model]?.flame ?? 0x59ccff), map: glowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+      this.ownMats.push(em);
+      const e = (this.exhaustGlow = new THREE.Mesh(groundGeo, em));
+      e.scale.set(this.wid * 1.5, 1, 3.6);
+      e.position.set(0, 0.01, this.m.tailZ - 1.3);
+      e.visible = false;
+      e.renderOrder = 2;
+      gr.add(e);
+      // 夜晚：別台車的車頭燈照在前方路面的光（自己的車有真的聚光燈）
+      if (fx.night && fx.lights && !look.isPlayer && this.headSpots.length) {
+        const hm = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.88, 0.66), map: glowTex, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+        this.ownMats.push(hm);
+        const h = new THREE.Mesh(groundGeo, hm);
+        h.scale.set(this.wid * 2.2, 1, 11);
+        h.position.set(0, 0.01, this.len / 2 + 4.6);
+        h.renderOrder = 2;
+        gr.add(h);
+      }
     }
 
     // 敵車血條
@@ -477,7 +557,7 @@ export class KartView {
    * Tripo 車體：縮放到固定車長、底部貼地，再用射線量出引擎蓋、車尾、車身側面的位置，
    * 讓武器與配件自動貼合不同外型的車。貼圖本身就有顏色，所以不染色。
    */
-  private buildFromTripo(model: THREE.Object3D, look: KartLook): void {
+  private buildFromTripo(model: THREE.Object3D, look: KartLook, gloss: boolean): void {
     const box0 = new THREE.Box3().setFromObject(model);
     const size = box0.getSize(new THREE.Vector3()), c = box0.getCenter(new THREE.Vector3());
     const s = Math.min(CAR_SIZE / Math.cbrt(Math.max(size.x * size.y * size.z, 1e-6)), CAR_MAX_LENGTH / Math.max(size.z, 0.001));
@@ -489,7 +569,7 @@ export class KartView {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       // 每台車各自一份材質，受擊閃紅與殘骸變黑才不會影響別台
-      const mat = liveryMaterial(mesh.material as THREE.Material, look.livery);
+      const mat = liveryMaterial(mesh.material as THREE.Material, look.livery, gloss);
       this.ownMats.push(mat);
       mesh.material = mat;
       mesh.userData.own = false;
@@ -535,6 +615,69 @@ export class KartView {
     m.shellY = H * 0.45;
     m.shellZ = L * 0.22;
     m.sprayZ = -L * 0.27;
+    this.len = L;
+    this.wid = W;
+    // 車燈：從車尾（車頭）水平打射線，由下往上掃出車尾（車頭）那一面；
+    // 往上掃到表面突然往車內縮（行李箱蓋、引擎蓋的邊緣）就停，燈放在那條邊的下方
+    const endAt = (x: number, y: number, dir: number): number | null => {
+      rc.set(o.set(x, y, dir * (L + 5)), d.set(0, 0, -dir));
+      const h = rc.intersectObjects(meshes, false)[0];
+      return h && Math.abs(h.point.z) > L * 0.3 ? h.point.z : null;
+    };
+    const lamps = (dir: number, inset: number, below: number): LampSpot[] => {
+      const x = Math.max(0.2, W / 2 - inset);
+      let top = -1, prev: number | null = null;
+      for (let y = 0.15; y < H * 0.85; y += 0.05) {
+        const z = endAt(x, y, dir);
+        if (z === null || (prev !== null && Math.abs(z - prev) > 0.25)) {
+          if (top > 0) break;
+          continue;
+        }
+        top = y;
+        prev = z;
+      }
+      const y = top - below;
+      if (top < 0 || y < 0.2) return [];
+      const zs = [x, -x].map((xx) => endAt(xx, y, dir));
+      return zs[0] !== null && zs[1] !== null ? [{ x, y, z: zs[0] }, { x: -x, y, z: zs[1] }] : [];
+    };
+    this.tailSpots = lamps(-1, 0.32, 0.1);
+    this.headSpots = lamps(1, 0.32, 0.16);
+  }
+
+  /**
+   * 尾燈（平常暗紅、煞車與倒車時變亮）與夜晚的車頭燈：燈本身是小方塊，外面一圈柔和的光暈（加法混合），
+   * 沒有泛光的畫質也看得出燈在發亮。左右兩盞合成一個網格。
+   * 燈本身不能太亮：色調映射會把很亮的紅色壓成粉白色，亮度改由光暈表現。
+   */
+  private addLights(night: boolean): void {
+    const make = (spots: LampSpot[], dir: number, w: number, h: number, mat: THREE.Material, halo: boolean): void => {
+      if (spots.length < 2) return;
+      const geo = halo
+        ? mergeGeometries(spots.map((p) => new THREE.PlaneGeometry(w, h).rotateY(dir < 0 ? Math.PI : 0).translate(p.x, p.y, p.z + dir * 0.05)))
+        : mergeGeometries(spots.map((p) => new THREE.BoxGeometry(w, h, 0.06).translate(p.x, p.y, p.z)));
+      if (!geo) return;
+      const mesh = new THREE.Mesh(geo, mat);
+      if (halo) mesh.renderOrder = 7;
+      this.body.add(mesh);
+      this.lamps.push(mesh);
+    };
+    const haloMat = (c: THREE.Color, opacity: number) => {
+      const m = new THREE.MeshBasicMaterial({ color: c, map: glowTex, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+      this.ownMats.push(m);
+      return m;
+    };
+    this.tailMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.8, 0.03, 0.02) });
+    this.ownMats.push(this.tailMat);
+    make(this.tailSpots, -1, 0.26, 0.075, this.tailMat, false);
+    this.tailHalo = haloMat(new THREE.Color(1, 0.1, 0.05), 0);
+    make(this.tailSpots, -1, 0.9, 0.46, this.tailHalo, true);
+    if (night) {
+      const head = new THREE.MeshBasicMaterial({ color: new THREE.Color(5.5, 5.1, 4.2) });
+      this.ownMats.push(head);
+      make(this.headSpots, 1, 0.24, 0.075, head, false);
+      make(this.headSpots, 1, 1.1, 0.55, haloMat(new THREE.Color(1, 0.92, 0.75), 0.55), true);
+    }
   }
 
   private buildFromModel(model: THREE.Object3D, look: KartLook): void {
@@ -868,6 +1011,7 @@ export class KartView {
     for (const n of this.nozzles) n.ring.visible = n.streak.visible = false;
     for (const m of this.sprays) m.parent!.visible = false;
     for (const sw of this.swirls) sw.visible = false;
+    for (const l of this.lamps) l.visible = false;
     this.shell.visible = false;
     this.deploy = 0;
     if (this.hpSprite) this.hpSprite.visible = false;
@@ -891,6 +1035,21 @@ export class KartView {
     g.rotation.x += this.wreckSpin.x * dt;
     g.rotation.y += this.wreckSpin.y * dt;
     g.rotation.z += this.wreckSpin.z * dt;
+    this.placeGround(g.position.x, ground, g.position.z, g.rotation.y, this.groundPitch, g.position.y - ground - 0.55);
+    if (this.exhaustGlow) this.exhaustGlow.visible = false;
+  }
+
+  /**
+   * 把地面上的東西放到 (x, groundY, z)，朝向車頭、貼著坡度；車子離地越高，接觸陰影越小越淡。
+   * ground 是車的子物件，但世界矩陣自己算（不跟著車身翻滾）。
+   */
+  private placeGround(x: number, gy: number, z: number, yaw: number, pitch: number, lift: number): void {
+    const f = clamp(1 - lift / 7, 0, 1);
+    const k = 0.62 + 0.38 * f;
+    (this.contact.material as THREE.MeshBasicMaterial).opacity = this.contactOpacity * (0.2 + 0.8 * f * f);
+    this.groundE.set(pitch, yaw, 0);
+    this.groundQ.setFromEuler(this.groundE);
+    this.ground.matrixWorld.compose(this.groundV.set(x, gy + 0.045, z), this.groundQ, this.groundS.set(k, 1, k));
   }
 
   endWreck(): void {
@@ -899,6 +1058,7 @@ export class KartView {
     this.paint.emissive.setRGB(0, 0, 0);
     this.group.rotation.set(0, 0, 0);
     this.tumbleAngle = 0;
+    for (const l of this.lamps) l.visible = true;
   }
 
   update(k: Kart, dt: number): void {
@@ -1079,6 +1239,25 @@ export class KartView {
         m.scale.set(s, s, 0.6 + Math.random() * 0.8);
       }
     }
+
+    // 地面：接觸陰影、N2O 照在地上的光
+    if (k.air <= 0) this.groundPitch = -k.pitch;
+    this.placeGround(k.x, k.y - k.air, k.z, k.heading, this.groundPitch, k.air);
+    if (this.exhaustGlow) {
+      const on = d * clamp(1 - k.air / 4, 0, 1);
+      this.exhaustGlow.visible = on > 0.02;
+      (this.exhaustGlow.material as THREE.MeshBasicMaterial).opacity = 0.5 * on * (0.85 + Math.random() * 0.3);
+    }
+    // 尾燈：油門往後（煞車、倒車）或減速很猛時變亮；連線的對手沒有油門資訊，就看減速
+    if (this.tailMat) {
+      const decel = dt > 0 ? (this.lastSpeed - k.speed) / dt : 0;
+      const braking = (k.gas < -0.05 && Math.abs(k.speed) > 0.3) || k.speed < -0.5 || (k.air <= 0 && k.speed > 3 && decel > 22);
+      this.brakeK += ((braking ? 1 : 0) - this.brakeK) * Math.min(1, dt * (braking ? 25 : 7));
+      const b = this.brakeK, idle = this.night ? 1.05 : 0.8;
+      this.tailMat.color.setRGB(idle + (1.7 - idle) * b, 0.03 + 0.05 * b, 0.02 + 0.02 * b);
+      if (this.tailHalo) this.tailHalo.opacity = (this.night ? 0.32 : 0) + (this.night ? 0.6 : 0.85) * b;
+    }
+    this.lastSpeed = k.speed;
 
     if (this.hpSprite && this.hpCtx && this.hpTex) {
       const hp = Math.round((k.hp / k.maxHp) * 60);

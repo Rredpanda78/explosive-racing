@@ -3,7 +3,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { Kart } from '../game/kart';
 import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
@@ -16,6 +15,7 @@ import { BlastFx, Debris, Scorch, SkidMarks, Trails } from './effects';
 import { clusterMineMaterial, hexMineGeometry, steelMaterial } from './weaponModels';
 import { KartView } from './kartModel';
 import { Particles } from './particles';
+import { skyEnvironment } from './sky';
 import { THEMES, type Theme } from './themes';
 import { Weather, type WeatherKind } from './weather';
 import { buildWorld, type World } from './world';
@@ -28,6 +28,9 @@ const MAX_TRACERS = 320;
 const POOL = 16;
 const MAX_MINES = 64;
 const MAX_CLUSTER = 80;
+/** 天空環境光的強度（影響整個場景的環境光與車漆反射） */
+const ENV_DAY = 1.0;
+const ENV_NIGHT = 2.8;
 
 export class GameView {
   renderer: THREE.WebGLRenderer;
@@ -43,8 +46,32 @@ export class GameView {
   shake = 0;
   /** 0~1，氮氣／加速帶時的速度感，HUD 用來畫速度線 */
   boostK = 0;
+  /** 精緻畫質（高畫質，或電腦的中畫質）：車漆清漆、車燈光暈、路面與地形細節、草叢 */
+  rich: boolean;
+  quality: Quality;
+  /** 動態解析度：目前的像素比，會依幀耗時在 resMin～resMax 之間調整（除錯：__game.view.resScale） */
+  resScale = 1;
+  resMin = 1;
+  resMax = 1;
+  /** 設成 false 暫停動態解析度（除錯、截圖用） */
+  dynRes = true;
 
   private composer: EffectComposer | null = null;
+  /** 環境光貼圖（每張地圖的天空）與產生它的工具 */
+  private pmrem: THREE.PMREMGenerator;
+  private envRT: THREE.WebGLRenderTarget | null = null;
+  /** 動態解析度的量測：1 秒一個區間，連續幾個區間太慢就降、夠快就升 */
+  private frameLast = 0;
+  private frameSum = 0;
+  private frameN = 0;
+  private winStart = 0;
+  private slowWins = 0;
+  private fastWins = 0;
+  private resChangedAt = 0;
+  private resUpAt = -1e9;
+  private resUpBlock = 0;
+  private resBackoff = 20000;
+  private resHold = 0;
   private world?: World;
   private track?: Track;
   private kartViews = new Map<Kart, KartView>();
@@ -99,10 +126,20 @@ export class GameView {
   constructor(canvas: HTMLCanvasElement, mobile: boolean, quality: Quality = mobile ? 'medium' : 'high') {
     this.mobile = mobile;
     // 畫質：低 = 不開陰影與泛光、景物減量；中 = 電腦開陰影與泛光、手機不開；高 = 全開
+    this.quality = quality;
     this.lowDetail = quality === 'low' || (mobile && quality !== 'high');
     this.shadows = quality === 'high' || (quality === 'medium' && !mobile);
-    const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: mobile, powerPreference: 'high-performance' }));
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'low' ? 1 : quality === 'medium' ? 1.5 : 2));
+    this.rich = this.shadows;
+    const post = quality === 'high' || (quality === 'medium' && !mobile);
+    // 反鋸齒：有後製時由後製的多重取樣畫框負責；沒有後製（低畫質、手機中畫質）時由畫布本身負責
+    const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !post, powerPreference: 'high-performance' }));
+    // 動態解析度的範圍（不超過螢幕本身的像素比），一開始用最高
+    const dpr = window.devicePixelRatio || 1;
+    const [lo, hi] = quality === 'low' ? [0.6, 1] : quality === 'medium' ? [0.75, 1.5] : [1, 2];
+    this.resMax = Math.min(hi, dpr);
+    this.resMin = Math.min(lo, this.resMax);
+    this.resScale = this.resMax;
+    r.setPixelRatio(this.resScale);
     // iPhone 記憶體不夠時會把 3D 畫面收回（常在轉向、切換 App 時）：等它還回來，5 秒還沒回來就重新載入，不要卡在最後一格
     let lostTimer = 0;
     canvas.addEventListener('webglcontextlost', (e) => {
@@ -126,17 +163,16 @@ export class GameView {
     this.headlight = new THREE.SpotLight(0xfff0d0, 0, 95, 0.52, 0.65, 1.3);
     this.rim = new THREE.DirectionalLight(0xa9c8ff, 0.7);
     this.scene.add(this.hemi, sun, sun.target, this.rim, this.rim.target, this.headlight, this.headlight.target);
-    // 環境反射（只影響車漆這類標準材質）
-    const pmrem = new THREE.PMREMGenerator(r);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
+    // 環境光與反射：在 setTrack() 依地圖的天空產生
+    this.pmrem = new THREE.PMREMGenerator(r);
     if (this.shadows) {
       r.shadowMap.enabled = true;
       r.shadowMap.type = THREE.PCFShadowMap;
       sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048);
       const c = sun.shadow.camera;
-      c.left = -95; c.right = 95; c.top = 95; c.bottom = -95; c.near = 10; c.far = 520;
+      // 陰影範圍往鏡頭前方挪（updateSun），範圍可以縮小一點，近處的陰影比較清楚
+      c.left = -76; c.right = 76; c.top = 76; c.bottom = -76; c.near = 10; c.far = 520;
       sun.shadow.bias = -0.0006;
       sun.shadow.normalBias = 0.07;
     }
@@ -253,10 +289,16 @@ export class GameView {
     this.renderer.toneMappingExposure = th.exposure;
     if (this.bloomPass) this.bloomPass.strength = th.bloom;
     this.headlight.intensity = th.night ? 110 : 0;
-    this.scene.environmentIntensity = th.night ? 0.18 : 0.32;
+    // 環境光：這張地圖的天空（車漆會映出天色、夕陽、霓虹）
+    const oldEnv = this.envRT;
+    this.envRT = skyEnvironment(this.pmrem, th);
+    this.scene.environment = this.envRT.texture;
+    oldEnv?.dispose();
+    this.scene.environmentIntensity = th.night ? ENV_NIGHT : ENV_DAY;
     this.rim.color.setHex(th.night ? 0x7f9cff : 0xcfe0ff);
     this.rim.intensity = th.night ? 0.9 : 0.55;
-    this.world = buildWorld(track, th, this.shadows, this.lowDetail);
+    // 地面細節：低畫質與手機中畫質不做；草叢只有電腦高畫質是密的
+    this.world = buildWorld(track, th, this.shadows, this.lowDetail, this.lowDetail ? 0 : this.quality === 'high' && !this.mobile ? 2 : 1);
     this.scene.add(this.world.group);
     // 天氣：路面上用路面高度，路外用地形高度
     this.weather?.dispose();
@@ -274,6 +316,7 @@ export class GameView {
     this.debris = new Debris(this.lowDetail ? 16 : 36, this.shadows);
     this.scene.add(this.debris.group);
     if (!this.shards.mesh.parent) this.scene.add(this.shards.mesh);
+    this.resHold = performance.now() + 2500;
   }
 
   setRace(race: Race | null): void {
@@ -308,7 +351,7 @@ export class GameView {
     for (const k of race.karts) {
       // 線上比賽：其他玩家（不含電腦車手）頭上顯示名字
       const label = race.online && !k.isPlayer && !k.bot ? k.name : undefined;
-      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, secondaryLvl: k.secondaryLvl, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery], label }, this.shadows);
+      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, secondaryLvl: k.secondaryLvl, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery], label }, this.shadows, { rich: this.rich, lights: this.quality !== 'low', night: this.theme.night });
       this.kartViews.set(k, kv);
       this.scene.add(kv.group);
       kv.update(k, 0);
@@ -325,6 +368,8 @@ export class GameView {
     }
     this.camYaw = race.player.heading;
     this.camY = race.player.y;
+    // 開場會編譯一堆材質，前幾秒的幀耗時不準，先不調解析度
+    this.resHold = performance.now() + 2500;
   }
 
   resize(): void {
@@ -745,9 +790,13 @@ export class GameView {
     this.sun.intensity = th.sunIntensity + w.flash * 1.5;
   }
 
-  /** 陰影範圍跟著玩家移動（以固定格距對齊，避免陰影邊緣閃爍） */
+  /** 陰影範圍跟著玩家移動，並往鏡頭前方挪（以固定格距對齊，避免陰影邊緣閃爍） */
   private updateSun(x: number, y: number, z: number): void {
     const g = 4;
+    const f = this.camera.getWorldDirection(this.v3);
+    const fl = Math.hypot(f.x, f.z) || 1;
+    x += (f.x / fl) * 30;
+    z += (f.z / fl) * 30;
     this.sun.target.position.set(Math.round(x / g) * g, y, Math.round(z / g) * g);
     this.sun.position.copy(this.sun.target.position).addScaledVector(this.sunDir, 220);
     this.rim.target.position.copy(this.sun.target.position);
@@ -815,7 +864,67 @@ export class GameView {
   }
 
   render(): void {
+    this.trackFrame(performance.now());
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * 動態解析度：每 1 秒算一次平均幀耗時。連續 2 秒低於約 49 FPS 就降一階像素比，
+   * 連續 4 秒高於約 57 FPS 就升一階；剛升上去就變慢代表那一階撐不住，之後等更久才再試（避免來回跳）。
+   */
+  private trackFrame(now: number): void {
+    const dt = now - this.frameLast;
+    this.frameLast = now;
+    // 分頁切走、載入卡頓這種超長的幀不算
+    if (!this.dynRes || dt <= 0 || dt > 100 || now < this.resHold || this.resMax - this.resMin < 0.01) {
+      this.frameN = 0;
+      this.frameSum = 0;
+      return;
+    }
+    if (this.frameN === 0) this.winStart = now - dt;
+    this.frameSum += dt;
+    this.frameN++;
+    if (now - this.winStart < 1000) return;
+    const avg = this.frameSum / this.frameN;
+    this.frameN = 0;
+    this.frameSum = 0;
+    if (avg > 20.5) {
+      this.slowWins++;
+      this.fastWins = 0;
+    } else if (avg < 17.6) {
+      this.fastWins++;
+      this.slowWins = 0;
+    } else {
+      this.slowWins = 0;
+      this.fastWins = Math.max(0, this.fastWins - 1);
+    }
+    if (now - this.resChangedAt < 2000) return;
+    const step = 0.125;
+    if (this.slowWins >= 2 && this.resScale > this.resMin + 0.001) {
+      if (now - this.resUpAt < 6000) {
+        this.resUpBlock = now + this.resBackoff;
+        this.resBackoff = Math.min(this.resBackoff * 2, 160000);
+        this.resUpAt = -1e9;
+      }
+      // 慢很多（不到 36 FPS）就一次降兩階
+      this.setResScale(this.resScale - (avg > 28 ? step * 2 : step), now);
+    } else if (this.fastWins >= 4 && this.resScale < this.resMax - 0.001 && now > this.resUpBlock) {
+      this.resUpAt = now;
+      this.setResScale(this.resScale + step, now);
+    }
+  }
+
+  /** 換像素比：畫布、後製畫框（含泛光）與粒子大小一起跟著調整 */
+  setResScale(v: number, now = performance.now()): void {
+    v = clamp(Math.round(v * 1000) / 1000, this.resMin, this.resMax);
+    if (Math.abs(v - this.resScale) < 0.001) return;
+    this.resScale = v;
+    this.resChangedAt = now;
+    this.slowWins = this.fastWins = 0;
+    // 換解析度那一下會卡一點，之後半秒的幀不算，新的量測區間只看新解析度
+    this.resHold = Math.max(this.resHold, now + 500);
+    this.renderer.setPixelRatio(v);
+    this.resize();
   }
 }
