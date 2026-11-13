@@ -7,6 +7,7 @@ import { PAD_HALF_WIDTH, PAD_LENGTH, type Branch, type Sample, type SceneRange, 
 import { mulberry32 } from '../game/util';
 import { makeInstanced, makeLandmark, makeProp } from './assets';
 import { applyTerrainDetail, grassTufts, roadDetailMaterial } from './detail';
+import { buildForest, hasForest } from './forest';
 import { buildRunoff } from './runoff';
 import type { Theme } from './themes';
 
@@ -1040,7 +1041,13 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     return new THREE.Matrix4().compose(v.set(sp.x, sp.y - sink, sp.z), q, sc.set(s, sy, s));
   };
 
-  if (theme.vegetation === 'forest') {
+  // 金林飛躍：分層的森林、林下植物與瀑布（src/render/forest.ts），取代一般的散布樹木
+  const forest = hasForest(track.def.id)
+    ? buildForest({ track, terrainH, grid: { x0: gx0, z0: gz0, step: STEP, nx: gnx, nz: gnz }, world: root, bounds: { minX, maxX, minZ, maxZ }, lake, props, shadows, lowDetail })
+    : null;
+  if (forest) {
+    root.add(forest.group);
+  } else if (theme.vegetation === 'forest') {
     const spots = scatter(lowDetail ? 380 : 760, hw + 11, 9999, 0).filter((s) => s.d < 60 || rng() < 0.45);
     const lists: THREE.Matrix4[][] = [[], [], [], []];
     spots.forEach((sp, i) => {
@@ -1209,7 +1216,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   }
 
   // 風力發電機（遠處會轉的地標）
-  if (theme.turbines) {
+  if (theme.turbines && !forest) {
     const rotors: THREE.Object3D[] = [];
     const towerMat = new THREE.MeshLambertMaterial({ color: 0xf2f4f7 });
     const bladeGeo = new THREE.BoxGeometry(1.5, 20, 0.35).translate(0, 10.5, 0);
@@ -1359,6 +1366,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     terrainH,
     update(dt, time, camera) {
       for (const u of updaters) u(dt, time);
+      forest?.update(dt, time, camera);
       sky.position.copy(camera.position);
       if (stars) stars.position.copy(camera.position);
       if (clouds) clouds.rotation.y += dt * 0.004;

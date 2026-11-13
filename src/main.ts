@@ -13,6 +13,7 @@ import { Track, TRACKS } from './game/track';
 import { Input } from './input';
 import { setupMobileViewport } from './mobile';
 import { CAR_MODELS, DEBRIS_MODELS, KART_MODELS, LANDMARK_MODELS, loadModels, PROP_MODELS } from './render/assets';
+import { FOREST_MODELS } from './render/forest';
 import { GameView } from './render/view';
 import { Haptics } from './haptics';
 import { applyLayout, LAYOUT_IDS, loadSettings, saveSettings, type Settings } from './settings';
@@ -589,7 +590,7 @@ requestAnimationFrame(frame);
 const inviteCode = cleanCode(new URLSearchParams(location.search).get('room') ?? '');
 
 // 先載入模型再建立場景；個別模型載入失敗時會自動改用內建幾何
-void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS], (f) => screens.loadProgress(f)).then(() => {
+void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS, ...FOREST_MODELS], (f) => screens.loadProgress(f)).then(() => {
   view.setTrack(track);
   ready = true;
   if (screens.current === 'menu') {
