@@ -264,9 +264,9 @@ export interface KartLook {
 }
 
 const NAVY = '#13284b', CREAM = '#f3ead5', CORAL = '#e8574a';
-/** 名牌樣式：0 深藍膠囊、1 奶油標籤、2 珊瑚紅、3 海報條、4 描邊字 */
+/** 名牌樣式：0 深藍膠囊、1 奶油標籤（使用者選定，預設）、2 珊瑚紅、3 海報條、4 描邊字 */
 export const NAME_STYLES = ['深藍膠囊', '奶油標籤', '珊瑚紅', '海報條', '描邊字'];
-export let NAME_STYLE = 0;
+export let NAME_STYLE = 1;
 export function setNameStyle(i: number): void {
   NAME_STYLE = i;
 }
@@ -292,9 +292,9 @@ export function drawNameTag(text: string, style: number): HTMLCanvasElement {
     ctx.fillText(s, x, 32, 420);
   };
   switch (style) {
-    case 1: // 奶油底、深藍字、深藍框、珊瑚紅圓點
+    case 1: // 奶油底（半透明，看得到後面的路）、深藍字、深藍框、珊瑚紅圓點
       c.width = tw + 70; c.height = 60;
-      pill(2, c.width - 4, CREAM, NAVY, 5);
+      pill(2, c.width - 4, 'rgba(243,234,213,0.72)', 'rgba(19,40,75,0.8)', 5);
       ctx.fillStyle = CORAL;
       ctx.beginPath(); ctx.arc(31, 30, 9, 0, Math.PI * 2); ctx.fill();
       write(text, 50, NAVY);
