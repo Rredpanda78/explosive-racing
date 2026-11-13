@@ -48,17 +48,64 @@ export function makeTerrain(track: Track): Terrain {
   }
   const CLIFF_DEPTH = 11;
 
+  // 軟邊界：每個粗取樣點兩側的「緩衝區 + 屏障」範圍（主線取樣點才有；捷徑是 0）。
+  // 落在這個範圍內的地形一律壓到路面下方，緩衝區（路面高度）才不會被別段比較高的路拉起來的地形蓋住
+  const roL: number[] = [], roR: number[] = [];
+  const hw = track.halfWidth;
+  for (let i = 0; i < coarse.length; i++) {
+    const main = i * 3 < S.length;
+    roL.push(main && track.runoffW(i * 3, 1) > 0 ? hw + track.runoffW(i * 3, 1) + 3 : 0);
+    roR.push(main && track.runoffW(i * 3, -1) > 0 ? hw + track.runoffW(i * 3, -1) + 3 : 0);
+  }
+  // 台地邊緣的懸崖：緩衝區外緣以外的地面往下挖
+  const drops: { x: number; z: number; nx: number; nz: number; k: number }[] = [];
+  if (track.hasRunoff) {
+    const n = S.length;
+    for (const sg of [1, -1]) {
+      for (let i = 0; i < n; i += 2) {
+        if (!track.cliffAt(i, sg)) continue;
+        // 懸崖兩端慢慢收掉，不會在邊上切出一道直角
+        let end = 0;
+        while (end < 40 && track.cliffAt(track.wrap(i + end), sg) && track.cliffAt(track.wrap(i - end), sg)) end++;
+        const u = Math.min(1, (end * track.spacing) / 16);
+        const s = S[i], lat = sg * track.edgeLat(i, sg);
+        drops.push({ x: s.x + s.nx * lat, z: s.z + s.nz * lat, nx: s.nx * sg, nz: s.nz * sg, k: u * u * (3 - 2 * u) });
+      }
+    }
+  }
+  const DROP_DEPTH = 18;
+
   const height = (x: number, z: number): number => {
-    let num = 0, den = 0, dmin = Infinity;
-    for (const s of coarse) {
+    let num = 0, den = 0, dmin = Infinity, near = 0;
+    for (let i = 0; i < coarse.length; i++) {
+      const s = coarse[i];
       const dx = x - s.x, dz = z - s.z;
       const d2 = dx * dx + dz * dz;
-      if (d2 < dmin) dmin = d2;
+      if (d2 < dmin) { dmin = d2; near = i; }
       const w = 1 / ((d2 + 40) * (d2 + 40));
       num += w * s.y;
       den += w;
     }
     let h = num / den - ROAD_ABOVE_TERRAIN;
+    if (track.hasRunoff) {
+      const s = coarse[near];
+      const lat = (x - s.x) * s.nx + (z - s.z) * s.nz;
+      const lim = lat > 0 ? roL[near] : roR[near];
+      if (Math.abs(lat) < lim) h = Math.min(h, s.y - ROAD_ABOVE_TERRAIN);
+    }
+    if (drops.length) {
+      let cd = Infinity, c: (typeof drops)[number] | null = null;
+      for (const p of drops) {
+        const d = (x - p.x) ** 2 + (z - p.z) ** 2;
+        if (d < cd) { cd = d; c = p; }
+      }
+      // 從緩衝區外緣往內 6 公尺開始挖（那裡上面蓋著緩衝區的路面，看不到），到外緣已經挖到底，
+      // 地形網格比較粗，這樣岩壁才會直直接到谷底，不會被網格的斜面蓋住半截
+      const out = (x - c!.x) * c!.nx + (z - c!.z) * c!.nz;
+      const u = Math.min(1, Math.max(0, (out + 6) / 6));
+      const carve = DROP_DEPTH * c!.k * u * u * (3 - 2 * u);
+      if (carve > 0) h = Math.min(h, Math.max(baseY + 0.3, h - carve));
+    }
     if (cliffs.length) {
       let cd = Infinity, cr = 0;
       for (const c of cliffs) {
