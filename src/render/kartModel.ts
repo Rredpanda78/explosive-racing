@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Kart } from '../game/kart';
 import { clamp } from '../game/util';
-import { shieldHalfArc, type PrimaryId, type SecondaryId } from '../game/weapons';
+import { PRIMARY, shieldHalfArc, type PrimaryId, type PrimaryKind, type SecondaryId } from '../game/weapons';
 import { cloneModel } from './assets';
 import { TIER_COLORS } from './feel';
 import { flashTexture, glowTexture } from './fxTextures';
@@ -29,6 +29,44 @@ const BEAM = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.5, 0.6)
 const BEAM_CORE = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 3, 3), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
 const BEAM_HALO = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.25, 0.35), transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
 const ORB = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 0.9, 1), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+// 冷凍光束：冰藍色的光束（外層、白色核心、淡淡的光暈）
+const FROST_BEAM = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.45, 1.5, 2.8), transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false });
+const FROST_CORE = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 2.8, 3), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+const FROST_HALO = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.25, 0.8, 1.6), transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+/** 結冰的車：身上長出來的冰晶 */
+const ICE_CRYSTAL = new THREE.MeshLambertMaterial({ color: 0xd8f3ff, emissive: 0x2a6f9a, transparent: true, opacity: 0.85 });
+const crystalGeo = new THREE.OctahedronGeometry(0.16, 0).scale(0.7, 1.6, 0.7);
+/** 結冰的車：包住車身的一層霜（白藍色、半透明，越凍越明顯） */
+const frostTex = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const c = cv.getContext('2d')!;
+  c.fillStyle = 'rgba(200,235,255,0.25)';
+  c.fillRect(0, 0, 128, 128);
+  // 冰裂紋：一條條分岔的細線
+  c.strokeStyle = 'rgba(255,255,255,0.85)';
+  c.lineWidth = 1.2;
+  for (let i = 0; i < 22; i++) {
+    let x = Math.random() * 128, y = Math.random() * 128;
+    c.beginPath();
+    c.moveTo(x, y);
+    for (let j = 0; j < 4; j++) {
+      x += (Math.random() - 0.5) * 40;
+      y += (Math.random() - 0.5) * 40;
+      c.lineTo(x, y);
+    }
+    c.stroke();
+  }
+  for (let i = 0; i < 60; i++) {
+    c.fillStyle = `rgba(255,255,255,${(0.3 + Math.random() * 0.6).toFixed(2)})`;
+    c.fillRect(Math.random() * 128, Math.random() * 128, 2, 2);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(2, 1);
+  return t;
+})();
+const frostGeo = new THREE.SphereGeometry(1, 18, 10);
 
 /** 中間實、往外柔和淡掉的圓形漸層（接觸陰影、地面光暈共用） */
 function softDisc(stops: [number, number][]): THREE.CanvasTexture {
@@ -225,7 +263,7 @@ const swirlTex = (() => {
   return t;
 })();
 
-const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, groundGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo, beamHaloGeo, orbGeo]);
+const SHARED_GEOS = new Set<THREE.BufferGeometry>([sprayGeo, shellGeo, wheelGeo, hubGeo, flameGeo, flameCoreGeo, groundGeo, muzzleGeo, fireGeo, fireCoreGeo, beamGeo, beamCoreGeo, beamHaloGeo, orbGeo, crystalGeo, frostGeo]);
 
 /** 模型放大倍率：Kenney 卡丁車原始約 1 m 寬，放大成遊戲中的車體尺寸 */
 const MODEL_SCALE = 1.9;
@@ -461,6 +499,21 @@ export class KartView {
   private ghostMats: THREE.MeshBasicMaterial[] = [];
   private ghostT = 0;
   private wasFiring = false;
+  /** 主武器種類（功能型武器的畫面效果用） */
+  private wkind: PrimaryKind = 'gun';
+  /** 冷凍光束：左右兩道往車頭前方交會的光束（x = 槍口的橫向位置） */
+  private frostBeams: { o: THREE.Object3D; x: number }[] = [];
+  /** 電弧槍放電、音波炮震波的閃光（0~1，慢慢退） */
+  private zapK = 0;
+  private pulseK = 0;
+  /** 音波炮的喇叭（開火時往前一震）、魚叉鉤的魚叉與捲線輪（左右各一，索引 0 = 左） */
+  private kicks: THREE.Object3D[] = [];
+  private ammo: (THREE.Object3D | undefined)[] = [];
+  private reels: THREE.Object3D[] = [];
+  /** 結冰：包住車身的霜與冰晶（第一次結冰才建立） */
+  private frost: THREE.Group | null = null;
+  private frostMat: THREE.MeshBasicMaterial | null = null;
+  private crystals: THREE.Mesh[] = [];
   /** 重傷時鬆脫、掛在車身側面晃動的鈑金（第一次用到才建立） */
   private panel: THREE.Object3D | null = null;
   private panelA = 0.5;
@@ -770,6 +823,7 @@ export class KartView {
   private addWeapons(primary: PrimaryId, secondary: SecondaryId): void {
     const b = this.body;
     const WS = 1.2;
+    this.wkind = PRIMARY[primary].kind;
     // 主武器：車身兩側各一把
     for (const side of [1, -1]) {
       const parts = buildPrimary(primary, side);
@@ -778,6 +832,9 @@ export class KartView {
       g.position.set(this.m.gunX * side, this.m.gunY - 0.2 * WS, this.m.gunZ - 0.12);
       b.add(g);
       this.vulcanBarrels.push(...parts.spinners);
+      if (parts.kick) this.kicks.push(parts.kick);
+      if (parts.reel) this.reels.push(parts.reel);
+      this.ammo.push(parts.ammo);
       // 六管機槍：槍管換成這台車自己的材質，過熱時才能單獨發紅
       if (primary === 'vulcan') {
         const map = new Map<THREE.Material, THREE.MeshLambertMaterial>();
@@ -831,9 +888,20 @@ export class KartView {
           this.ghost = gh;
         }
       }
-      if (primary === 'flame' || primary === 'laser') {
-        // 槍口光暈：火焰是噴嘴的橘色餘熱，雷射是蓄力時越來越亮的粉紅光
-        const sm = new THREE.SpriteMaterial({ map: glowTexture(), color: primary === 'flame' ? new THREE.Color(2.2, 0.8, 0.2) : new THREE.Color(1.7, 0.35, 0.65), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+      if (primary === 'freeze') {
+        // 冷凍光束：每把槍各射出一道，往車頭前方的命中點交會（長度與角度每幀依光束長度調整）
+        const beam = new THREE.Group();
+        beam.position.set(mx, my, mzz);
+        beam.add(new THREE.Mesh(beamHaloGeo, FROST_HALO), new THREE.Mesh(beamGeo, FROST_BEAM), new THREE.Mesh(beamCoreGeo, FROST_CORE));
+        beam.visible = false;
+        b.add(beam);
+        this.frostBeams.push({ o: beam, x: mx });
+      }
+      if (primary !== 'mg' && primary !== 'vulcan' && primary !== 'harpoon') {
+        // 槍口光暈：火焰是噴嘴的橘色餘熱，雷射是蓄力時越來越亮的粉紅光；電弧電藍、冷凍冰藍、音波紫紅
+        const GLOW: Record<string, [number, number, number]> = { flame: [2.2, 0.8, 0.2], laser: [1.7, 0.35, 0.65], arc: [0.7, 1.2, 2.6], freeze: [0.5, 1.3, 2.4], sonic: [1.8, 0.5, 2.2] };
+        const gc = GLOW[primary] ?? [1, 1, 1];
+        const sm = new THREE.SpriteMaterial({ map: glowTexture(), color: new THREE.Color(...gc), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
         this.ownMats.push(sm);
         const sp = new THREE.Sprite(sm);
         sp.position.set(mx, my, mzz + 0.05);
@@ -1116,6 +1184,8 @@ export class KartView {
     for (const bm of this.beams) bm.visible = false;
     for (const o of this.orbs) o.visible = false;
     for (const sp of this.glows) sp.visible = false;
+    for (const fb of this.frostBeams) fb.o.visible = false;
+    if (this.frost) this.frost.visible = false;
     if (this.ghost) this.ghost.visible = false;
     for (const p of this.kit) p.o.visible = false;
     for (const n of this.nozzles) n.ring.visible = n.streak.visible = false;
@@ -1257,6 +1327,7 @@ export class KartView {
 
     // 受擊不再整台閃紅：改由彈孔、火花、碎片、冒煙表現（見 damageFx.ts）
     this.updateWeaponFx(k, dt, firing, laserCharging);
+    this.updateUtilityFx(k, dt, firing);
     this.updatePanel(k, dt);
 
     const boosting = k.boostT > 0;
@@ -1401,9 +1472,12 @@ export class KartView {
     }
     if (this.glows.length) {
       // 火焰：開火時亮起並閃爍，放開後餘熱慢慢退；雷射：蓄力越久越大越亮，射出瞬間最亮
-      const laser = !!this.ghost;
-      const want = laser ? (charging ? 0.25 + Math.min(1, k.charge / 0.3) * 0.75 : firing ? 1.2 : 0) : firing ? 1 : 0;
-      this.glowK = want > this.glowK ? want : Math.max(0, this.glowK - dt * (laser ? 4 : 1.3));
+      // 冷凍光束跟火焰一樣；電弧、音波：每次放電／震波閃一下
+      const laser = this.wkind === 'laser';
+      const flash = this.wkind === 'arc' || this.wkind === 'sonic';
+      const want = laser ? (charging ? 0.25 + Math.min(1, k.charge / 0.3) * 0.75 : firing ? 1.2 : 0)
+        : flash ? Math.max(this.zapK, this.pulseK) * 1.3 : firing ? 1 : 0;
+      this.glowK = want > this.glowK ? want : Math.max(0, this.glowK - dt * (laser ? 4 : flash ? 7 : 1.3));
       const vis = this.glowK > 0.02 && !k.dead;
       for (const sp of this.glows) {
         sp.visible = vis;
@@ -1427,6 +1501,95 @@ export class KartView {
         this.ghostMats[1].opacity = 0.55 * u * u;
       }
     }
+  }
+
+  /** 電弧槍放電：槍口電光閃一下 */
+  zapFlash(): void {
+    this.zapK = 1;
+  }
+
+  /** 音波炮打出震波：喇叭往前一震、音圈亮一下 */
+  pulseKick(): void {
+    this.pulseK = 1;
+  }
+
+  /** 功能型主武器的車上效果：冷凍光束、音波炮的喇叭、魚叉鉤的魚叉與捲線輪；被冷凍光束照到時身上結霜長冰晶 */
+  private updateUtilityFx(k: Kart, dt: number, firing: boolean): void {
+    this.zapK = Math.max(0, this.zapK - dt * 6);
+    this.pulseK = Math.max(0, this.pulseK - dt * 5);
+    // 冷凍光束：兩道光束往車頭前方的命中點（或射程盡頭）交會，粗細微微閃動
+    for (const fb of this.frostBeams) {
+      const on = firing && !k.dead;
+      fb.o.visible = on;
+      if (!on) continue;
+      const dz = Math.max(1, k.beamLen + 0.2 - fb.o.position.z), dx = -fb.x * 0.85;
+      const len = Math.hypot(dx, dz);
+      fb.o.rotation.y = Math.atan2(dx, dz);
+      const w = (0.5 + 0.12 * Math.sin(this.t * 40 + fb.x * 9)) * (0.9 + Math.random() * 0.2) * (k.beamHit ? 1.15 : 1);
+      fb.o.scale.set(w, w, len);
+    }
+    // 音波炮：喇叭往前一震、微微放大
+    for (const h of this.kicks) {
+      const p = this.pulseK * this.pulseK;
+      h.position.z = 0.22 + 0.07 * p;
+      h.scale.setScalar(1 + 0.14 * p);
+    }
+    // 魚叉鉤：射出去的那一側藏起魚叉（叉住期間與裝填前），捲線輪放線時倒轉、收線時正轉
+    for (let i = 0; i < this.ammo.length; i++) {
+      const side = i === 0 ? 1 : -1;
+      const out = k.gunSide === side && (!!k.tether || k.fireCd > 0.15);
+      const a = this.ammo[i];
+      if (a) a.visible = !out;
+      const r = this.reels[i];
+      if (r && k.gunSide === side) r.rotation.x += dt * (k.tether ? 22 : k.fireCd > 0.45 ? -30 : 0);
+    }
+    // 結冰：包住車身的霜越來越明顯、冰晶長出來，車漆泛藍
+    const c = k.dead ? 0 : clamp(k.chill, 0, 1);
+    if (c > 0.01 || this.frost) {
+      const f = this.ensureFrost();
+      const vis = c > 0.01;
+      f.visible = vis;
+      if (vis) {
+        this.frostMat!.opacity = 0.18 + 0.4 * c;
+        if (this.frostMat!.map) this.frostMat!.map.offset.x = (this.t * 0.02) % 1;
+        for (let i = 0; i < this.crystals.length; i++) {
+          const m = this.crystals[i];
+          const g = clamp(c * 1.6 - (i / this.crystals.length) * 0.6, 0, 1);
+          m.visible = g > 0.05;
+          m.scale.setScalar(g * (k.chillDeep ? 1.25 : 1));
+        }
+      }
+      if (!this.wrecked) this.paint.emissive.setRGB(0.04 * c, 0.16 * c, 0.3 * c);
+    }
+  }
+
+  /** 結霜的外殼與冰晶：外殼是包住車身的半透明橢球，冰晶散在車頂、車側與輪子上 */
+  private ensureFrost(): THREE.Group {
+    if (this.frost) return this.frost;
+    const g = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ map: frostTex, color: new THREE.Color(0.85, 0.95, 1.1), transparent: true, opacity: 0, depthWrite: false });
+    this.ownMats.push(mat);
+    this.frostMat = mat;
+    const shell = new THREE.Mesh(frostGeo, mat);
+    const top = Math.min(this.m.top, 1.6);
+    shell.scale.set(this.wid * 0.62, top * 0.52, this.len * 0.58);
+    shell.position.y = top * 0.42;
+    shell.renderOrder = 5;
+    g.add(shell);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2 + Math.random() * 0.3;
+      const up = i % 3 === 0;
+      const m = new THREE.Mesh(crystalGeo, ICE_CRYSTAL);
+      m.position.set(Math.sin(a) * this.wid * (up ? 0.25 : 0.55), up ? top * 0.85 : 0.15 + Math.random() * 0.5, Math.cos(a) * this.len * (up ? 0.25 : 0.5));
+      m.rotation.set((Math.random() - 0.5) * 1.4, Math.random() * 3, (Math.random() - 0.5) * 1.4 + (up ? 0 : Math.sin(a) * 0.8));
+      m.visible = false;
+      g.add(m);
+      this.crystals.push(m);
+    }
+    g.visible = false;
+    this.body.add(g);
+    this.frost = g;
+    return g;
   }
 
   /** 重傷時鬆脫的鈑金：車速越快晃得越兇 */

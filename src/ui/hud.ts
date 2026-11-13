@@ -249,9 +249,10 @@ export class Hud {
       case 'hit':
         if (e.by === p) {
           this.hitMarkT = 0.12;
-          // 火焰每秒判定很多次：命中標記與連擊放慢一點算
-          if (e.w !== 'flame' || this.flameComboT <= 0) {
-            if (e.w === 'flame') this.flameComboT = 0.3;
+          // 火焰、冷凍光束每秒判定很多次：命中標記與連擊放慢一點算
+          const cont = e.w === 'flame' || e.w === 'freeze';
+          if (!cont || this.flameComboT <= 0) {
+            if (cont) this.flameComboT = 0.3;
             this.hitMark(false);
             this.addCombo(e.k);
           }
@@ -319,6 +320,15 @@ export class Hud {
       case 'rail':
         if (e.k === p) this.screenFlash();
         if (e.k === p && e.hits >= 2) this.popup(`雷射貫穿 ×${e.hits}`, 'gold');
+        break;
+      case 'zap':
+        if (e.k === p && e.chain.length >= 2) this.popup(`電弧連鎖 ×${e.chain.length}`, 'gold');
+        break;
+      case 'tether':
+        if (e.on) {
+          if (e.k === p) this.popup('叉住了！按住拉過去', 'blue');
+          else if (e.v === p) this.popup('被魚叉叉住！', 'warn');
+        } else if (e.k === p && e.why === 'catch') this.popup('追上！', 'gold');
         break;
       case 'kill': {
         const d = document.createElement('div');
@@ -402,6 +412,8 @@ export class Hud {
     else if (p.wrongWayT > 1) { sub = '逆向行駛！'; subCls = 'warn'; }
     else if (p.lockT > 0) { sub = '⚠ 導彈來襲：急轉可以甩掉'; subCls = 'warn'; }
     else if (p.overheated && PRIMARY[p.primary].kind !== 'laser') { sub = '武器過熱'; subCls = 'warn'; }
+    else if (p.chill > 0.35) { sub = '❄ 結冰打滑'; subCls = 'warn'; }
+    else if (p.towT > 0) { sub = '被魚叉拖住'; subCls = 'warn'; }
     else if (p.miniWindowT > 0) { sub = '小噴！'; subCls = 'mini'; }
     else if (race.state === 'countdown' && race.countdown < 1.4) { sub = document.body.classList.contains('touch') ? '抓準 GO 的瞬間按 N2O' : '抓準 GO 的瞬間按油門'; }
     this.set('sub', this.sub, sub);

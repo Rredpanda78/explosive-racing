@@ -14,6 +14,7 @@ import type { PublicRoom } from '../net/room';
 import {
   BURN_DPS, PERK_LVL3, PERK_LVL5, CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
   laserCooldown, laserKeep, shieldHalfArc, shieldTime, weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
+  ARC_KEEP, arcHops, arcJump, chillRate, pullBonus, sonicPush, tetherTime,
 } from '../game/weapons';
 
 export interface TrackInfo {
@@ -526,11 +527,16 @@ export class Screens {
       const P = PRIMARY[id];
       const dps = (P.dmg * P.pellets * P.rate * mul).toFixed(0);
       const lv1 = Math.max(1, lvl);
-      info = P.kind === 'flame'
-        ? `每秒傷害 ${dps} + 燃燒 ${BURN_DPS}/秒　射程 ${P.range} m`
-        : P.kind === 'laser'
-          ? `第一台直接打爆　貫穿後保留 ${Math.round(laserKeep(lv1) * 100)}%　冷卻 ${laserCooldown(lv1).toFixed(1)} 秒　射程 ${P.range} m`
-          : `每秒傷害 ${dps}　射程 ${P.range} m`;
+      const hit = (P.dmg * mul).toFixed(1).replace(/\.0$/, '');
+      switch (P.kind) {
+        case 'flame': info = `每秒傷害 ${dps} + 燃燒 ${BURN_DPS}/秒　射程 ${P.range} m`; break;
+        case 'laser': info = `第一台直接打爆　貫穿後保留 ${Math.round(laserKeep(lv1) * 100)}%　冷卻 ${laserCooldown(lv1).toFixed(1)} 秒　射程 ${P.range} m`; break;
+        case 'arc': info = `每發 ${hit}（跳一次 ×${ARC_KEEP}）　最多連 ${1 + arcHops(lv1)} 台、跳 ${arcJump(lv1)} m　每秒 ${P.rate} 發　射程 ${P.range} m`; break;
+        case 'freeze': info = `每秒傷害 ${dps}　約 ${(1 / (chillRate(lv1) * P.rate)).toFixed(1)} 秒凍滿　射程 ${P.range} m`; break;
+        case 'sonic': info = `每 0.45 秒一波：傷害 ${hit}、推力 ${sonicPush(lv1).toFixed(1)} m/s　射程 ${P.range} m`; break;
+        case 'harpoon': info = `命中 ${hit}　拉扯 ${tetherTime(lv1).toFixed(2).replace(/0$/, '')} 秒、追速 +${pullBonus(lv1)} m/s　射程 ${P.range} m`; break;
+        default: info = `每秒傷害 ${dps}　射程 ${P.range} m`;
+      }
     } else {
       const S = SECONDARY[id as SecondaryId];
       const lv1 = Math.max(1, lvl);

@@ -1,6 +1,6 @@
 // 可選的合成音效組：全部用 WebAudio 即時合成，不需要任何音檔
 // ・EngineSound：五種引擎聲（每幀由 audio.ts 餵入轉速、油門、加速、甩尾、騰空）
-// ・WeaponSfx：五種武器音效包（機槍、火焰、雷射、副武器、爆炸、命中、護盾、鎖定警告）
+// ・WeaponSfx：五種武器音效包（機槍、火焰、雷射、電弧、冷凍光束、音波炮、魚叉鉤、副武器、爆炸、命中、護盾、鎖定警告）
 // ・previewEngine / previewWeapons：設定頁試聽
 // 音量基準：各方法的 vol = 1 時，響度約等於原本 audio.ts 對「玩家自己」的音量
 
@@ -739,28 +739,34 @@ const SHOT: Record<WeaponPack, GunCfg> = {
   },
 };
 
-type Ev = 'rail' | Launch | 'blast' | 'blastBig' | 'hitMe' | 'hitThem' | 'block' | 'shatter' | 'lock' | 'flame' | 'charge';
+type Ev = 'rail' | Launch | 'blast' | 'blastBig' | 'hitMe' | 'hitThem' | 'block' | 'shatter' | 'lock' | 'flame' | 'charge'
+  | 'zap' | 'pulse' | 'hook' | 'latch' | 'snap' | 'reel' | 'freeze';
 /**
  * 響度校正（dB）：離線渲染量測 K-weighted 響度（BS.1770），對齊經典包（= 原本 audio.ts 的音量）；
  * 寫實與電影級允許比經典響 1～1.5 dB
  */
+// 功能型主武器（zap 電弧、pulse 音波、hook/latch/snap/reel 魚叉、freeze 冷凍光束）也用同樣的方法量測對齊經典包
 const TRIM: Record<WeaponPack, Partial<Record<Ev, number>>> = {
   classic: {},
   punchy: {
     rail: 2.3, rocket: -8.7, missile: -7.8, grenade: 4.6, mine: -0.9, cluster: -3.2, shield: 4.9, blast: 3, blastBig: 2.8,
     hitMe: -12.4, hitThem: -8.1, block: 3, shatter: 3.8, lock: 3, flame: -9.6, charge: 0,
+    zap: -3.4, pulse: -10.2, hook: -8.3, latch: -5.2, snap: 5.8, reel: -2.8, freeze: -10.6,
   },
   scifi: {
     rail: 1.4, rocket: 0.5, missile: -0.9, grenade: 5.5, mine: -0.9, cluster: -1.1, shield: -1.5, blast: 0, blastBig: -1.2,
     hitMe: -4.6, hitThem: -14.5, block: 1.2, shatter: 3.3, lock: 0.9, flame: -4.1, charge: -4.6,
+    zap: -6.3, pulse: -11.8, hook: -3.5, latch: -1.9, snap: 2.9, reel: -7, freeze: -3.5,
   },
   arcade: {
     rail: 3.7, rocket: -11.1, missile: -11.5, grenade: 5.5, mine: 7.7, cluster: 7.3, shield: 10.2, blast: 1.2, blastBig: -0.5,
     hitMe: -13.5, hitThem: -7.4, block: 10.1, shatter: 1.4, lock: 7.7, flame: -15.6, charge: 2.7,
+    zap: -6.2, pulse: -5.2, hook: 6.9, latch: 6.3, snap: 7.7, reel: 0.5, freeze: -13.8,
   },
   heavy: {
     rail: -3.1, rocket: -11.5, missile: -11.2, grenade: -0.7, mine: -7.4, cluster: -8.1, shield: -4.9, blast: -0.2, blastBig: -1,
     hitMe: -20.6, hitThem: -17.6, block: 0.4, shatter: 0, lock: 8.9, flame: -1.1, charge: -4.5,
+    zap: -14.9, pulse: -16.2, hook: -14.1, latch: -11.8, snap: -10.3, reel: -13.4, freeze: -5.1,
   },
 };
 const trim = (p: WeaponPack, e: Ev): number => Math.pow(10, (TRIM[p][e] ?? 0) / 20);
@@ -844,6 +850,75 @@ const FLAME: Record<WeaponPack, LoopBuild> = {
     n.connect(g.filt('lowpass', 380, 0.8)).connect(g.gain(0.36)).connect(out);
     n.connect(g.filt('lowpass', 110, 0.7)).connect(g.gain(0.7)).connect(out);
     return { g, out, set: (_x, vol, t) => T(out.gain, vol, t, 0.06) };
+  },
+};
+
+/** 冷凍光束持續音：每一包都是「冰冷的嘶嘶聲＋高頻的晶亮聲」，但質感依音效包不同 */
+const FREEZE: Record<WeaponPack, LoopBuild> = {
+  classic(ctx, sh) {
+    // 高通嘶聲＋一個細細的正弦高音
+    const { g, out } = loopBase(ctx);
+    g.noise(sh.noise).connect(g.filt('highpass', 3200, 0.7)).connect(g.gain(0.045)).connect(out);
+    g.osc('sine', 2350).connect(g.gain(0.0065)).connect(out);
+    return { g, out, set: (_x, vol, t) => T(out.gain, vol, t, 0.04) };
+  },
+  punchy(ctx, sh) {
+    // 冷媒噴出的嘶聲（帶一點顆粒）＋低沉的壓縮機嗡聲
+    const { g, out } = loopBase(ctx);
+    const n = g.noise(sh.noise);
+    n.connect(g.filt('bandpass', 5200, 0.9)).connect(g.gain(0.3)).connect(out);
+    const grit = g.gain(0);
+    n.connect(g.filt('highpass', 7000, 0.7)).connect(grit).connect(out);
+    g.osc('sawtooth', 62).connect(g.filt('lowpass', 240, 1)).connect(g.gain(0.05)).connect(out);
+    return {
+      g, out,
+      set(_x, vol, t) {
+        T(out.gain, vol, t, 0.04);
+        T(grit.gain, Math.pow(Math.random(), 2) * 0.16, t, 0.008);
+      },
+    };
+  },
+  scifi(ctx, sh) {
+    // 失諧正弦的閃爍和弦＋被 LFO 掃動的冰霧雜訊
+    const { g, out } = loopBase(ctx);
+    const bf = g.filt('bandpass', 4200, 4);
+    g.noise(sh.noise).connect(bf).connect(g.gain(0.22)).connect(out);
+    const lfo = g.osc('sine', 3.2), lg = g.gain(1600);
+    lfo.connect(lg).connect(bf.frequency);
+    const tr = g.gain(0.5);
+    for (const [f, d] of [[1568, -9], [2093, 7], [2637, 0]] as [number, number][]) {
+      const o = g.osc('sine', f);
+      o.detune.value = d;
+      o.connect(tr);
+    }
+    const tl = g.osc('sine', 11);
+    tl.connect(g.gain(0.4)).connect(tr.gain);
+    tr.connect(g.gain(0.03)).connect(out);
+    return { g, out, set: (_x, vol, t) => T(out.gain, vol, t, 0.04) };
+  },
+  arcade(ctx, sh) {
+    // 破碎的高音雜訊＋按影格閃爍的高音方波
+    const { g, out } = loopBase(ctx);
+    g.noise(sh.crush, 1.4).connect(g.filt('highpass', 2500, 0.7)).connect(g.gain(0.18)).connect(out);
+    const o = g.osc(sh.w.p12, 1568);
+    const og = g.gain(0.035);
+    o.connect(og).connect(out);
+    return {
+      g, out,
+      set(_x, vol, t) {
+        T(out.gain, vol, t, 0.004);
+        o.frequency.setValueAtTime(Math.floor(t * 24) % 2 ? 1568 : 2093, t);
+      },
+    };
+  },
+  heavy(ctx, sh) {
+    // 低沉的冷氣轟鳴＋冰層嘎吱的高頻
+    const { g, out } = loopBase(ctx);
+    const n = g.noise(sh.noise);
+    n.connect(g.filt('lowpass', 420, 0.8)).connect(g.gain(0.3)).connect(out);
+    n.connect(g.filt('bandpass', 3800, 3)).connect(g.gain(0.1)).connect(out);
+    g.osc('sine', 48).connect(g.gain(0.08)).connect(out);
+    return { g, out, set: (_x, vol, t) => T(out.gain, vol, t, 0.05) };
   },
 };
 
@@ -957,6 +1032,15 @@ interface PackFx {
   block(P: Shots, t: number, v: number): void;
   shatter(P: Shots, t: number, v: number): void;
   lock(P: Shots, t: number, v: number, n: number): void;
+  /** 電弧放電：hops = 電到幾台（0 = 沒電到人），每多跳一台多一聲劈啪 */
+  zap(P: Shots, t: number, v: number, hops: number): void;
+  /** 音波炮的一圈震波 */
+  pulse(P: Shots, t: number, v: number): void;
+  /** 魚叉：射出、叉住、繩子斷掉（broke）或放開、收線的棘輪聲（一格） */
+  hook(P: Shots, t: number, v: number): void;
+  latch(P: Shots, t: number, v: number): void;
+  snap(P: Shots, t: number, v: number, broke: boolean): void;
+  reel(P: Shots, t: number, v: number): void;
 }
 
 const FX: Record<WeaponPack, PackFx> = {
@@ -999,6 +1083,32 @@ const FX: Record<WeaponPack, PackFx> = {
     },
     lock(P, t, v) {
       P.tn(t, 'square', 1760, 0.06, 0.1 * v);
+    },
+    zap(P, t, v, hops) {
+      P.nz(t, 3800, 0.09, 0.21 * v, { type: 'highpass', q: 0.8 });
+      P.tn(t, 'square', 180, 0.1, 0.05 * v, { to: 90 });
+      for (let i = 1; i < hops; i++) P.nz(t + i * 0.045, 4200, 0.06, 0.14 * v, { type: 'highpass' });
+    },
+    pulse(P, t, v) {
+      P.thump(t, 0.18 * v, 140, 45, 0.28);
+      P.nz(t, 700, 0.22, 0.09 * v, { type: 'lowpass', to: 200 });
+    },
+    hook(P, t, v) {
+      P.nz(t, 900, 0.16, 0.3 * v, { q: 1, to: 2600 });
+      P.tn(t, 'square', 300, 0.04, 0.1 * v);
+    },
+    latch(P, t, v) {
+      P.tn(t, 'square', 220, 0.07, 0.12 * v);
+      P.nz(t, 2400, 0.05, 0.2 * v, { q: 3 });
+    },
+    snap(P, t, v, broke) {
+      if (broke) {
+        P.nz(t, 4000, 0.07, 0.2 * v, { type: 'highpass' });
+        P.tn(t, 'square', 900, 0.1, 0.048 * v, { to: 200 });
+      } else P.tn(t, 'square', 520, 0.05, 0.06 * v, { to: 400 });
+    },
+    reel(P, t, v) {
+      P.nz(t, 2600, 0.012, 0.15 * v, { q: 4 });
     },
   },
 
@@ -1068,6 +1178,45 @@ const FX: Record<WeaponPack, PackFx> = {
     lock(P, t, v) {
       P.tn(t, 'triangle', 1550, 0.05, 0.12 * v);
     },
+    zap(P, t, v, hops) {
+      // 高壓放電的「啪」：極短的高頻爆裂＋往下掃的電流聲＋一點嗡嗡的低頻
+      const crack = (at: number, s: number) => {
+        P.nz(at, 6000, 0.008, 0.3 * s, { type: 'highpass' });
+        P.nz(at, 2600, 0.07, 0.22 * s, { q: 0.8, to: 900 });
+        P.tn(at, 'sawtooth', 110, 0.06, 0.05 * s, { lp: 2500 });
+      };
+      crack(t, v);
+      P.tn(t, 'sine', 160, 0.1, 0.3 * v, { to: 60 });
+      for (let i = 1; i < hops; i++) crack(t + i * rnd(0.03, 0.05), v * 0.75);
+    },
+    pulse(P, t, v) {
+      P.tn(t, 'sine', 110, 0.22, 0.75 * v, { to: 36 });
+      P.nz(t, 1400, 0.18, 0.3 * v, { q: 0.6, to: 250 });
+      P.nz(t, 4000, 0.01, 0.12 * v, { type: 'highpass' });
+    },
+    hook(P, t, v) {
+      // 氣動發射：「噗」一聲＋飛出去的咻聲
+      P.nz(t, 4500, 0.01, 0.2 * v, { type: 'highpass' });
+      P.tn(t, 'sine', 140, 0.08, 0.4 * v, { to: 60 });
+      P.nz(t + 0.01, 1200, 0.2, 0.2 * v, { q: 1.2, to: 3200 });
+    },
+    latch(P, t, v) {
+      // 金屬叉頭咬住車身
+      P.nz(t, 4500, 0.01, 0.2 * v, { type: 'highpass' });
+      P.tn(t, 'sine', 1240, 0.12, 0.06 * v);
+      P.tn(t, 'sine', 1910, 0.09, 0.04 * v);
+      P.tn(t, 'sine', 180, 0.07, 0.3 * v, { to: 80 });
+    },
+    snap(P, t, v, broke) {
+      if (broke) {
+        P.tn(t, 'sawtooth', 700, 0.18, 0.07 * v, { to: 90, lp: 3000 });
+        P.nz(t, 3000, 0.05, 0.2 * v, { q: 1 });
+      } else P.nz(t, 3200, 0.03, 0.12 * v, { q: 2 });
+    },
+    reel(P, t, v) {
+      P.nz(t, 3600, 0.01, 0.16 * v, { q: 3 });
+      P.tn(t, 'sine', 1800, 0.012, 0.02 * v);
+    },
   },
 
   // 科幻：咻咻雷射、合成器掃頻、冒泡爆炸
@@ -1128,6 +1277,32 @@ const FX: Record<WeaponPack, PackFx> = {
     lock(P, t, v) {
       P.tn(t, 'sine', 1400, 0.06, 0.12 * v, { to: 2200 });
     },
+    zap(P, t, v, hops) {
+      // 電子放電：一階一階亂跳的方波＋掃頻雜訊
+      P.tn(t, 'square', rnd(600, 900), 0.12, 0.05 * v, { to: 120, steps: 10, lp: 5000 });
+      P.nz(t, 5000, 0.1, 0.18 * v, { q: 2, to: 1500 });
+      P.tn(t, 'sine', 90, 0.15, 0.3 * v, { to: 40 });
+      for (let i = 1; i < hops; i++) P.tn(t + i * 0.05, 'square', rnd(1000, 1600), 0.06, 0.04 * v, { to: 300, steps: 5, lp: 6000 });
+    },
+    pulse(P, t, v) {
+      P.tn(t, 'sine', 70, 0.3, 0.6 * v, { to: 30 });
+      P.tn(t, 'sawtooth', 900, 0.22, 0.05 * v, { to: 80, lp: 2500 });
+      P.nz(t, 2000, 0.2, 0.1 * v, { q: 4, to: 300 });
+    },
+    hook(P, t, v) {
+      P.tn(t, 'sine', 1600, 0.18, 0.12 * v, { to: 280 });
+      P.nz(t, 3000, 0.08, 0.08 * v, { q: 2 });
+    },
+    latch(P, t, v) {
+      P.tn(t, 'sine', 400, 0.12, 0.15 * v, { to: 1300 });
+      P.tn(t + 0.05, 'triangle', 2400, 0.08, 0.03 * v);
+    },
+    snap(P, t, v, broke) {
+      P.tn(t, 'sine', broke ? 1800 : 900, 0.16, 0.08 * v, { to: broke ? 150 : 400 });
+    },
+    reel(P, t, v) {
+      P.tn(t, 'sine', 2200, 0.02, 0.04 * v, { to: 2600 });
+    },
   },
 
   // 街機：破碎雜訊＋脈衝波，音高一階一階跳
@@ -1174,6 +1349,29 @@ const FX: Record<WeaponPack, PackFx> = {
     },
     lock(P, t, v) {
       P.tn(t, 'p25', 1760, 0.06, 0.07 * v, { to: 2349, steps: 2 });
+    },
+    zap(P, t, v, hops) {
+      P.nz(t, 0, 0.12, 0.25 * v, { buf: P.sh.crush, rate: 2, rto: 0.8 });
+      P.tn(t, 'p12', 1200, 0.1, 0.05 * v, { to: 300, steps: 6 });
+      for (let i = 1; i < hops; i++) P.tn(t + i * 0.05, 'p12', 1600, 0.05, 0.045 * v, { to: 800, steps: 3 });
+    },
+    pulse(P, t, v) {
+      P.tn(t, 'tri', 200, 0.22, 0.35 * v, { to: 50, steps: 6 });
+      P.nz(t, 0, 0.15, 0.18 * v, { buf: P.sh.crush, rate: 0.4, rto: 0.15 });
+    },
+    hook(P, t, v) {
+      P.tn(t, 'p25', 440, 0.12, 0.06 * v, { to: 1320, steps: 5 });
+    },
+    latch(P, t, v) {
+      P.tn(t, 'p25', 784, 0.05, 0.06 * v);
+      P.tn(t + 0.05, 'p25', 1047, 0.07, 0.06 * v);
+    },
+    snap(P, t, v, broke) {
+      if (broke) P.tn(t, 'p25', 1047, 0.15, 0.06 * v, { to: 262, steps: 4 });
+      else P.tn(t, 'p25', 659, 0.05, 0.05 * v);
+    },
+    reel(P, t, v) {
+      P.tn(t, 'p12', 1319, 0.015, 0.04 * v);
     },
   },
 
@@ -1238,6 +1436,38 @@ const FX: Record<WeaponPack, PackFx> = {
       // 低-高交替的警報
       P.tn(t, 'sawtooth', n % 2 ? 880 : 660, 0.08, 0.06 * v, { lp: 2000 });
     },
+    zap(P, t, v, hops) {
+      // 巨大的放電轟鳴：爆裂聲＋超低頻＋殘響裡的嗡嗡聲
+      P.nz(t, 5000, 0.015, 0.25 * v, { type: 'highpass' });
+      P.nz(t, 1800, 0.25, 0.25 * v, { q: 0.7, to: 500 });
+      P.tn(t, 'sine', 70, 0.45, 0.55 * v, { to: 28 });
+      P.tn(t, 'sawtooth', 55, 0.3, 0.06 * v, { lp: 800 });
+      for (let i = 1; i < hops; i++) P.nz(t + i * 0.06, 4000, 0.04, 0.18 * v, { q: 1 });
+    },
+    pulse(P, t, v) {
+      P.tn(t, 'sine', 58, 0.6, 0.8 * v, { to: 22 });
+      P.nz(t, 600, 0.45, 0.35 * v, { type: 'lowpass', q: 0.8, to: 80 });
+    },
+    hook(P, t, v) {
+      P.tn(t, 'sine', 95, 0.25, 0.45 * v, { to: 40 });
+      P.nz(t, 900, 0.35, 0.25 * v, { q: 0.8, to: 2400 });
+    },
+    latch(P, t, v) {
+      P.nz(t, 4000, 0.012, 0.15 * v, { type: 'highpass' });
+      P.tn(t, 'sine', 520, 0.5, 0.07 * v);
+      P.tn(t, 'sine', 830, 0.4, 0.05 * v);
+      P.tn(t, 'sine', 110, 0.2, 0.4 * v, { to: 50 });
+    },
+    snap(P, t, v, broke) {
+      if (broke) {
+        P.tn(t, 'sawtooth', 400, 0.4, 0.08 * v, { to: 50, lp: 1500 });
+        P.tn(t, 'sine', 80, 0.3, 0.35 * v, { to: 35 });
+      } else P.tn(t, 'sine', 200, 0.15, 0.15 * v, { to: 120 });
+    },
+    reel(P, t, v) {
+      P.nz(t, 2200, 0.015, 0.14 * v, { q: 2 });
+      P.tn(t, 'sine', 90, 0.03, 0.1 * v);
+    },
   },
 };
 
@@ -1290,8 +1520,13 @@ export class WeaponSfx {
   private gun?: Gun;
   private flameL?: Loop;
   private chargeL?: Loop;
+  private freezeL?: Loop;
   private flameOff = -1;
   private chargeOff = -1;
+  private freezeOff = -1;
+  private zapT = -9;
+  private pulseT = -9;
+  private reelT = -9;
   private readonly shotT = [-9, -9];
   private readonly shotV = [0, 0];
   private readonly hitT = [-9, -9];
@@ -1319,12 +1554,12 @@ export class WeaponSfx {
     // 常駐的槍聲、火焰、蓄力淡出後停掉，下次用到時以新音效包重建
     this.gun?.g.stop(t + 0.15);
     this.gun = undefined;
-    for (const L of [this.flameL, this.chargeL]) {
+    for (const L of [this.flameL, this.chargeL, this.freezeL]) {
       if (!L) continue;
       T(L.out.gain, 0, t, 0.03);
       L.g.stop(t + 0.2);
     }
-    this.flameL = this.chargeL = undefined;
+    this.flameL = this.chargeL = this.freezeL = undefined;
     // 舊出口等尾音（殘響）放完再拆
     const old = this.chain;
     setTimeout(() => old.nodes.forEach((n) => n.disconnect()), 3500);
@@ -1438,6 +1673,71 @@ export class WeaponSfx {
     }
   }
 
+  /** 冷凍光束持續音（每幀呼叫） */
+  freeze(on: boolean, vol: number): void {
+    if (this.disposed) return;
+    const t = this.ctx.currentTime;
+    if (on && vol > 0.002) {
+      if (!this.freezeL) {
+        this.freezeL = FREEZE[this.pack](this.ctx, this.sh);
+        this.freezeL.out.connect(this.chain.inp);
+      }
+      this.freezeOff = -1;
+      this.freezeL.set(1, vol * trim(this.pack, 'freeze'), t);
+    } else if (this.freezeL) {
+      if (this.freezeOff < 0) {
+        this.freezeOff = t;
+        T(this.freezeL.out.gain, 0, t, 0.06);
+      } else if (t - this.freezeOff > 1.2) {
+        this.freezeL.g.stop(t + 0.02);
+        this.freezeL = undefined;
+      }
+    }
+  }
+
+  /** 電弧槍放電（hops = 電到幾台；每多一台多一聲劈啪） */
+  zap(vol: number, hops: number): void {
+    if (this.disposed) return;
+    const t = this.ctx.currentTime;
+    if (t - this.zapT < 0.05) return;
+    this.zapT = t;
+    FX[this.pack].zap(this.P, t, vol * trim(this.pack, 'zap'), hops);
+  }
+
+  /** 音波炮的一圈震波 */
+  pulse(vol: number): void {
+    if (this.disposed) return;
+    const t = this.ctx.currentTime;
+    if (t - this.pulseT < 0.08) return;
+    this.pulseT = t;
+    FX[this.pack].pulse(this.P, t, vol * trim(this.pack, 'pulse'));
+  }
+
+  /** 魚叉射出、叉住、繩子斷掉（broke）或放開 */
+  hook(vol: number): void {
+    if (this.disposed) return;
+    FX[this.pack].hook(this.P, this.ctx.currentTime, vol * trim(this.pack, 'hook'));
+  }
+
+  latch(vol: number): void {
+    if (this.disposed) return;
+    FX[this.pack].latch(this.P, this.ctx.currentTime, vol * trim(this.pack, 'latch'));
+  }
+
+  snap(vol: number, broke: boolean): void {
+    if (this.disposed) return;
+    FX[this.pack].snap(this.P, this.ctx.currentTime, vol * trim(this.pack, 'snap'), broke);
+  }
+
+  /** 魚叉收線的棘輪聲（每幀呼叫；拉著繩子時每 0.07 秒一格） */
+  reel(on: boolean, vol: number): void {
+    if (this.disposed || !on) return;
+    const t = this.ctx.currentTime;
+    if (t - this.reelT < 0.07) return;
+    this.reelT = t;
+    FX[this.pack].reel(this.P, t, vol * trim(this.pack, 'reel'));
+  }
+
   /** 雷射射出 */
   rail(vol: number): void {
     if (this.disposed) return;
@@ -1505,7 +1805,8 @@ export class WeaponSfx {
     this.gun?.g.stop(t + 0.15);
     this.flameL?.g.stop(t + 0.15);
     this.chargeL?.g.stop(t + 0.15);
-    this.gun = this.flameL = this.chargeL = undefined;
+    this.freezeL?.g.stop(t + 0.15);
+    this.gun = this.flameL = this.chargeL = this.freezeL = undefined;
     const bus = this.bus, nodes = this.chain.nodes;
     setTimeout(() => {
       bus.disconnect();
@@ -1562,7 +1863,7 @@ export function previewEngine(ctx: AudioContext, out: AudioNode, s: EngineStyle)
   step();
 }
 
-/** 試聽武器：機槍連發 → 火箭發射＋爆炸 → 雷射蓄力＋射出 */
+/** 試聽武器：機槍連發 → 火箭發射＋爆炸 → 雷射蓄力＋射出 → 電弧連鎖 → 音波震波 */
 export function previewWeapons(ctx: AudioContext, out: AudioNode, p: WeaponPack): void {
   stopWpnDemo();
   const w = new WeaponSfx(ctx, out);
@@ -1573,8 +1874,11 @@ export function previewWeapons(ctx: AudioContext, out: AudioNode, p: WeaponPack)
   ev.push([0.85, () => w.launch('rocket', 1)]);
   ev.push([1.35, () => w.blast(0.9, false)]);
   ev.push([2.65, () => w.rail(1)]);
+  // 電弧連鎖跳三台、音波炮一波
+  ev.push([3.45, () => w.zap(1, 3)]);
+  ev.push([3.9, () => w.pulse(1)]);
   let next = 0;
-  const end = p === 'heavy' ? 5.6 : 3.8;
+  const end = p === 'heavy' ? 6.2 : 4.6;
   const step = (): void => {
     const x = (performance.now() - p0) / 1000;
     while (next < ev.length && ev[next][0] <= x) ev[next++][1]();

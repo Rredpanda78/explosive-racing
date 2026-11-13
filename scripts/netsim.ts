@@ -24,8 +24,10 @@ const info = (name: string, car: string, primary: string, secondary: string) => 
   name, car, livery: 0, primary, secondary, plvl: 3, slvl: 3, engine: 0, n2o: 0, armor: 0,
 }) as never;
 const cfg = { track: trackIdx, mode, aiFill: true, difficulty: 'normal' as const };
-const A = new OnlineSession(info('A', 'kart-oobi', 'laser', 'grenade'), { ...cfg });
-const B = new OnlineSession(info('B', 'kart-oodi', 'mg', 'missile'), { ...cfg });
+// 競速賽：A 雷射、B 魚叉鉤；淘汰賽：A 電弧槍、B 機槍（電腦車手的武器隨機，新舊武器都會用到）
+const wA = mode === 'race' ? 'laser' : 'arc', wB = mode === 'race' ? 'harpoon' : 'mg';
+const A = new OnlineSession(info('A', 'kart-oobi', wA, 'grenade'), { ...cfg });
+const B = new OnlineSession(info('B', 'kart-oodi', wB, 'missile'), { ...cfg });
 const fake = (self: InstanceType<typeof OnlineSession>, other: InstanceType<typeof OnlineSession>, pid: number) => {
   const c = self.client as unknown as Record<string, unknown>;
   c.rtt = 120;
@@ -42,8 +44,8 @@ fake(A, B, 1);
 fake(B, A, 2);
 const H = (s: InstanceType<typeof OnlineSession>, m: unknown) => (s as unknown as { handle: (m: unknown) => void }).handle(m);
 H(A, { t: 'welcome', pid: 1, host: 1, peers: [] });
-H(B, { t: 'welcome', pid: 2, host: 1, peers: [{ pid: 1, info: info('A', 'kart-oobi', 'laser', 'grenade')() }] });
-H(A, { t: 'join', pid: 2, info: info('B', 'kart-oodi', 'mg', 'missile')() });
+H(B, { t: 'welcome', pid: 2, host: 1, peers: [{ pid: 1, info: info('A', 'kart-oobi', wA, 'grenade')() }] });
+H(A, { t: 'join', pid: 2, info: info('B', 'kart-oodi', wB, 'missile')() });
 
 const races = new Map<unknown, InstanceType<typeof Race>>();
 const track = new Track(TRACKS[trackIdx]);
@@ -72,6 +74,9 @@ const deliver = () => {
 };
 let maxErr = 0, errSum = 0, errN = 0;
 const evCount: Record<string, number> = {};
+// 魚叉鉤：自己的車叉住（own）與別人的車叉住、畫面上照車主的訊息畫繩子（seen）；被別人的魚叉拖慢的幀數（被打的人自己判定）
+const tetherOwn = [0, 0], tetherSeen = [0, 0];
+let towFrames = 0;
 for (let step = 0; step < 60 * 260; step++) {
   simNow += 1000 * dt;
   const r0 = races.get(A);
@@ -82,8 +87,8 @@ for (let step = 0; step < 60 * 260; step++) {
   }
   if (DROP && dropAt >= 0 && step === dropAt + 60 * 8) {
     dropping = false;
-    H(A, { t: 'back', pid: 2, info: info('B', 'kart-oodi', 'mg', 'missile')() });
-    H(B, { t: 'welcome', pid: 2, host: 1, peers: [{ pid: 1, info: info('A', 'kart-oobi', 'laser', 'grenade')() }], rejoin: true, started: true });
+    H(A, { t: 'back', pid: 2, info: info('B', 'kart-oodi', wB, 'missile')() });
+    H(B, { t: 'welcome', pid: 2, host: 1, peers: [{ pid: 1, info: info('A', 'kart-oobi', wA, 'grenade')() }], rejoin: true, started: true });
   }
   deliver();
   for (const s of [A, B]) {
@@ -94,8 +99,10 @@ for (let step = 0; step < 60 * 260; step++) {
     for (const e of r.events) {
       const key = (s === A ? 'A:' : 'B:') + (e.t === 'kart' ? 'kart:' + e.e : e.t);
       evCount[key] = (evCount[key] ?? 0) + 1;
+      if (e.t === 'tether' && e.on) (e.k.remote ? tetherSeen : tetherOwn)[s === A ? 0 : 1]++;
     }
     r.events.length = 0;
+    for (const k of r.karts) if (!k.remote && k.towT > 0 && k.towBy?.remote) towFrames++;
     s.sendState(simNow);
   }
   const ra = races.get(A), rb = races.get(B);
@@ -121,7 +128,10 @@ console.log('A sees ' + row(ra));
 console.log('B sees ' + row(rb));
 console.log('A results: ' + ra.results().map((k) => k.name).join(' > '));
 console.log('B results: ' + rb.results().map((k) => k.name).join(' > '));
-console.log(Object.entries(evCount).filter(([k]) => /launch|kill|respawn|finish|elim|dmg|blast/.test(k)).sort().map(([k, v]) => `${k}=${v}`).join(' '));
+console.log(Object.entries(evCount).filter(([k]) => /launch|kill|respawn|finish|elim|dmg|blast|zap|pulse|hook|tether/.test(k)).sort().map(([k, v]) => `${k}=${v}`).join(' '));
+console.log(`harpoon: latched by own cars A ${tetherOwn[0]} B ${tetherOwn[1]}, ropes shown for the other side's cars A ${tetherSeen[0]} B ${tetherSeen[1]}, frames a car was slowed by a remote harpoon ${towFrames}`);
+if ((tetherOwn[1] >= 3 && tetherSeen[0] === 0) || (tetherOwn[0] >= 3 && tetherSeen[1] === 0)) throw new Error('harpoon tethers are not shown on the other side');
+for (const r of [ra, rb]) for (const k of r.karts) if (!isFinite(k.x) || !isFinite(k.z) || !isFinite(k.chill)) throw new Error('NaN in kart state');
 const bots = (r: InstanceType<typeof Race>) => r.karts.filter((k) => k.bot).map((k) => k.owner).join('');
 console.log(`AI owners  A sees ${bots(ra)}  B sees ${bots(rb)}${bots(ra) === bots(rb) ? '  (agree)' : '  (DISAGREE)'}`);
 let mism = 0;
