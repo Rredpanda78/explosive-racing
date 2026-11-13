@@ -565,6 +565,7 @@ export class Race {
   resetToTrack(k: Kart): void {
     const s = this.track.samples[k.idx];
     k.branch = null;
+    k.runoff = false;
     k.x = s.x;
     k.z = s.z;
     k.y = s.y;
@@ -1226,10 +1227,9 @@ export class Race {
 
   private updateMines(dt: number): void {
     const track = this.track;
-    const lim = track.halfWidth - 0.6;
     for (const m of this.mines) {
       if (m.dead) continue;
-      // 滑動與停下，不會滾出護欄
+      // 滑動與停下，不會滾出護欄（有緩衝區的路段滾到緩衝區外緣為止）
       if (m.vx !== 0 || m.vz !== 0) {
         m.x += m.vx * dt;
         m.z += m.vz * dt;
@@ -1238,9 +1238,10 @@ export class Race {
         m.vz *= f;
         if (m.vx * m.vx + m.vz * m.vz < 0.04) m.vx = m.vz = 0;
         m.idx = track.probe(m.x, m.z, m.idx);
+        const sg = Math.sign(track.lat);
+        const lim = track.edgeLat(m.idx, sg) - 0.6;
         if (!track.probeOn && Math.abs(track.lat) > lim) {
           const s = track.samples[m.idx];
-          const sg = Math.sign(track.lat);
           m.x -= s.nx * sg * (Math.abs(track.lat) - lim);
           m.z -= s.nz * sg * (Math.abs(track.lat) - lim);
           m.vx = m.vz = 0;
@@ -1556,10 +1557,12 @@ export class Race {
   }
 
   private spawnBoulder(h: HazardState): void {
-    const hw = this.track.halfWidth;
+    const tr = this.track, hw = tr.halfWidth;
     const side = this.rng() < 0.5 ? 1 : -1;
+    // 從路邊（有緩衝區的話是緩衝區外緣）滾進來
+    const out = hw + 5 + tr.runoffW(tr.wrap(Math.round(h.def.dist / tr.spacing)), side);
     this.boulders.push({
-      d: h.def.dist + this.rng() * 25, lat: side * (hw + 5), lat0: side * (hw + 5), lat1: (this.rng() * 2 - 1) * (hw - 3.2),
+      d: h.def.dist + this.rng() * 25, lat: side * out, lat0: side * out, lat1: (this.rng() * 2 - 1) * (hw - 3.2),
       x: 0, y: 0, z: 0, v: 13 + this.rng() * 5, r: BOULDER.r, hp: BOULDER.hp, enterT: BOULDER.enter, roll: 0,
       end: h.def.dist + (h.def.len ?? 250), dead: false,
     });

@@ -60,7 +60,39 @@ export interface TrackDef {
   shortcuts?: ShortcutDef[];
   /** 賽道機關 */
   hazards?: HazardDef[];
+  /**
+   * 軟邊界：路緣外可以開的砂石緩衝區寬度（公尺）。沒設定 = 路邊直接是護欄（原本的行為）。
+   * 實際寬度會依每個取樣點自動縮小：不能跟別段賽道或捷徑的緩衝區疊在一起、彎道內側不能寬到可以抄捷徑，
+   * 太窄就乾脆維持護欄。緩衝區外面是岩石／輪胎牆（撞到跟撞牆一樣），或是台地邊緣的懸崖。
+   */
+  runoff?: number;
+  /** 個別路段的緩衝區設定（後面的蓋過前面的） */
+  runoffZones?: RunoffZone[];
 }
+
+/** 一段路的緩衝區設定：from / to 為距起跑線的公尺數，side：1 = 左側、-1 = 右側、0 = 兩側 */
+export interface RunoffZone {
+  from: number;
+  to: number;
+  side: number;
+  /** 這段想要的寬度（0 = 維持護欄）；沒設定就用賽道的 runoff */
+  width?: number;
+  /** 緩衝區外側是懸崖：開出去就摔下去（跟沒有護欄的捷徑一樣），不是撞到岩石 */
+  cliff?: boolean;
+}
+
+/** 緩衝區與別段賽道（或捷徑）之間至少要留的距離：兩邊的外圍屏障不會疊在一起，車在緩衝區裡也不會被判到別段路上 */
+const RUNOFF_MARGIN = 4;
+/** 算出來比這個窄的地方就維持護欄（例如平行的兩條直線之間） */
+const RUNOFF_MIN = 7;
+/** 寬度沿賽道每前進 1 公尺最多變化多少：緩衝區收窄的地方，外圍屏障斜斜地收進來，不會突然出現一道橫牆 */
+const RUNOFF_TAPER = 0.5;
+/** 彎道內側最多只能用「內緣半徑 × 這個比例」當緩衝區：不能從髮夾彎內側的沙地抄近路 */
+const RUNOFF_INNER = 0.45;
+/** 捷徑兩側的岩壁要留的厚度 */
+const RUNOFF_BRANCH_GAP = 3;
+/** 車身中心超出路緣多少公尺才算開進緩衝區（壓在路緣石上沒有懲罰） */
+export const KERB_WIDTH = 1.0;
 
 /**
  * 捷徑：from / to 是在主線上分岔與接回的位置（公尺），lat 是兩端在主線上的橫向位置（正 = 左，
@@ -357,6 +389,17 @@ export const TRACKS: TrackDef[] = [
     hazards: [{kind: 'boulder', dist: 1691, len: 215, period: 2.4}],
     // 窄縫峽谷：非常窄的沙地小縫，擦到牆就掉速
     shortcuts: [{ from: 2258, to: 2434, lat: 6.2, halfWidth: 2.9, name: '窄縫峽谷', rough: 0.85 }],
+    // 軟邊界（試作）：開闊的台地，路邊是砂石緩衝區，外圍才是岩石與輪胎牆；北側台地邊緣是懸崖
+    runoff: 12,
+    runoffZones: [
+      // 起跑直線：維修區牆與看台
+      { from: -80, to: 128, side: 0, width: 0 },
+      // 拱門的柱子：前後用輪胎牆收窄，柱子旁邊是護欄
+      { from: 576, to: 592, side: 0, width: 0 },
+      { from: 1674, to: 1690, side: 0, width: 0 },
+      // 台地最北側：直線與東北角外側是懸崖
+      { from: 1398, to: 1606, side: -1, width: 10, cliff: true },
+    ],
   },
 ];
 
@@ -384,6 +427,14 @@ export class Track {
   branches: Branch[] = [];
   /** 封閉賽道（捷徑是不封閉的） */
   readonly closed = true;
+  /** 軟邊界：每個取樣點左側／右側的緩衝區寬度（公尺，0 = 路邊就是護欄） */
+  runoffL = new Float32Array(0);
+  runoffR = new Float32Array(0);
+  /** 緩衝區外側是懸崖的取樣點（1 = 是） */
+  cliffL = new Uint8Array(0);
+  cliffR = new Uint8Array(0);
+  /** 這條賽道有沒有任何緩衝區 */
+  hasRunoff = false;
 
   constructor(def: TrackDef) {
     this.def = def;
@@ -460,6 +511,140 @@ export class Track {
     this.ramps = def.ramps.map((d) => ((d % this.length) + this.length) % this.length);
     this.pads = def.pads.map((p) => ({ dist: ((p.dist % this.length) + this.length) % this.length, lat: p.lat }));
     this.branches = (def.shortcuts ?? []).map((sc) => new Branch(this, sc));
+    this.buildRunoff();
+  }
+
+  /**
+   * 軟邊界：算出每個取樣點兩側實際的緩衝區寬度。
+   * 1. 想要的寬度：賽道的 runoff，再套用 runoffZones。
+   * 2. 不能超過「離別段賽道的中線一樣近」的位置（Voronoi 分界）再退 RUNOFF_MARGIN：
+   *    兩段路的緩衝區不會疊在一起，車開在緩衝區裡時離自己這段路的取樣點一定最近，locate 不會跳到別段路。
+   * 3. 也不能碰到捷徑（捷徑兩側還要留岩壁的厚度），彎道內側不能寬到可以抄近路。
+   * 4. 太窄的地方維持護欄；最後限制寬度沿賽道的變化率，讓外圍屏障平順地收進來。
+   */
+  private buildRunoff(): void {
+    const n = this.n, S = this.samples, hw = this.halfWidth, L = this.length, def = this.def;
+    this.runoffL = new Float32Array(n);
+    this.runoffR = new Float32Array(n);
+    this.cliffL = new Uint8Array(n);
+    this.cliffR = new Uint8Array(n);
+    if (!def.runoff || def.runoff <= 0) return;
+    for (const sg of [1, -1]) {
+      const want = new Float32Array(n).fill(def.runoff);
+      const cliff = sg > 0 ? this.cliffL : this.cliffR;
+      for (const z of def.runoffZones ?? []) {
+        if (z.side !== 0 && z.side !== sg) continue;
+        const from = ((z.from % L) + L) % L, span = z.to - z.from;
+        for (let i = 0; i < n; i++) {
+          if ((((S[i].dist - from) % L) + L) % L > span) continue;
+          if (z.width !== undefined) want[i] = z.width;
+          cliff[i] = z.cliff ? 1 : 0;
+        }
+      }
+      let wMax = 0;
+      for (let i = 0; i < n; i++) wMax = Math.max(wMax, want[i]);
+      const reach = 2 * (hw + wMax + RUNOFF_MARGIN + 2);
+      const raw = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        if (want[i] <= 0) continue;
+        const s = S[i];
+        const mx = s.nx * sg, mz = s.nz * sg;
+        // 往這一側的射線：離 s 的距離 a 處，比 s 更靠近別段路的取樣點 j 的分界在 a = |d|² / (2 m·d)
+        let free = want[i] + RUNOFF_MARGIN;
+        for (let j = 0; j < n; j++) {
+          let k = Math.abs(i - j);
+          k = Math.min(k, n - k);
+          if (k <= 4) continue;
+          const dx = S[j].x - s.x, dz = S[j].z - s.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > reach * reach) continue;
+          const md = mx * dx + mz * dz;
+          if (md <= 0) continue;
+          free = Math.min(free, d2 / (2 * md) - hw);
+        }
+        // 捷徑：射線碰到「捷徑路面 + 岩壁厚度」的範圍就停（分岔口那段捷徑還壓在路面上，寬度就是 0）
+        for (const b of this.branches) {
+          const r = b.halfWidth + RUNOFF_BRANCH_GAP;
+          for (const q of b.samples) {
+            const dx = q.x - s.x, dz = q.z - s.z;
+            const p = mx * dx + mz * dz, c = dx * dx + dz * dz;
+            const disc = p * p - c + r * r;
+            if (disc < 0) continue;
+            const h = Math.sqrt(disc);
+            if (p + h < hw) continue;
+            free = Math.min(free, Math.max(0, p - h - hw));
+          }
+        }
+        // 彎道內側：內緣半徑的一部分
+        let kc = 0;
+        for (let k = -16; k <= 16; k++) {
+          const c = S[this.wrap(i + k)].curv * sg;
+          if (c > kc) kc = c;
+        }
+        const inner = kc > 1e-4 ? Math.max(0, 1 / kc - hw) * RUNOFF_INNER : Infinity;
+        const w = Math.min(want[i], free - RUNOFF_MARGIN, inner);
+        raw[i] = w >= RUNOFF_MIN || (cliff[i] && w > 0) ? w : 0;
+      }
+      // 限制變化率：w[i] = min_j(raw[j] + |i - j| × spacing × TAPER)（只會變窄，不會超出上面算的範圍）
+      const out = sg > 0 ? this.runoffL : this.runoffR;
+      const step = this.spacing * RUNOFF_TAPER;
+      const span = Math.ceil((wMax + 1) / step);
+      for (let i = 0; i < n; i++) {
+        let w = raw[i];
+        for (let k = 1; k <= span && w > 0; k++) w = Math.min(w, raw[this.wrap(i + k)] + k * step, raw[this.wrap(i - k)] + k * step);
+        out[i] = w < 0.3 ? 0 : w;
+      }
+      // 收窄之後只剩一小塊（最寬處也不到 5 公尺）的沙地就不要了，維持護欄
+      let start = 0;
+      while (start < n && out[start] > 0) start++;
+      if (start < n) {
+        for (let k = 1; k <= n; k++) {
+          const i = (start + k) % n;
+          if (out[i] <= 0 || out[(i - 1 + n) % n] > 0) continue;
+          let peak = 0, len = 0;
+          while (out[(i + len) % n] > 0 && len < n) { peak = Math.max(peak, out[(i + len) % n]); len++; }
+          if (peak < 5 && !cliff[i]) for (let m = 0; m < len; m++) out[(i + m) % n] = 0;
+        }
+      }
+      for (let i = 0; i < n; i++) if (out[i] > 0) this.hasRunoff = true;
+      // 懸崖只留在真的有緩衝區的地方
+      for (let i = 0; i < n; i++) if (out[i] <= 0) cliff[i] = 0;
+    }
+  }
+
+  /** 某一側（1 = 左、-1 = 右）的緩衝區寬度 */
+  runoffW(idx: number, sg: number): number {
+    return (sg >= 0 ? this.runoffL : this.runoffR)[idx] ?? 0;
+  }
+
+  /** 某一側可以開的範圍外緣（路面 + 緩衝區）的橫向位置；along 為沿切線的偏移，用來在兩個取樣點之間內插 */
+  edgeLat(idx: number, sg: number, along = 0): number {
+    if (!this.hasRunoff) return this.halfWidth;
+    const A = sg >= 0 ? this.runoffL : this.runoffR;
+    let w = A[idx];
+    if (along !== 0) {
+      const j = this.wrap(idx + (along > 0 ? 1 : -1));
+      w += (A[j] - w) * Math.min(1, Math.abs(along) / this.spacing);
+    }
+    return this.halfWidth + w;
+  }
+
+  /** 某一側緩衝區外面是不是懸崖 */
+  cliffAt(idx: number, sg: number): boolean {
+    return this.hasRunoff && (sg >= 0 ? this.cliffL : this.cliffR)[idx] === 1;
+  }
+
+  /** 外圍屏障（護欄、岩石、輪胎牆）內側的橫向位置；懸崖沒有屏障，回傳 Infinity */
+  wallLat(idx: number, sg: number): number {
+    return this.cliffAt(idx, sg) ? Infinity : this.edgeLat(idx, sg);
+  }
+
+  /** (x,z) 是不是在主線的緩衝區裡（畫面用：遠端車的塵土） */
+  inRunoff(x: number, z: number, hint: number): boolean {
+    if (!this.hasRunoff) return false;
+    const idx = this.locate(x, z, hint);
+    const a = Math.abs(this.lat);
+    return a > this.halfWidth + KERB_WIDTH && a < this.edgeLat(idx, Math.sign(this.lat)) + 0.5;
   }
 
   /**
@@ -532,7 +717,8 @@ export class Track {
   probe(x: number, z: number, hint: number, margin = 0.4): number {
     const idx = this.locate(x, z, hint, 45);
     const lat = this.lat;
-    const onMain = Math.abs(lat) <= this.halfWidth + margin && Math.abs(this.along) < this.spacing * 2;
+    // 路面與路邊的緩衝區都算（沒有緩衝區的賽道 edgeLat 就是路寬）
+    const onMain = Math.abs(lat) <= this.edgeLat(idx, Math.sign(lat)) + margin && Math.abs(this.along) < this.spacing * 2;
     this.probeOn = onMain;
     this.probeY = this.heightAt(idx, x, z);
     if (!onMain) {

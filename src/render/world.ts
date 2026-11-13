@@ -7,6 +7,7 @@ import { PAD_HALF_WIDTH, PAD_LENGTH, type Branch, type Sample, type SceneRange, 
 import { mulberry32 } from '../game/util';
 import { makeInstanced, makeLandmark, makeProp } from './assets';
 import { applyTerrainDetail, grassTufts, roadDetailMaterial } from './detail';
+import { buildRunoff } from './runoff';
 import type { Theme } from './themes';
 
 export interface World {
@@ -310,7 +311,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   for (let i = 0; i < n; i++) {
     const s = S[i];
     const tramGap = trams.some((h) => Math.abs(relDist(s, h.dist)) < TRAM.width * 2 + 0.6);
-    for (const sg of [1, -1]) gap[sg].push(tramGap || (BR.length > 0 && inBranch(s.x + s.nx * sg * (hw + 0.6), s.z + s.nz * sg * (hw + 0.6), -0.4)));
+    // 軟邊界：有緩衝區的路段不放彩色護欄（外圍屏障在 runoff.ts）
+    for (const sg of [1, -1]) gap[sg].push(tramGap || track.runoffW(i, sg) > 0 || (BR.length > 0 && inBranch(s.x + s.nx * sg * (hw + 0.6), s.z + s.nz * sg * (hw + 0.6), -0.4)));
   }
   const wallOn = (sg: number) => (_s: Sample, i: number) => !gap[sg][i];
   for (const sg of [1, -1]) {
@@ -473,7 +475,9 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
         c.fillText(arrowSide > 0 ? '◀ ' + label : label + ' ▶', 64, 42);
       }, false), color: glow(0xffffff, night ? 1.6 : 1.15), side: THREE.DoubleSide }));
       const sp = track.pointAt(b.def.from - 25);
-      const ox = sp.nx * arrowSide * (hw + 2.4), oz = sp.nz * arrowSide * (hw + 2.4);
+      // 有緩衝區的話立在屏障後面（不要擋在可以開的沙地上）
+      const signLat = hw + 2.4 + track.runoffW(track.wrap(Math.round(wrapD(b.def.from - 25) / track.spacing)), arrowSide);
+      const ox = sp.nx * arrowSide * signLat, oz = sp.nz * arrowSide * signLat;
       sign.position.set(sp.x + ox, sp.y + 3.4, sp.z + oz);
       sign.rotation.y = Math.atan2(sp.tx, sp.tz) + Math.PI;
       root.add(sign);
@@ -508,8 +512,13 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
 
   // ---------- 路肩（從護欄外側往下接到地面） ----------
   const shoulderMat = new THREE.MeshLambertMaterial({ map: grassTex, color: theme.shoulder });
-  addMesh(strip(track, { latA: hw + 9, yA: -3.2, latB: hw + 0.95, yB: -0.02, scale: 7 }), shoulderMat);
-  addMesh(strip(track, { latA: -(hw + 0.95), yA: -0.02, latB: -(hw + 9), yB: -3.2, scale: 7 }), shoulderMat);
+  if (track.hasRunoff) {
+    // 軟邊界：砂石緩衝區、路緣石、岩石／輪胎牆、懸崖，路肩也改從屏障外側開始鋪
+    buildRunoff(track, theme, root, shoulderMat, shadows, lowDetail);
+  } else {
+    addMesh(strip(track, { latA: hw + 9, yA: -3.2, latB: hw + 0.95, yB: -0.02, scale: 7 }), shoulderMat);
+    addMesh(strip(track, { latA: -(hw + 0.95), yA: -0.02, latB: -(hw + 9), yB: -3.2, scale: 7 }), shoulderMat);
+  }
 
   // ---------- 加速帶 ----------
   const chevrons = (bg: string) => (c: CanvasRenderingContext2D) => {
@@ -619,12 +628,34 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const props = new THREE.Group();
   root.add(props);
   const stands: THREE.Group[] = [];
-  const lamps: { s: Sample; sg: number }[] = [];
+  /** ro：燈柱因為路邊的緩衝區往外移了多少 */
+  const lamps: { s: Sample; sg: number; ro: number }[] = [];
+  /** 軟邊界：半徑 r 的景物會不會擺進路邊的緩衝區或外圍屏障裡（懸崖外面也不放） */
+  const roClear = (x: number, z: number, r: number): boolean => {
+    if (!track.hasRunoff || trackDist(x, z) - r > hw + 30) return true;
+    const i = track.locate(x, z, -1);
+    const sg = Math.sign(track.lat);
+    if (track.cliffAt(i, sg)) return false;
+    return Math.abs(track.lat) - r > track.edgeLat(i, sg) + (track.runoffW(i, sg) > 0 ? 3 : 0);
+  };
   interface PlaceOpt { yaw?: number; recolor?: Record<string, number>; sink?: number; onRoadLevel?: boolean }
   /** 在距起點 dist 公尺、橫向 lat 處放一個模型，預設正面朝向賽道 */
   const place = (name: string, dist: number, lat: number, width: number, o: PlaceOpt = {}): THREE.Group | null => {
     const s = sampleAt(dist);
+    // 軟邊界：路邊的景物往外移到緩衝區外面（貼著路面高度的燈柱、旗子放在屏障後面）；懸崖那一側不放
+    let ro = 0;
+    if (track.hasRunoff && Math.abs(lat) > hw) {
+      const sg = Math.sign(lat);
+      for (let d = -width / 2; d <= width / 2 + 0.01; d += track.spacing) {
+        const i = track.wrap(Math.round(wrapD(dist + d) / track.spacing));
+        if (track.cliffAt(i, sg)) return null;
+        ro = Math.max(ro, track.runoffW(i, sg));
+      }
+      if (ro > 0) lat += sg * (ro + (o.onRoadLevel ? 0 : 3));
+    }
     const x = s.x + s.nx * lat, z = s.z + s.nz * lat;
+    // 往外移之後壓到別段路的緩衝區（燈柱本來就立在屏障後面，只要在緩衝區外緣外面就好）
+    if (ro > 0 && !roClear(x, z, o.onRoadLevel ? -3 : 0.5)) return null;
     if (Math.abs(lat) > hw + 2 && trackDist(x, z) < Math.min(Math.abs(lat) - 1.5, hw + 5)) return null; // 會壓到別段賽道
     if (inLake(x, z, 12)) return null;
     const g = makeProp(name, width, o.recolor);
@@ -636,6 +667,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     if (shadows) g.traverse((m) => { m.castShadow = true; });
     props.add(g);
     if (name.startsWith('grandStand')) stands.push(g);
+    g.userData.ro = ro;
     return g;
   };
   const far = hw + 15;
@@ -682,11 +714,13 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     const zone = Math.floor(d / 300) % 4;
     if (Math.abs(s.curv) < 0.01) {
       for (const [dd, sg] of [[0, 1], [lampStep / 2, -1]] as [number, number][]) {
-        if (place('lightPostLarge', d + dd, sg * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 })) lamps.push({ s: sampleAt(d + dd), sg });
+        const g = place('lightPostLarge', d + dd, sg * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 });
+        if (g) lamps.push({ s: sampleAt(d + dd), sg, ro: g.userData.ro });
       }
     } else {
       place(zone % 2 ? 'bannerTowerRed' : 'bannerTowerGreen', d, out * (hw + 5), 5, { sink: 0.6 });
-      if (night && place('lightPostLarge', d, out * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 })) lamps.push({ s, sg: out });
+      const g = night ? place('lightPostLarge', d, out * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 }) : null;
+      if (g) lamps.push({ s, sg: out, ro: g.userData.ro });
     }
     if (Math.floor(d / lampStep) % 3 === 0) place(zone % 2 ? 'billboard' : 'billboardLow', d + 10, out * (far - 2), 13, { sink: 0.3 });
   }
@@ -720,7 +754,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     const upv = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3();
     lamps.forEach((l, i) => {
       const s = l.s;
-      m.makeTranslation(s.x + s.nx * l.sg * (hw + 2.1), s.y + 10.3, s.z + s.nz * l.sg * (hw + 2.1));
+      m.makeTranslation(s.x + s.nx * l.sg * (hw + 2.1 + l.ro), s.y + 10.3, s.z + s.nz * l.sg * (hw + 2.1 + l.ro));
       bulb.setMatrixAt(i, m);
       // 光暈貼著路面的坡度
       nrm.set(-s.tx * s.slope, 1, -s.tz * s.slope).normalize();
@@ -846,7 +880,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     const s = sampleAt(dist);
     for (const lat of lats) {
       const x = s.x + s.nx * side * lat, z = s.z + s.nz * side * lat;
-      if (trackDist(x, z) < radius + hw + 4 || inLake(x, z, radius + 4)) continue;
+      if (trackDist(x, z) < radius + hw + 4 || inLake(x, z, radius + 4) || !roClear(x, z, radius)) continue;
       let clash = false;
       for (const pr of props.children) {
         const r = (pr.userData.radius ?? 6) + radius;
@@ -986,7 +1020,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       const z = minZ - spread + rng() * (maxZ - minZ + spread * 2);
       const d = trackDist(x, z);
       if (d < minD || d > maxD) continue;
-      if (inLake(x, z, 9)) continue;
+      if (inLake(x, z, 9) || !roClear(x, z, 2)) continue;
       let blocked = false;
       for (const pr of props.children) {
         const dx = pr.position.x - x, dz = pr.position.z - z;
@@ -1050,6 +1084,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     const bodyL: THREE.Matrix4[] = [], capL: THREE.Matrix4[] = [];
     for (const sp of pillars) {
       const r = 6 + rng() * 13, h = 14 + rng() * 34;
+      if (!roClear(sp.x, sp.z, r)) continue;
       q.setFromAxisAngle(up, rng() * 6);
       bodyL.push(new THREE.Matrix4().compose(v.set(sp.x, sp.y - 2, sp.z), q, sc.set(r, h, r)));
       capL.push(new THREE.Matrix4().compose(v.set(sp.x, sp.y - 2 + h, sp.z), q, sc.set(r * 0.86, 2.2 + rng() * 2, r * 0.86)));

@@ -76,6 +76,10 @@ export const CFG = {
   miniSpeedMul: 1.1,
   miniAccel: 30,
 
+  // 軟邊界：路緣外的砂石緩衝區（沒有 N2O、小噴、加速帶時的極速倍率，與超速時沙地額外吃掉的速度 m/s²）
+  runoffSpeed: 0.65,
+  runoffDrag: 12,
+
   // 加速帶與坡度
   padTime: 1.3,
   padSpeedMul: 1.25,

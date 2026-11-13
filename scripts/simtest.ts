@@ -32,6 +32,27 @@ console.log(`=== ${def.id}: length ${track.length.toFixed(0)} m, samples ${track
   for (const b of track.branches) {
     for (const s of b.samples) for (const lat of [0, -b.halfWidth, b.halfWidth]) worst = Math.min(worst, s.y - terrain.height(s.x + s.nx * lat, s.z + s.nz * lat));
   }
+  // 軟邊界：整片緩衝區（路面高度）也不能被地形蓋住；懸崖外面的地面要真的掉下去
+  if (track.hasRunoff) {
+    let drop = Infinity;
+    track.samples.forEach((s, i) => {
+      for (const sg of [1, -1]) {
+        const w = track.runoffW(i, sg);
+        if (w <= 0) continue;
+        for (const f of [0.5, 1]) {
+          const lat = sg * (track.halfWidth + w * f);
+          worst = Math.min(worst, s.y - terrain.height(s.x + s.nx * lat, s.z + s.nz * lat));
+        }
+        if (track.cliffAt(i, sg) && track.cliffAt(track.wrap(i - 12), sg) && track.cliffAt(track.wrap(i + 12), sg)) {
+          const lat = sg * (track.halfWidth + w + 10);
+          drop = Math.min(drop, s.y - terrain.height(s.x + s.nx * lat, s.z + s.nz * lat));
+        }
+      }
+    });
+    const ro = (A: Float32Array) => { let m = 0, on = 0; for (const w of A) { m = Math.max(m, w); if (w > 0) on++; } return `${(on / A.length * 100).toFixed(0)}% of the lap, max ${m.toFixed(1)} m`; };
+    console.log(`run-off: left ${ro(track.runoffL)}, right ${ro(track.runoffR)}; cliff drop at least ${drop.toFixed(1)} m`);
+    if (isFinite(drop) && drop < 8) throw new Error('cliff edge does not drop off');
+  }
   console.log(`shortcuts: ${track.branches.map((b) => `${b.def.from}-${b.def.to} m: ${b.length.toFixed(0)} m (saves ${(b.def.to - b.def.from - b.length).toFixed(0)} m)`).join(', ') || 'none'}`);
   // 爆炸桶不能放在彎道上
   const spots = track.barrelSpots();
@@ -242,5 +263,208 @@ runAll('elim', 777);
   race.explodeAt(k.x - fx * 2.5, k.y + 0.5, k.z - fz * 2.5, k.y, 6, 30, enemy);
   console.log(`shield break: shattered ${shattered}, next blast -${(k.maxHp - k.hp).toFixed(0)}`);
   if (!shattered || k.hp >= k.maxHp) throw new Error('shield did not shatter correctly');
+}
+
+// ---- 5. 軟邊界（烈日台地）：路邊的砂石緩衝區、外圍屏障、懸崖 ----
+{
+  const def = TRACKS.find((t) => t.id === 'canyon-rush')!;
+  const track = new Track(def);
+  const hw = track.halfWidth;
+  const dt = 1 / 60;
+  console.log('--- soft boundaries (canyon-rush) ---');
+  for (const d of TRACKS) if (d !== def && new Track(d).hasRunoff) throw new Error(`${d.id} should keep its hard walls`);
+  if (!track.hasRunoff) throw new Error('canyon-rush has no run-off');
+
+  // 緩衝區裡任何一點都要找得到「自己這段路」的取樣點（不管從附近哪裡開始找，或是全域搜尋）
+  {
+    let bad = 0, checked = 0;
+    for (let i = 0; i < track.n; i += 2) {
+      for (const sg of [1, -1]) {
+        const w = track.runoffW(i, sg);
+        if (w <= 0) continue;
+        const s = track.samples[i];
+        for (const f of [0.3, 0.7, 1]) {
+          const lat = sg * (hw + w * f);
+          const x = s.x + s.nx * lat, z = s.z + s.nz * lat;
+          for (const hint of [-1, track.wrap(i - 12), track.wrap(i + 12)]) {
+            const j = track.locate(x, z, hint);
+            let dd = Math.abs(j - i);
+            dd = Math.min(dd, track.n - dd);
+            checked++;
+            if (dd > 4 || Math.abs(Math.abs(track.lat) - Math.abs(lat)) > 1) bad++;
+          }
+        }
+      }
+    }
+    console.log(`locate in run-off: ${checked - bad}/${checked} map back to their own part of the track`);
+    if (bad) throw new Error('a point in the run-off maps to another part of the track');
+  }
+
+  /** 把玩家放到賽道 dist 公尺處（全速），其他車移到很遠的地方 */
+  const setup = (dist: number) => {
+    const race = new Race(track, defaultProfile(), 'race', 5);
+    // 其他車退出比賽（移到遠處的話會被護欄推回賽道上）
+    for (const o of race.karts) if (!o.isPlayer) o.out = true;
+    const k = race.player;
+    const inp = emptyInput();
+    while (race.state === 'countdown') race.step(dt, inp);
+    const i = track.wrap(Math.round(dist / track.spacing));
+    const s = track.samples[i];
+    k.x = s.x; k.z = s.z; k.y = s.y; k.idx = i; k.prog = i; k.progFine = i;
+    k.heading = Math.atan2(s.tx, s.tz);
+    k.speed = k.topSpeed;
+    k.vx = s.tx * k.speed; k.vz = s.tz * k.speed;
+    k.invulnT = 1e9;
+    k.lapCount = 0;
+    k.lapStart = race.time;
+    inp.accel = 1;
+    return { race, k, inp };
+  };
+  /** 簡單的循線：開到橫向位置 lat（左為正） */
+  const steerTo = (k: import('../src/game/kart').Kart, inp: ReturnType<typeof emptyInput>, lat: number) => {
+    const s = track.samples[k.idx];
+    const want = Math.atan2(s.tx, s.tz) + Math.max(-0.45, Math.min(0.45, (lat - k.lat) * 0.07));
+    inp.steer = Math.max(-1, Math.min(1, wrapAngle(want - k.heading) * 3));
+  };
+
+  // 爬坡前的直線與緩坡（約 190~450 m，右側一路都是 12 m 緩衝區）
+  if (track.runoffW(track.wrap(Math.round(196 / track.spacing)), -1) < 11.9 || track.runoffW(track.wrap(Math.round(440 / track.spacing)), -1) < 11.9) throw new Error('expected 12 m run-off on the right at 196-440 m');
+  /** 照目標橫向位置開 secs 秒；回傳撞牆次數與第一次撞牆時的 |lat| */
+  const drive = (race: Race, k: import('../src/game/kart').Kart, inp: ReturnType<typeof emptyInput>, secs: number, lat: number, f?: () => void) => {
+    let walls = 0, firstWall = 0;
+    for (let t = 0; t < secs; t += dt) {
+      steerTo(k, inp, lat);
+      f?.();
+      race.events.length = 0;
+      race.step(dt, inp);
+      for (const e of race.events) if (e.t === 'kart' && e.k === k && e.e === 'wall') { walls++; if (!firstWall) firstWall = Math.abs(k.lat); }
+    }
+    return { walls, firstWall };
+  };
+  // 1. 偏到右側緩衝區中間：不會撞牆，速度降到極速的 65% 左右；再開回路面，速度恢復
+  {
+    const { race, k, inp } = setup(196);
+    let inT = 0, wallsIn = 0;
+    drive(race, k, inp, 0.5, 0);
+    wallsIn += drive(race, k, inp, 3, -(hw + 6), () => { if (k.runoff) inT += dt; }).walls;
+    const vIn = k.speed, latIn = k.lat;
+    console.log(`run-off: lat ${latIn.toFixed(1)} (edge -${track.edgeLat(k.idx, -1).toFixed(1)}), ${inT.toFixed(1)} s in sand, speed ${vIn.toFixed(1)} m/s = ${(vIn / k.topSpeed * 100).toFixed(0)}% of top speed, wall hits ${wallsIn}`);
+    if (inT < 1.5) throw new Error('kart never registered as being in the run-off');
+    if (wallsIn) throw new Error('hit a wall inside the run-off');
+    if (Math.abs(vIn / k.topSpeed - CFG.runoffSpeed) > 0.03) throw new Error(`run-off speed should be ~${CFG.runoffSpeed * 100}% of top speed`);
+    drive(race, k, inp, 4, 0);
+    console.log(`back on track: lat ${k.lat.toFixed(1)}, speed ${k.speed.toFixed(1)} m/s, in run-off ${k.runoff}`);
+    if (k.runoff || Math.abs(k.lat) > hw - 1 || k.speed < k.topSpeed * 0.9) throw new Error('could not drive back onto the road');
+  }
+  // 2. 甩尾：在緩衝區裡甩不集氣，在路面上同樣的甩尾會集氣
+  const driftTest = (lat: number) => {
+    const { race, k, inp } = setup(300);
+    drive(race, k, inp, 2, lat);
+    let gain = 0, frames = 0;
+    for (let t = 0; t < 0.8; t += dt) {
+      inp.drift = t < 0.4;
+      inp.steer = 1;
+      const g0 = k.driftGain, off0 = k.runoff;
+      race.events.length = 0;
+      race.step(dt, inp);
+      // 只算整幀都在（或都不在）緩衝區裡的甩尾
+      if (k.drifting && off0 === k.runoff && k.runoff === (lat < -hw)) { gain += k.driftGain - g0; frames++; }
+    }
+    return { gain, frames };
+  };
+  const dOff = driftTest(-(hw + 9)), dOn = driftTest(0);
+  console.log(`drift: in run-off +${dOff.gain.toFixed(3)} gauge over ${dOff.frames} frames, on road +${dOn.gain.toFixed(3)} over ${dOn.frames} frames`);
+  if (dOff.frames < 10 || dOn.frames < 10) throw new Error('drift test did not drift');
+  if (dOff.gain > 1e-6) throw new Error('drifting in the run-off built gauge');
+  if (dOn.gain <= 0.01) throw new Error('drifting on the road should build gauge');
+  // 3. 一路往外開：直到緩衝區外緣才撞到外圍屏障（跟撞牆一樣：會有 wall 事件、甩尾集氣作廢）
+  {
+    const { race, k, inp } = setup(200);
+    drive(race, k, inp, 0.4, 0);
+    const edge = track.edgeLat(k.idx, -1);
+    const r = drive(race, k, inp, 3, -(hw + 30));
+    console.log(`barrier: first hit at |lat| ${r.firstWall.toFixed(1)} (run-off edge ${edge.toFixed(1)}), hits ${r.walls}`);
+    if (!r.walls || r.firstWall < edge - 2) throw new Error('outer barrier missing or too close');
+  }
+  // 4. 沒有緩衝區的路段（起跑直線）照樣是護欄
+  {
+    const { race, k, inp } = setup(20);
+    const r = drive(race, k, inp, 2, -(hw + 30));
+    console.log(`start straight: wall at |lat| ${r.firstWall.toFixed(1)}, hits ${r.walls}`);
+    if (!r.walls || r.firstWall > hw) throw new Error('start straight should keep its hard walls');
+  }
+
+  // 懸崖：北側台地邊緣，開出去會摔下去，然後回到賽道上，圈數與進度不受影響
+  {
+    const { race, k, inp } = setup(1440);
+    if (!track.cliffAt(k.idx, -1)) throw new Error('expected a cliff edge at 1440 m');
+    const prog0 = k.prog, lap0 = k.lapCount;
+    inp.accel = 1;
+    let fell = false, respawned = false;
+    for (let t = 0; t < 6 && !respawned; t += dt) {
+      if (!fell) steerTo(k, inp, -(hw + 30));
+      race.events.length = 0;
+      race.step(dt, inp);
+      for (const e of race.events) {
+        if (e.t === 'kart' && e.k === k && e.e === 'fall') fell = true;
+        if (e.t === 'respawn' && e.k === k) respawned = true;
+      }
+    }
+    const dProg = (k.prog - prog0) * track.spacing;
+    console.log(`cliff: fell ${fell}, respawned ${respawned} at lat ${k.lat.toFixed(1)}, progress +${dProg.toFixed(0)} m, lap ${k.lapCount} (was ${lap0})`);
+    if (!fell || !respawned) throw new Error('driving off the plateau edge did not fall and reset');
+    if (Math.abs(k.lat) > 0.5 || dProg < 0 || dProg > 80 || k.lapCount !== lap0) throw new Error('reset after the cliff fall put the kart in the wrong place');
+  }
+
+  // AI 被擠進緩衝區：從近的那一側開回路面，不會卡住或去撞外圍屏障
+  {
+    const { race, k } = setup(200);
+    k.out = true;
+    const ai = race.karts.find((o) => !o.isPlayer)!;
+    ai.out = false;
+    const i = track.wrap(Math.round(205 / track.spacing)), s = track.samples[i];
+    ai.x = s.x - s.nx * (hw + 9); ai.z = s.z - s.nz * (hw + 9); ai.y = s.y; ai.idx = i; ai.prog = i; ai.lapCount = 0;
+    ai.heading = Math.atan2(s.tx, s.tz); ai.speed = 30; ai.vx = s.tx * 30; ai.vz = s.tz * 30;
+    let backT = -1, walls = 0;
+    for (let t = 0; t < 4; t += dt) {
+      race.events.length = 0;
+      race.step(dt, emptyInput());
+      for (const e of race.events) if (e.t === 'kart' && e.k === ai && e.e === 'wall') walls++;
+      if (backT < 0 && Math.abs(ai.lat) < hw - 1) backT = t;
+    }
+    console.log(`AI pushed into the run-off: back on the road after ${backT.toFixed(1)} s, barrier hits ${walls}, speed ${ai.speed.toFixed(1)} m/s`);
+    if (backT < 0 || backT > 2.5 || walls) throw new Error('AI did not recover from the run-off');
+  }
+
+  // AI：照樣跑在路面上，完賽時間跟原本的硬護欄版本差不多（±10%）
+  {
+    const hard = new Track({ ...def, runoff: undefined, runoffZones: undefined });
+    const aiRace = (tr: Track, seed: number) => {
+      const race = new Race(tr, defaultProfile(), 'race', seed);
+      race.autoPlayer = true;
+      race.player.aiAssist = true;
+      let t = 0, off = 0, total = 0;
+      while (t < 500 && !race.karts.every((k) => k.finished)) {
+        race.step(dt, emptyInput());
+        race.events.length = 0;
+        for (const k of race.karts) if (!k.finished && !k.dead) { total++; if (k.runoff) off++; }
+        t += dt;
+      }
+      if (!race.karts.every((k) => k.finished)) throw new Error('AI did not finish on canyon-rush');
+      const times = race.karts.map((k) => k.finishTime);
+      return { mean: times.reduce((a, b) => a + b, 0) / times.length, best: Math.min(...times), off: off / Math.max(1, total) };
+    };
+    let soft = 0, wall = 0, offFrac = 0;
+    const seeds = [12345, 777, 4242];
+    for (const seed of seeds) {
+      const a = aiRace(track, seed), b = aiRace(hard, seed);
+      soft += a.mean / seeds.length;
+      wall += b.mean / seeds.length;
+      offFrac += a.off / seeds.length;
+      console.log(`AI seed ${seed}: soft boundaries mean ${a.mean.toFixed(1)} s (best ${a.best.toFixed(1)}), hard walls mean ${b.mean.toFixed(1)} s (best ${b.best.toFixed(1)})`);
+    }
+    console.log(`AI mean finish: soft ${soft.toFixed(1)} s vs hard walls ${wall.toFixed(1)} s (${((soft / wall - 1) * 100).toFixed(1)}%), time spent in run-off ${(offFrac * 100).toFixed(1)}%`);
+    if (Math.abs(soft / wall - 1) > 0.1) throw new Error('AI lap times changed by more than 10% with soft boundaries');
+  }
 }
 console.log('SIM OK');

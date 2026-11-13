@@ -406,6 +406,28 @@ export class GameView {
     this.shake = Math.min(1, this.shake + a * this.shakeMul);
   }
 
+  /** 軟邊界：開在路邊的砂石緩衝區時，兩個後輪往後揚起沙塵，偶爾噴出小碎石 */
+  private runoffDust(k: Kart, track: Track, dt: number): void {
+    if (!track.hasRunoff || k.air > 0 || k.branch || Math.abs(k.speed) < 4) return;
+    // 遠端車沒有傳 runoff 旗標，用位置判斷
+    if (!(k.remote ? track.inRunoff(k.x, k.z, k.idx) : k.runoff)) return;
+    const R = Math.random, sm = this.smoke;
+    const fx = Math.sin(k.heading), fz = Math.cos(k.heading), lx = fz, lz = -fx;
+    const rate = (this.mobile ? 24 : 48) * Math.min(1, Math.abs(k.speed) / 28);
+    for (let w = 0; w < 2; w++) {
+      if (R() > dt * rate) continue;
+      const side = w === 0 ? 1 : -1;
+      const wx = k.x + lx * side * 0.6 - fx * 0.75, wz = k.z + lz * side * 0.6 - fz * 0.75;
+      const c = 0.92 + R() * 0.12;
+      sm.spawn(wx, k.y + 0.3, wz, k.vx * 0.2 - fx * 2.5 + (R() - 0.5) * 2.6, 1 + R() * 2, k.vz * 0.2 - fz * 2.5 + (R() - 0.5) * 2.6,
+        0.8 + R() * 0.7, 0.9, 4 + R() * 1.6, 0.86 * c, 0.71 * c, 0.5 * c, 0.5, -0.25, 1.3);
+      if (R() < 0.35) {
+        sm.spawn(wx, k.y + 0.2, wz, k.vx * 0.35 - fx * 3 + (R() - 0.5) * 3, 2.5 + R() * 2.5, k.vz * 0.35 - fz * 3 + (R() - 0.5) * 3,
+          0.5 + R() * 0.3, 0.22, 0.18, 0.42, 0.3, 0.2, 0.95, 14, 0.4, k.y - k.air);
+      }
+    }
+  }
+
   private sparks(x: number, y: number, z: number, n: number, speed: number, ground: number, vx = 0, vz = 0): void {
     const R = Math.random;
     for (let i = 0; i < n; i++) {
@@ -625,8 +647,11 @@ export class GameView {
           f.spawn(wx, k.y + 0.12, wz, k.vx * 0.3 - fx * 3 + (R() - 0.5) * 5, 1.5 + R() * 4, k.vz * 0.3 - fz * 3 + (R() - 0.5) * 5, 0.2 + R() * 0.25, 0.42, 0.08, hot ? 0.45 : 1, hot ? 0.8 : 0.72, hot ? 1 : 0.25, 1, 16, 0, k.y);
         }
       }
-      // 貼著護欄磨：持續噴火花
-      if (grounded && Math.abs(k.lat) > (k.branch ? k.branch.halfWidth - 1.05 : wallLat) && Math.abs(k.speed) > 10) {
+      // 開在路邊的砂石緩衝區：揚起沙塵
+      this.runoffDust(k, track, dt);
+      // 貼著護欄磨：持續噴火花（有緩衝區的路段是外圍屏障的位置）
+      const wl = k.branch ? k.branch.halfWidth - 1.05 : track.hasRunoff ? track.wallLat(k.idx, Math.sign(k.lat)) - 1.05 : wallLat;
+      if (grounded && Math.abs(k.lat) > wl && Math.abs(k.speed) > 10) {
         const sm0 = k.surface(track);
         const sg = Math.sign(k.lat);
         const cx = k.x + sm0.nx * sg * 1.0, cz = k.z + sm0.nz * sg * 1.0;

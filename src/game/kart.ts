@@ -1,6 +1,6 @@
 import type { CarId } from './cars';
 import { CFG } from './config';
-import type { Branch, Post, Sample, Track } from './track';
+import { KERB_WIDTH, type Branch, type Post, type Sample, type Track } from './track';
 import { clamp, lerp, wrapAngle } from './util';
 import type { PrimaryId, SecondaryId } from './weapons';
 
@@ -138,6 +138,8 @@ export class Kart {
   // 賽道進度
   idx = 0;
   lat = 0;
+  /** 開在路緣外的砂石緩衝區裡（軟邊界）：沒有加速效果時極速變低、甩尾不集氣 */
+  runoff = false;
   /** 目前開在哪一條捷徑上（null = 主線）、捷徑上的取樣點，以及換算成主線進度的小數部分 */
   branch: Branch | null = null;
   bIdx = 0;
@@ -444,6 +446,9 @@ export class Kart {
     const rough = this.branch?.def.rough;
     if (rough && !boosting && !padOn && this.miniT <= 0 && !flying) vmax *= rough;
     const forced = boosting || padOn || this.miniT > 0;
+    // 路邊的砂石緩衝區：跟碎石捷徑一樣，沒有加速效果時跑不快，而且沙地會把速度很快吃掉
+    const sand = this.runoff && !forced && !flying;
+    if (sand) vmax *= C.runoffSpeed;
     const throttle = inp.accel < -0.1 ? inp.accel : forced ? 1 : inp.accel;
     this.gas = throttle;
     const sm0 = this.surface(track);
@@ -476,6 +481,7 @@ export class Kart {
         if (s > 0) s = Math.max(0, s - C.coast * dt);
         else s = Math.min(0, s + C.coast * dt);
       }
+      if (sand && s > vmax) s = Math.max(vmax, s - C.runoffDrag * dt);
     }
 
     const wasBoost = this.boostT > 0;
@@ -495,14 +501,14 @@ export class Kart {
     this.x += this.vx * dt;
     this.z += this.vz * dt;
 
-    // ---- 集氣 ----
-    const driftFill = this.drifting && s > 10
+    // ---- 集氣（在路邊的緩衝區甩尾不集氣） ----
+    const driftFill = this.drifting && s > 10 && !this.runoff
       ? C.gaugeRate * Math.abs(Math.sin(this.slip)) * (s / vmaxBase) * (this.shortDrift ? C.shortDriftGauge : 1) * (this.chainDrift && !this.shortDrift ? C.chainGauge : 1)
         // 開著 N2O 甩尾：集氣加成
         * (this.boostT > 0 ? C.boostDriftGauge : 1)
       : 0;
     let fill = driftFill;
-    if (this.aiAssist && s > 18) fill += this.aiGauge * Math.abs(inp.steer);
+    if (this.aiAssist && s > 18 && !this.runoff) fill += this.aiGauge * Math.abs(inp.steer);
     if (s > 15) fill += C.gaugePassive;
     if (this.drafting) {
       fill += C.gaugeDraft * this.draftMul;
@@ -611,18 +617,23 @@ export class Kart {
     const C = CFG;
     const lim = track.halfWidth - C.kartRadius * 0.8;
     const br = this.branch;
+    this.runoff = false;
     if (br) {
       const bi = br.locate(this.x, this.z);
       const blat = br.lat, inside = br.inside();
       const prog = br.progress(bi, br.along);
       const hint = track.wrap(br.fromIdx + Math.floor(prog));
       const mi = track.locate(this.x, this.z, hint, 40);
-      const onMain = Math.abs(track.lat) <= lim && Math.abs(track.along) < track.spacing * 1.5;
-      if (onMain || !inside) {
+      const nearMain = Math.abs(track.along) < track.spacing * 1.5;
+      const onMain = Math.abs(track.lat) <= lim && nearMain;
+      // 主線路邊的緩衝區也算回到主線（捷徑兩側一定是岩壁，所以只會發生在捷徑的出入口附近）
+      const onRunoff = !onMain && nearMain && track.hasRunoff
+        && Math.abs(track.lat) <= track.edgeLat(mi, Math.sign(track.lat), track.along) - C.kartRadius * 0.8;
+      if (onMain || onRunoff || !inside) {
         this.branch = null;
         this.idx = mi;
         this.lat = track.lat;
-        if (!onMain) this.pushWall(track.samples[mi], track.lat, lim, dt, emit);
+        if (!onMain) this.mainEdge(track, dt, emit);
         return;
       }
       this.bIdx = bi;
@@ -654,7 +665,33 @@ export class Kart {
         return;
       }
     }
-    this.pushWall(track.samples[this.idx], this.lat, lim, dt, emit);
+    this.mainEdge(track, dt, emit);
+  }
+
+  /**
+   * 開出主線路面之外（已經 locate 過）：沒有緩衝區的地方是護欄；
+   * 有緩衝區（軟邊界）就可以繼續開但會減速，再外面是岩石／輪胎牆（跟撞牆一樣），或是台地邊緣的懸崖（摔下去）。
+   */
+  private mainEdge(track: Track, dt: number, emit: (e: KartEvent) => void): void {
+    const C = CFG;
+    const sg = Math.sign(this.lat) || 1;
+    const sm = track.samples[this.idx];
+    const edge = track.edgeLat(this.idx, sg, track.along);
+    const a = Math.abs(this.lat);
+    if (edge <= track.halfWidth) {
+      this.pushWall(sm, this.lat, track.halfWidth - C.kartRadius * 0.8, dt, emit);
+      return;
+    }
+    // 壓在路緣石上不算
+    this.runoff = a > track.halfWidth + KERB_WIDTH;
+    if (track.cliffAt(this.idx, sg)) {
+      // 台地邊緣沒有屏障：車身大半開出去就摔下去（被炸飛在空中時最多飛出邊緣幾公尺）
+      if (a > edge + 0.6 && this.air <= 0) this.startFall(emit);
+      else if (a > edge + 8) this.pushWall(sm, this.lat, edge + 8, dt, emit);
+      return;
+    }
+    const lim = edge - C.kartRadius * 0.8;
+    if (a > lim) this.pushWall(sm, this.lat, lim, dt, emit);
   }
 
   private startFall(emit: (e: KartEvent) => void): void {

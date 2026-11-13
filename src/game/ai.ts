@@ -75,6 +75,11 @@ export class AIController {
     }
     for (const m of race.mines) if (m.owner !== k) dodge(m.x, m.z, 0.8);
     for (const b of race.boulders) if (b.enterT < 0.5) dodge(b.x, b.z, b.r);
+    // 被擠到路邊的緩衝區：從比較近的那一側斜斜地切回路面（不要一回來就橫越整條路）
+    if (!k.branch && (k.runoff || Math.abs(k.lat) > tr.halfWidth + 0.5)) {
+      this.lane = this.laneTarget = Math.sign(k.lat) * (tr.halfWidth - 4.5);
+      this.laneTimer = Math.max(this.laneTimer, 1);
+    }
     this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * (this.laneTimer < 1.3 ? 2.2 : lineRate));
 
     // 捷徑：接近分岔點時決定走不走（技術越好越常走）
