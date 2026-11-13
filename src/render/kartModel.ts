@@ -257,6 +257,8 @@ export interface KartLook {
   livery?: Livery;
   /** 副武器等級（護盾 Lv.5 的角度比較大） */
   secondaryLvl?: number;
+  /** 頭上的名牌（線上比賽的其他玩家） */
+  label?: string;
 }
 
 /** 一台車的畫面：車體模型 + 武器 + 火焰 + 血條。車頭朝 +Z。 */
@@ -296,6 +298,10 @@ export class KartView {
   private hpCtx?: CanvasRenderingContext2D;
   private hpSprite?: THREE.Sprite;
   private lastHp = -1;
+  /** 名牌：寬高（公尺，近距離時的大小） */
+  private nameSprite?: THREE.Sprite;
+  private nameW = 0;
+  private nameH = 0;
   private fakeYaw = 0;
   private t = Math.random() * 10;
   /** 被擊毀後變成翻滾燃燒的殘骸（純畫面效果） */
@@ -360,6 +366,50 @@ export class KartView {
       this.hpSprite.renderOrder = 20;
       g.add(this.hpSprite);
     }
+    if (look.label) this.addNameTag(look.label, look.color);
+  }
+
+  /** 頭上的名牌：深藍圓角底、奶油色字，左邊一個車手代表色的圓點 */
+  private addNameTag(text: string, color: number): void {
+    const c = document.createElement('canvas');
+    const ctx = c.getContext('2d')!;
+    const font = '800 40px system-ui, "Microsoft JhengHei", "PingFang TC", sans-serif';
+    ctx.font = font;
+    const tw = Math.min(420, Math.ceil(ctx.measureText(text).width));
+    c.width = tw + 66;
+    c.height = 60;
+    ctx.font = font;
+    ctx.fillStyle = 'rgba(19,40,75,0.85)';
+    ctx.beginPath();
+    ctx.roundRect(2, 2, c.width - 4, c.height - 4, 26);
+    ctx.fill();
+    ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
+    ctx.beginPath();
+    ctx.arc(30, 30, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f3ead5';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 48, 32, 420);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    // sizeAttenuation 關掉 = 不管遠近，名牌在螢幕上都一樣大（約畫面高度的 4%）
+    const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false });
+    this.ownMats.push(mat);
+    const s = (this.nameSprite = new THREE.Sprite(mat));
+    this.nameH = 0.052;
+    this.nameW = (this.nameH * c.width) / c.height;
+    s.scale.set(this.nameW, this.nameH, 1);
+    s.renderOrder = 21;
+    this.group.add(s);
+    this.fitName(10);
+  }
+
+  /** 名牌放在血條上方（螢幕上固定大小，所以離越遠要抬越高），太遠就淡出 */
+  fitName(dist: number): void {
+    const s = this.nameSprite;
+    if (!s) return;
+    s.position.y = this.m.top + 1.0 + this.nameH * Math.max(dist, 4) * 0.6;
+    (s.material as THREE.SpriteMaterial).opacity = Math.min(1, Math.max(0, (260 - dist) / 60));
   }
 
   /**
@@ -760,6 +810,7 @@ export class KartView {
     this.shell.visible = false;
     this.deploy = 0;
     if (this.hpSprite) this.hpSprite.visible = false;
+    if (this.nameSprite) this.nameSprite.visible = false;
     this.group.visible = true;
   }
 
@@ -982,6 +1033,7 @@ export class KartView {
       }
       this.hpSprite.visible = k.invulnT < 10;
     }
+    if (this.nameSprite) this.nameSprite.visible = !k.out;
   }
 
   dispose(): void {
@@ -994,5 +1046,6 @@ export class KartView {
     });
     for (const m of this.ownMats) m.dispose();
     this.hpTex?.dispose();
+    (this.nameSprite?.material as THREE.SpriteMaterial | undefined)?.map?.dispose();
   }
 }

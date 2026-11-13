@@ -7,7 +7,7 @@ import { Race, type RaceMode } from './game/race';
 import { OnlineSession, type StartMsg } from './net/online';
 import { cleanCode, ERR_TEXT, fetchRooms, newRoomCode } from './net/room';
 import { loadProfile, saveProfile } from './game/save';
-import { AccountClient } from './net/account';
+import { AccountClient, SIGNUP_GIFT } from './net/account';
 import { openAccountPanel, openConflictDialog } from './ui/accountPanel';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
@@ -235,6 +235,12 @@ const acct = new AccountClient();
 // 比賽中、線上房間裡不要換掉進度（比賽結束會用記憶體裡的舊進度蓋回去）
 acct.canApply = () => !race && !online && !bgRace && screens.current === 'menu';
 acct.onConflict = (local, cloud) => openConflictDialog(local, cloud);
+acct.onRegistered = () => {
+  // 新帳號禮：加進這台的進度（接著會同步上雲端）
+  profile.cash += SIGNUP_GIFT;
+  saveProfile(profile);
+  if (screens.current === 'menu') screens.menu(!ready);
+};
 acct.onRemoteSave = () => {
   // 換成雲端的進度：profile 是跟畫面共用的同一個物件，直接把內容換掉
   Object.assign(profile, loadProfile());

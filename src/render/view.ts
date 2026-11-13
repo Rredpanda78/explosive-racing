@@ -306,7 +306,9 @@ export class GameView {
     this.boostK = 0;
     if (!race) return;
     for (const k of race.karts) {
-      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, secondaryLvl: k.secondaryLvl, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery] }, this.shadows);
+      // 線上比賽：其他玩家（不含電腦車手）頭上顯示名字
+      const label = race.online && !k.isPlayer && !k.bot ? k.name : undefined;
+      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, secondaryLvl: k.secondaryLvl, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery], label }, this.shadows);
       this.kartViews.set(k, kv);
       this.scene.add(kv.group);
       kv.update(k, 0);
@@ -557,6 +559,7 @@ export class GameView {
       }
       if (kv.wrecked) kv.endWreck();
       kv.update(k, dt);
+      kv.fitName(this.camera.position.distanceTo(kv.group.position));
 
       const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
       const lx = fz, lz = -fx;

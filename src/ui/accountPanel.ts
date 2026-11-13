@@ -6,7 +6,7 @@
  * openConflictDialog：雲端跟這台的進度不一樣時讓玩家選（AccountClient.onConflict 用）
  */
 import './account.css';
-import type { AccountClient, AcctErr, AcctStatus, SaveSummary } from '../net/account';
+import { SIGNUP_GIFT, type AccountClient, type AcctErr, type AcctStatus, type SaveSummary } from '../net/account';
 
 const NAME_ERR: Record<string, string> = {
   len: '名稱要 3～20 個字',
@@ -444,6 +444,7 @@ export function openAccountPanel(acct: AccountClient, onClose: () => void): void
     box.append(code, copy);
     const warn = el('p', 'acp-warn', '救援碼只會顯示這一次。忘記密碼時要用它才能重設密碼；弄丟了就沒辦法找回這個帳號（我們沒有你的 email 或手機）。請抄下來，或存到密碼管理器。');
     const extra: HTMLElement[] = [];
+    if (why === 'reg') extra.push(el('p', 'acp-gift', `🎁 新帳號禮：已送你 $${SIGNUP_GIFT.toLocaleString('en-US')} 遊戲幣！`));
     if (why !== 'reg') extra.push(el('p', 'acp-hint', '舊的救援碼已經不能用了。'));
     if (why === 'reset') extra.push(el('p', 'acp-hint', '其他裝置都已經登出。'));
     const cb = el('input');

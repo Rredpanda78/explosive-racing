@@ -18,6 +18,8 @@ import { SERVER } from './room';
 export const ACCT_KEY = 'explosive-racing-acct';
 /** 遊戲的存檔（src/game/save.ts 的 KEY） */
 export const SAVE_KEY = 'explosive-racing-save-v1';
+/** 新帳號禮：註冊成功送的遊戲幣 */
+export const SIGNUP_GIFT = 15000;
 /** wss:// → https://、ws:// → http:// */
 export const ACCOUNT_API = SERVER.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:') + '/account';
 
@@ -138,6 +140,8 @@ export class AccountClient {
   onConflict: ((local: SaveSummary, cloud: SaveSummary) => Promise<'local' | 'cloud'>) | null = null;
   /** 雲端的存檔寫進 localStorage 了：遊戲重讀進度（profileJson = 寫進去的字串） */
   onRemoteSave: ((profileJson: string) => void) | null = null;
+  /** 註冊成功（送新帳號禮用；在第一次同步之前呼叫） */
+  onRegistered: (() => void) | null = null;
   /** 憑證失效（過期、別台按了登出所有裝置、重設密碼）：這台已經登出 */
   onLoggedOut: (() => void) | null = null;
   /** 現在可以換掉這台的進度／跳出選擇視窗嗎（比賽中、線上房間裡 = false，先等） */
@@ -325,6 +329,8 @@ export class AccountClient {
   async register(name: string, pw: string): Promise<Res<{ rc: string }>> {
     const r = await this.post({ op: 'reg', name: name.trim(), pw });
     if (r?.status !== 200 || typeof r.data.tok !== 'string') return fail(r);
+    // 新帳號禮：先加進這台的進度，接下來第一次同步就會帶上雲端
+    this.onRegistered?.();
     this.signedIn(r, name);
     return { ok: true, rc: String(r.data.rc ?? '') };
   }
