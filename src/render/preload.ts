@@ -13,6 +13,9 @@ const THEME_LANDMARKS: Partial<Record<string, string[]>> = {
   meadow: ['tripo/windmill_tower', 'tripo/windmill_blades'],
   desert: ['tripo/water_tower'],
   city: ['tripo/city_a', 'tripo/city_b', 'tripo/ferris_stand', 'tripo/ferris_wheel', 'tripo/highrise'],
+  // 海底隧道、廟口夜市：造景全是程式產生的（ocean.ts、town.ts），沒有 Tripo 地標
+  ocean: [],
+  taiwan: [],
 };
 
 // 森林模型也登記起來：建場景時用到但還沒載入的話，會補載再重建（見 assets.takeMissing）

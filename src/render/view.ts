@@ -27,7 +27,7 @@ import { batchKart, disposeBatched } from './batch';
 import type { Quality } from '../settings';
 
 /** 每張地圖的天氣 */
-const WEATHER: Record<string, WeatherKind> = { meadow: 'petals', desert: 'sand', city: 'rain' };
+const WEATHER: Record<string, WeatherKind> = { meadow: 'petals', desert: 'sand', city: 'rain', ocean: 'motes' };
 
 const MAX_TRACERS = 320;
 const POOL = 16;
@@ -353,6 +353,7 @@ export class GameView {
     const world = this.world;
     this.weather = new Weather(WEATHER[th.id] ?? 'petals', {
       mobile: this.lowDetail,
+      petals: th.petals,
       groundY: (x, z) => {
         this.groundHint = track.probe(x, z, this.groundHint < 0 ? -1 : this.groundHint);
         return track.probeOn ? track.probeY : world.terrainH(x, z);

@@ -6,6 +6,7 @@ import { carIcon, weaponIcon } from '../render/weaponIcons';
 import { DIFFICULTY, DIFFICULTY_IDS, type DifficultyId } from '../game/difficulty';
 import type { Settings } from '../settings';
 import { ENGINE_STYLES, MUSIC_STYLES, WEAPON_PACKS } from '../audio';
+import { bindKey, clearKey, defaultKeys, KEY_ACTIONS, keyName, loadKeyboardLayout, type KeyAction, type KeyMap } from '../keymap';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
 import type { OnlineSession } from '../net/online';
@@ -68,6 +69,7 @@ export interface ScreenActions {
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+const KEY_HINT = '點一下按鍵格再按想用的鍵；已經被別的動作用掉的鍵會兩邊互換';
 
 /** 一場比賽的結算內容（由 main 計算後交給結算畫面顯示） */
 export interface Summary {
@@ -117,6 +119,8 @@ export class Screens {
       const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (el && !(el as HTMLButtonElement).disabled) this.handle(el.dataset.act!, el.dataset.id);
     });
+    // 知道實際鍵盤配置的字之後（例如 AZERTY），重畫設定頁的按鍵名稱
+    loadKeyboardLayout(() => this.renderKeys());
   }
 
   /** 這台裝置的設定（由 main 指定） */
@@ -143,6 +147,11 @@ export class Screens {
 
   private handle(act: string, id?: string): void {
     const p = this.profile;
+    // 正在等新按鍵時點了別的東西：取消改鍵
+    if (this.capturing && act !== 'keybind') {
+      this.stopCapture();
+      this.renderKeys();
+    }
     switch (act) {
       case 'start': this.act.start(id as RaceMode | undefined); break;
       case 'track': this.act.selectTrack(Number(id)); break;
@@ -204,6 +213,23 @@ export class Screens {
         break;
       case 'layout': this.act.editLayout(); break;
       case 'layoutreset': this.act.resetLayout(); break;
+      case 'keybind': {
+        const [a, s] = (id ?? '').split(':');
+        if (!KEY_ACTIONS.some((x) => x.id === a)) break;
+        const slot = s === '1' ? 1 : 0;
+        // 再點一次同一格 = 取消
+        if (this.capturing?.id === a && this.capturing.slot === slot) {
+          this.stopCapture();
+          this.renderKeys();
+        } else this.startCapture(a as KeyAction, slot);
+        break;
+      }
+      case 'keyreset':
+        this.stopCapture();
+        this.settings.keys = defaultKeys();
+        this.act.settingChanged('keys');
+        this.renderKeys('已恢復預設按鍵');
+        break;
       case 'calib': this.act.calibrateTilt(); break;
       case 'restart': this.act.restart(); break;
       case 'menu': this.act.toMenu(); break;
@@ -314,7 +340,7 @@ export class Screens {
     const dis = loading ? 'disabled' : '';
     const ti = this.trackIndex();
     const cur = this.tracks[ti];
-    const themeName: Record<string, string> = { meadow: '草原', desert: '沙漠', city: '夜城' };
+    const themeName: Record<string, string> = { meadow: '草原', desert: '沙漠', city: '夜城', ocean: '海底', taiwan: '夜市' };
     const cards = this.tracks.map((t, i) => `
       <button class="tcard ${i === ti ? 'on' : ''}" data-act="track" data-id="${i}" ${dis}>
         ${i === ti ? '<em class="tag">已選</em>' : ''}
@@ -348,12 +374,12 @@ export class Screens {
         </div>
         <div class="helpbox hidden" data-act="help">
           <div>
-            <b>鍵盤</b>　<kbd>↑↓←→</kbd> 駕駛　<kbd>Shift</kbd> 甩尾　<kbd>Ctrl</kbd> N2O　<kbd>Z</kbd> 主武器　<kbd>X</kbd> 副武器　<kbd>C</kbd> 後視　<kbd>R</kbd> 重置　<kbd>Esc</kbd> 暫停<br />
+            <b>鍵盤</b>　${this.keyHelp()}<br />
             <b>手機</b>　自動油門；左手方向鍵（或在設定改成傾斜手機），右手開火、N2O、甩尾，右下角煞車<br />
             <b>集氣</b>　甩尾最快；打中對手、擊毀（直接送一瓶）、跟在別人正後方吃尾流、飛越跳台、踩加速帶也都會集氣<br />
-            <b>甩尾</b>　點一下甩尾鍵（0.16 秒內放開）是<b>短漂</b>：回正快、減速少、集氣快，但沒有小噴；按久一點是<b>長漂</b>，按住方向能拖很久，結束後再按一次 <kbd>↑</kbd>（手機按「小噴」）觸發小噴<br />
+            <b>甩尾</b>　點一下甩尾鍵（0.16 秒內放開）是<b>短漂</b>：回正快、減速少、集氣快，但沒有小噴；按久一點是<b>長漂</b>，按住方向能拖很久，結束後再按一次 ${this.kbd('up')}（手機按「小噴」）觸發小噴<br />
             <b>重甩</b>　甩尾中把方向鍵放開再快速按回同一邊（手機連點兩下同一邊的方向或甩尾鍵），甩得更兇、角度更大，適合 180 度髮夾彎；代價是掉一點速度<br />
-            <b>進階</b>　短漂後 0.5 秒內接長漂集氣加成（短接長）；長漂完先不噴、直接甩下一個彎，在第二次甩尾中途按 <kbd>↑</kbd> 就能<b>連噴</b>；甩尾中點一下 <kbd>↓</kbd>（手機點煞車）是<b>斷飄</b>，立刻回正又不掉速<br />
+            <b>進階</b>　短漂後 0.5 秒內接長漂集氣加成（短接長）；長漂完先不噴、直接甩下一個彎，在第二次甩尾中途按 ${this.kbd('up')} 就能<b>連噴</b>；甩尾中點一下 ${this.kbd('down')}（手機點煞車）是<b>斷飄</b>，立刻回正又不掉速<br />
             <b>技巧</b>　倒數到 GO 的瞬間按油門可以起跑衝刺；開著 N2O 撞人傷害加倍；紅色油桶打了會爆
             <div class="hint">點一下關閉</div>
           </div>
@@ -602,8 +628,119 @@ export class Screens {
     if (s) s.scrollTop = scroll;
   }
 
+  // ---------------- 鍵盤按鍵（設定頁與按鍵說明） ----------------
+
+  /** 正在等哪一格的新按鍵 */
+  private capturing: { id: KeyAction; slot: 0 | 1 } | null = null;
+
+  private get keys(): KeyMap {
+    return this.settings?.keys ?? defaultKeys();
+  }
+
+  /** 某個動作的主要鍵 */
+  private kbd(a: KeyAction): string {
+    return `<kbd>${esc(keyName(this.keys[a][0]))}</kbd>`;
+  }
+
+  /** 某個動作的所有鍵（主要／第二個） */
+  private kbdAll(a: KeyAction): string {
+    return this.keys[a].filter(Boolean).map((c) => `<kbd>${esc(keyName(c))}</kbd>`).join('／');
+  }
+
+  /** 按鍵說明的「鍵盤」那一行：跟著目前的鍵位 */
+  private keyHelp(): string {
+    const drive = (['up', 'down', 'left', 'right'] as KeyAction[]).map((a) => keyName(this.keys[a][0]));
+    const d = drive.every((n) => n.length === 1) ? `<kbd>${esc(drive.join(''))}</kbd>` : drive.map((n) => `<kbd>${esc(n)}</kbd>`).join('');
+    const k = (a: KeyAction) => this.kbdAll(a);
+    return `${d} 駕駛　${k('drift')} 甩尾　${k('boost')} N2O　${k('fire1')} 主武器　${k('fire2')} 副武器　${k('look')} 後視　${k('reset')} 重置　<kbd>Esc</kbd>／${k('pause')} 暫停`;
+  }
+
+  /** 設定頁的按鍵列表（每個動作兩格） */
+  private keyRows(): string {
+    const cap = this.capturing;
+    return KEY_ACTIONS.map(({ id, name }) => {
+      const slots = this.keys[id].map((c, i) => {
+        const on = cap?.id === id && cap.slot === i;
+        const label = on ? '請按新按鍵…' : c ? esc(keyName(c)) : '＋';
+        const title = on ? 'Esc 取消' : c ? '點一下換鍵' : '加第二個鍵';
+        const aria = `${name}${i ? '第二個鍵' : '主要鍵'}：${on ? '等待按鍵' : c ? keyName(c) : '未設定'}`;
+        return `<button class="keycap ${on ? 'wait' : ''} ${c || on ? '' : 'empty'}" data-act="keybind" data-id="${id}:${i}" title="${title}" aria-label="${esc(aria)}">${label}</button>`;
+      }).join('');
+      const note = id === 'pause' ? '<em>Esc 也可以</em>' : '';
+      return `<b>${name}</b><div class="keyslots">${slots}${note}</div>`;
+    }).join('');
+  }
+
+  /** 只重畫按鍵列表（不重畫整頁，捲動位置不會跳） */
+  private renderKeys(msg?: string, warn = false): void {
+    if (this.current !== 'settings') return;
+    const box = this.root.querySelector<HTMLElement>('[data-keys]');
+    if (box) box.innerHTML = this.keyRows();
+    const m = this.root.querySelector<HTMLElement>('[data-keymsg]');
+    if (m) {
+      m.textContent = msg ?? (this.capturing ? '按下要用的鍵（Esc 取消、Backspace 清除這一格）' : KEY_HINT);
+      m.classList.toggle('warn', warn);
+    }
+  }
+
+  private startCapture(id: KeyAction, slot: 0 | 1): void {
+    this.stopCapture();
+    this.capturing = { id, slot };
+    // 用捕獲階段先攔下按鍵：不讓遊戲把它當成暫停、重置
+    window.addEventListener('keydown', this.onCaptureKey, true);
+    this.renderKeys();
+  }
+
+  private stopCapture(): void {
+    if (!this.capturing) return;
+    this.capturing = null;
+    window.removeEventListener('keydown', this.onCaptureKey, true);
+    // 按鈕失去焦點，之後按空白鍵才不會又按到它
+    (document.activeElement as HTMLElement | null)?.blur?.();
+  }
+
+  private onCaptureKey = (e: KeyboardEvent): void => {
+    const cap = this.capturing;
+    if (!cap || this.current !== 'settings') {
+      this.stopCapture();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.repeat) return;
+    const name = KEY_ACTIONS.find((a) => a.id === cap.id)?.name ?? '';
+    if (e.code === 'Escape') {
+      this.stopCapture();
+      this.renderKeys();
+      return;
+    }
+    if (e.code === 'Backspace') {
+      const ok = clearKey(this.settings.keys, cap.id, cap.slot);
+      this.stopCapture();
+      if (ok) this.act.settingChanged('keys');
+      this.renderKeys(ok ? `已清除「${name}」的一個按鍵` : `「${name}」至少要有一個按鍵`, !ok);
+      return;
+    }
+    if (!e.code) return;
+    const before = this.settings.keys[cap.id][cap.slot];
+    const r = bindKey(this.settings.keys, cap.id, cap.slot, e.code);
+    this.stopCapture();
+    if (!r.ok) {
+      this.renderKeys(r.why, true);
+      return;
+    }
+    this.act.settingChanged('keys');
+    let msg = `「${name}」改用 ${keyName(e.code)}`;
+    if (r.swapped) {
+      const other = KEY_ACTIONS.find((a) => a.id === r.swapped)?.name ?? '';
+      msg += before ? `，「${other}」換成 ${keyName(before)}` : `（從「${other}」移過來）`;
+    }
+    this.renderKeys(msg);
+  };
+
   /** 設定頁：畫質、音量、配樂、操控與按鈕位置 */
   settingsPage(): void {
+    this.stopCapture();
     this.current = 'settings';
     const s = this.settings;
     const pick = (act: string, cur: string, opts: [string, string][]) =>
@@ -628,9 +765,16 @@ export class Screens {
           <small data-engdesc>${ENGINE_STYLES.find((m) => m.id === s.engineSound)?.desc ?? ''}・點一下試聽</small>
           <b>武器音效</b>${pick('wpnsnd', s.weaponSound, WEAPON_PACKS.map((m) => [m.id, m.name]))}
           <small data-wpndesc>${WEAPON_PACKS.find((m) => m.id === s.weaponSound)?.desc ?? ''}・點一下試聽</small>
+          <b>其他車引擎聲</b><label><input type="checkbox" data-set="otherEngines" ${s.otherEngines ? 'checked' : ''} /> 聽得到附近對手的引擎（分得出遠近、左右、前後）</label>
           <h3>操控輔助</h3>
           <b>自動小噴</b><label><input type="checkbox" data-set="autoMini" ${s.autoMini ? 'checked' : ''} /> 甩尾結束自動噴（不用自己按）</label>
           <b>甩尾輔助</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> 自動回正、限制甩尾角度</label>
+          <div class="kb-only">
+            <h3>鍵盤按鍵</h3>
+            <div class="keyrows" data-keys>${this.keyRows()}</div>
+            <b></b><div class="choices"><button class="diffbtn" data-act="keyreset">恢復預設</button></div>
+            <small class="keymsg" data-keymsg>${KEY_HINT}</small>
+          </div>
           <div class="touch-only">
             <h3>手機操控</h3>
             <b>震動</b><label><input type="checkbox" data-set="vibrate" ${s.vibrate ? 'checked' : ''} /> 壓到路緣、撞擊、擊毀時手機震動（iPhone 不支援）</label>

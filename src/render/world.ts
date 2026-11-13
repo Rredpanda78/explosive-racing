@@ -9,8 +9,10 @@ import { makeInstanced, makeLandmark, makeProp } from './assets';
 import { batchWorld } from './batch';
 import { applyTerrainDetail, grassTufts, roadDetailMaterial } from './detail';
 import { buildForest, hasForest } from './forest';
+import { buildOcean, hasOcean, oceanGlass } from './ocean';
 import { buildRunoff, runoffPad } from './runoff';
 import type { Theme } from './themes';
+import { buildTown, hasTown } from './town';
 
 export interface World {
   group: THREE.Group;
@@ -108,6 +110,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const L = track.length;
   const rng = mulberry32(42 + track.def.id.length * 7);
   const night = theme.night;
+  // 廟口夜市：小鎮造景在 src/render/town.ts（取代一般的看板、散布的大樓、捷徑障礙物與熱氣球）
+  const isTown = hasTown(track.def.id);
   const updaters: ((dt: number, time: number) => void)[] = [];
   const addMesh = (geo: THREE.BufferGeometry, mat: THREE.Material, receive = true): THREE.Mesh => {
     const m = new THREE.Mesh(geo, mat);
@@ -123,6 +127,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   };
   const wrapD = (d: number) => ((d % L) + L) % L;
   const sampleAt = (dist: number): Sample => S[track.wrap(Math.round(wrapD(dist) / track.spacing))];
+  // 海底隧道（ocean.ts）：玻璃隧道裡的路段，玻璃牆就是護欄（不放彩色護欄、路燈、看板）
+  const glassAt = hasOcean(track.def.id) ? oceanGlass(track) : null;
 
   // ---------- 地形 ----------
   const terrain = makeTerrain(track);
@@ -270,8 +276,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
 
   // 夜晚：路面兩側的霓虹燈條
   if (night) {
-    const neonL = new THREE.MeshBasicMaterial({ color: glow(0x22e6ff, 1.9) });
-    const neonR = new THREE.MeshBasicMaterial({ color: glow(0xff3d9a, 1.9) });
+    const neonL = new THREE.MeshBasicMaterial({ color: glow(theme.edgeNeon?.[0] ?? 0x22e6ff, 1.9) });
+    const neonR = new THREE.MeshBasicMaterial({ color: glow(theme.edgeNeon?.[1] ?? 0xff3d9a, 1.9) });
     addMesh(strip(track, { latA: hw - 0.1, yA: 0.06, latB: hw - 0.45, yB: 0.06, scale: 10 }), neonL, false);
     addMesh(strip(track, { latA: -(hw - 0.45), yA: 0.06, latB: -(hw - 0.1), yB: 0.06, scale: 10 }), neonR, false);
   }
@@ -310,11 +316,13 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const gap = { 1: [] as boolean[], [-1]: [] as boolean[] } as Record<number, boolean[]>;
   // 電車平交道：兩側護欄開口讓電車進出（車輛一樣出不去）
   const trams = (track.def.hazards ?? []).filter((h) => h.kind === 'tram');
+  // 機車橫越的巷口也開口（機車從巷子裡騎出來）
+  const lanes = (track.def.hazards ?? []).filter((h) => h.kind === 'scooter' && !h.len);
   for (let i = 0; i < n; i++) {
     const s = S[i];
-    const tramGap = trams.some((h) => Math.abs(relDist(s, h.dist)) < TRAM.width * 2 + 0.6);
+    const tramGap = trams.some((h) => Math.abs(relDist(s, h.dist)) < TRAM.width * 2 + 0.6) || lanes.some((h) => Math.abs(relDist(s, h.dist)) < 4.2);
     // 軟邊界：有緩衝區的路段不放彩色護欄（外圍屏障在 runoff.ts）
-    for (const sg of [1, -1]) gap[sg].push(tramGap || track.runoffW(i, sg) > 0 || (BR.length > 0 && inBranch(s.x + s.nx * sg * (hw + 0.6), s.z + s.nz * sg * (hw + 0.6), -0.4)));
+    for (const sg of [1, -1]) gap[sg].push(tramGap || track.runoffW(i, sg) > 0 || !!glassAt?.[i] || (BR.length > 0 && inBranch(s.x + s.nx * sg * (hw + 0.6), s.z + s.nz * sg * (hw + 0.6), -0.4)));
   }
   const wallOn = (sg: number) => (_s: Sample, i: number) => !gap[sg][i];
   for (const sg of [1, -1]) {
@@ -429,8 +437,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       const outFlag = b.samples.map((s) => mainLat(s.x, s.z) > hw - hb + 0.3);
       // 碎石、泥地用泥土路面；其他是鋪好的窄柏油路
       addMesh(strip(b, { latA: hb, yA: 0.03, latB: -hb, yB: 0.03, scale: 9, when: (_s, i) => outFlag[i] }), b.def.rough ? scMat : pavedMat);
-      // 障礙物
-      for (const p of b.posts) {
+      // 障礙物（小鎮的攤車、垃圾桶、機車由 town.ts 畫）
+      if (!isTown) for (const p of b.posts) {
         const o = makePost(p.r);
         o.position.set(p.x, p.y, p.z);
         root.add(o);
@@ -710,21 +718,22 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   }
   // 整條賽道：直線放路燈，彎道外側放旗塔，隔一段放看板
   const lampStep = night ? 30 : 42;
-  for (let d = 200; d < L - 80; d += lampStep) {
+  for (let d = 200; !glassAt && d < L - 80; d += lampStep) {
     const s = sampleAt(d);
     const out = s.curv > 0 ? -1 : 1; // 彎道外側
     const zone = Math.floor(d / 300) % 4;
     if (Math.abs(s.curv) < 0.01) {
       for (const [dd, sg] of [[0, 1], [lampStep / 2, -1]] as [number, number][]) {
-        const g = place('lightPostLarge', d + dd, sg * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 });
+        // 小鎮的路燈由 town.ts 合併畫（省下幾百個 draw call）
+        const g = isTown ? null : place('lightPostLarge', d + dd, sg * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 });
         if (g) lamps.push({ s: sampleAt(d + dd), sg, ro: g.userData.ro });
       }
     } else {
-      place(zone % 2 ? 'bannerTowerRed' : 'bannerTowerGreen', d, out * (hw + 5), 5, { sink: 0.6 });
-      const g = night ? place('lightPostLarge', d, out * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 }) : null;
+      if (!isTown) place(zone % 2 ? 'bannerTowerRed' : 'bannerTowerGreen', d, out * (hw + 5), 5, { sink: 0.6 });
+      const g = night && !isTown ? place('lightPostLarge', d, out * (hw + 3.4), 5.5, { onRoadLevel: true, sink: 0.3 }) : null;
       if (g) lamps.push({ s, sg: out, ro: g.userData.ro });
     }
-    if (Math.floor(d / lampStep) % 3 === 0) place(zone % 2 ? 'billboard' : 'billboardLow', d + 10, out * (far - 2), 13, { sink: 0.3 });
+    if (!isTown && Math.floor(d / lampStep) % 3 === 0) place(zone % 2 ? 'billboard' : 'billboardLow', d + 10, out * (far - 2), 13, { sink: 0.3 });
   }
   // 跳台旁：兩側看台與旗子
   for (const r of track.ramps) {
@@ -1046,8 +1055,15 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const forest = hasForest(track.def.id)
     ? buildForest({ track, terrainH, grid: { x0: gx0, z0: gz0, step: STEP, nx: gnx, nz: gnz }, world: root, bounds: { minX, maxX, minZ, maxZ }, lake, props, shadows, lowDetail })
     : null;
+  // 蔚藍海廊：玻璃隧道、大廳與圓頂、珊瑚、海藻、魚群、沉船與海溝（src/render/ocean.ts）
+  const ocean = glassAt ? buildOcean({ track, terrainH, glass: glassAt, props, shadows, lowDetail, bounds: { minX, maxX, minZ, maxZ } }) : null;
+  const town = isTown ? buildTown({ track, terrainH, bounds: { minX, maxX, minZ, maxZ }, shadows, lowDetail }) : null;
   if (forest) {
     root.add(forest.group);
+  } else if (ocean) {
+    root.add(ocean.group);
+  } else if (town) {
+    root.add(town.group);
   } else if (theme.vegetation === 'forest') {
     const spots = scatter(lowDetail ? 380 : 760, hw + 11, 9999, 0).filter((s) => s.d < 60 || rng() < 0.45);
     const lists: THREE.Matrix4[][] = [[], [], [], []];
@@ -1265,7 +1281,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const mMat = new THREE.MeshLambertMaterial({ color: theme.mountain, flatShading: true });
   const capMat2 = theme.mountainCap !== null ? new THREE.MeshLambertMaterial({ color: theme.mountainCap, flatShading: true }) : null;
   const mesa = theme.vegetation === 'desert';
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < (ocean ? 0 : 26); i++) {
     const a = (i / 26) * Math.PI * 2 + rng() * 0.2;
     const r = 760 + rng() * 260;
     const h = (mesa ? 90 : 150) + rng() * (mesa ? 120 : 190);
@@ -1365,7 +1381,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const envelope = new THREE.SphereGeometry(9, 12, 10).scale(1, 1.15, 1);
   const basket = new THREE.BoxGeometry(3, 2.4, 3);
   const basketMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3c });
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < (ocean || town ? 0 : 6); i++) {
     const g = new THREE.Group();
     const col = ACC[i % ACC.length];
     const e = new THREE.Mesh(envelope, night ? new THREE.MeshBasicMaterial({ color: glow(col, 1.5) }) : new THREE.MeshLambertMaterial({ color: col, flatShading: true }));
@@ -1386,6 +1402,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     update(dt, time, camera) {
       for (const u of updaters) u(dt, time);
       forest?.update(dt, time, camera);
+      ocean?.update(dt, time, camera);
+      town?.update(dt, time, camera);
       sky.position.copy(camera.position);
       if (stars) stars.position.copy(camera.position);
       if (clouds) clouds.rotation.y += dt * 0.004;
@@ -1397,5 +1415,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   };
   // 靜態合併：不會動的網格依材質合成少數幾個（大幅減少 draw call）；update 裡會動的東西自動排除（見 batch.ts）
   batchWorld(world);
+  // 海底：水面透下來的焦散光打在路面、地面與景物上；天空依鏡頭深度變暗
+  // （在合併之後套用：焦散用世界座標，合併出來的網格也一起套上）
+  ocean?.finish(root, sky.material as THREE.ShaderMaterial);
   return world;
 }

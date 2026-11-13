@@ -3,7 +3,9 @@ import type { Race, RaceEvent } from './game/race';
 import { clamp } from './game/util';
 
 import { MusicEngine, type MusicStyle } from './music';
+import { OtherEngines, type ListenerCam } from './otherEngines';
 import { EngineSound, WeaponSfx, previewEngine, previewWeapons, type EngineStyle, type WeaponPack } from './sfx';
+import type { Kart } from './game/kart';
 
 export { MUSIC_STYLES } from './music';
 export type { MusicStyle } from './music';
@@ -29,6 +31,12 @@ export class GameAudio {
   private rumbleGain!: GainNode;
   private rumbleLfo!: OscillatorNode;
   muted = false;
+  /** 附近其他車的引擎聲（src/otherEngines.ts）；聽者跟著追車鏡頭 */
+  private others?: OtherEngines;
+  private othersOn = true;
+  camera: ListenerCam | null = null;
+  /** 這一個單次音效的左右聲道（別台車那裡發生的才會偏，自己的永遠置中） */
+  private pan = 0;
 
   private mode: MusicMode = 'off';
   /** 配樂引擎（src/music.ts）與驅動它排程的計時器 */
@@ -78,6 +86,9 @@ export class GameAudio {
     // 引擎聲與武器音效：玩家在設定頁選的那一組
     this.eng = new EngineSound(ctx, this.sfx);
     this.eng.setStyle(this.engineStyle);
+    // 其他車：電腦最多 4 台、手機 2 台（手機用比較省的 equalpower 擺位）
+    this.others = new OtherEngines(ctx, this.sfx, window.matchMedia('(pointer: coarse)').matches);
+    this.others.setStyle(this.engineStyle);
     this.wpn = new WeaponSfx(ctx, this.sfx);
     this.wpn.setPack(this.weaponPack);
 
@@ -204,6 +215,17 @@ export class GameAudio {
   setEngineStyle(s: EngineStyle): void {
     this.engineStyle = s;
     this.eng?.setStyle(s);
+    this.others?.setStyle(s);
+  }
+
+  /** 設定頁「其他車引擎聲」 */
+  setOtherEngines(on: boolean): void {
+    this.othersOn = on;
+  }
+
+  /** 除錯／驗證用：其他車引擎目前的聲部與每幀花費 */
+  get otherEngines(): OtherEngines | undefined {
+    return this.others;
   }
 
   setWeaponPack(p: WeaponPack): void {
@@ -231,6 +253,8 @@ export class GameAudio {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
+    // 其他車的引擎：跟玩家的引擎一樣，暫停與選單時靜音（玩家陣亡時照樣聽得到別人）
+    this.others?.update(race, this.camera, active && this.othersOn);
     const p = race?.player;
     const eng = this.eng!, wpn = this.wpn!;
     if (!p || !active || p.dead) {
@@ -273,7 +297,7 @@ export class GameAudio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol * (0.85 + Math.random() * 0.3), t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(f).connect(g).connect(this.sfx);
+    src.connect(f).connect(g).connect(this.oneShotOut(dur));
     src.start(t, Math.random() * 0.5);
     src.stop(t + dur + 0.02);
   }
@@ -289,9 +313,27 @@ export class GameAudio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-    o.connect(g).connect(this.sfx);
+    o.connect(g).connect(this.oneShotOut(0.52));
     o.start(t);
     o.stop(t + 0.52);
+  }
+
+  /** 單次音效的出口：別台車那裡的聲音經過一個立體聲擺位（播完就拆掉） */
+  private oneShotOut(dur: number): AudioNode {
+    const ctx = this.ctx!;
+    if (Math.abs(this.pan) < 0.05 || !ctx.createStereoPanner) return this.sfx;
+    const sp = ctx.createStereoPanner();
+    sp.pan.value = this.pan;
+    sp.connect(this.sfx);
+    setTimeout(() => sp.disconnect(), (dur + 0.3) * 1000);
+    return sp;
+  }
+
+  /** 事件發生的位置 → 單次音效的左右聲道（自己的事件、沒有位置的事件都置中） */
+  private aim(e: RaceEvent, p: Kart): void {
+    const o = e as { k?: Kart; a?: Kart; b?: Kart; x?: number; z?: number };
+    const mine = o.k === p || o.a === p || o.b === p;
+    this.pan = mine || o.x === undefined || o.z === undefined || !this.others ? 0 : this.others.panAt(o.x, o.z);
   }
 
   beep(freq: number, dur: number, vol = 0.25): void {
@@ -313,6 +355,7 @@ export class GameAudio {
     const wpn = this.wpn;
     if (!this.ctx || !wpn) return;
     const p = race.player;
+    this.aim(e, p);
     const near = (x: number, z: number, range: number) => clamp(1 - Math.hypot(x - p.x, z - p.z) / range, 0, 1);
     switch (e.t) {
       case 'shot': {
@@ -349,6 +392,19 @@ export class GameAudio {
         // 平交道的叮噹聲
         const v = near(e.x, e.z, 160) * 0.16;
         if (v > 0.01) for (let i = 0; i < 4; i++) setTimeout(() => this.beep(i % 2 ? 1046 : 1318, 0.18, v), i * 260);
+        break;
+      }
+      case 'street': {
+        if (e.kind === 'horn') {
+          // 機車喇叭：叭叭兩聲
+          const v = near(e.x, e.z, 90) * 0.14;
+          if (v > 0.01) { this.beep(415, 0.12, v); setTimeout(() => this.beep(415, 0.16, v), 170); }
+        } else {
+          // 鞭炮：一連串劈哩啪啦的短促爆裂聲
+          const v = near(e.x, e.z, 110);
+          if (v > 0.02) for (let i = 0; i < 16; i++) setTimeout(() => this.burst(1600 + Math.random() * 2600, 0.9, 0.035 + Math.random() * 0.03, v * (0.25 + Math.random() * 0.25)), i * 55 + Math.random() * 45);
+          if (v > 0.02) this.thump(v * 0.25);
+        }
         break;
       }
       case 'lock':

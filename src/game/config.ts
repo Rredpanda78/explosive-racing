@@ -68,6 +68,8 @@ export const CFG = {
   hardGrip: 1.3,
   hardKick: 0.08,
   hardDrag: 1.3,
+  /** 甩尾滑角上限（弧度，約 80 度）：一般重甩最多約 79 度不受影響，只擋住甩過頭 */
+  maxDriftSlip: 1.4,
 
   // 小噴（甩尾結束後短時間內再按一次加速）
   miniMinDrift: 0.35,

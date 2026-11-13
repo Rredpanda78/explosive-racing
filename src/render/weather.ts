@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 
-export type WeatherKind = 'petals' | 'sand' | 'rain';
+/** motes：海裡懸浮的細小顆粒（海雪），慢慢往上飄，開快時拉成細線 */
+export type WeatherKind = 'petals' | 'sand' | 'rain' | 'motes';
 
 export interface WeatherOpts {
   mobile: boolean;
   /** 地面高度（splash、沙塵貼地用） */
   groundY: (x: number, z: number) => number;
+  /** 花瓣換成別的東西（例如廟口的金紙灰燼）：[顏色, 亮度倍率]，亮度 > 1 的會發光 */
+  petals?: [number, number][];
 }
 
 const R = Math.random;
@@ -334,6 +337,11 @@ export class Weather {
       this.devil.mesh.visible = false;
       this.devilData = new Float32Array(nd * 4);
       for (let i = 0; i < nd; i++) this.devilData.set([R(), R() * TAU, 0.7 + R() * 0.4, R() < 0.2 ? 1 : 0], i * 4);
+    } else if (kind === 'motes') {
+      this.makeField({
+        count: n(1600), box: [90, 36, 90], defines: {}, color: 0xd2f4ff, opacity: 0.42,
+        shape: [0.04, 0.0014, 0.018, 0.16], maxLen: 1.3, vary: 0.45, lean: 0.55, sway: 0,
+      });
     } else {
       const geo = this.makeField({
         count: n(500), box: [70, 26, 70], defines: { PETAL: '' }, color: 0xffffff, opacity: 1,
@@ -343,9 +351,15 @@ export class Weather {
       const col = new Float32Array(cnt * 4);
       const c = new THREE.Color();
       for (let i = 0; i < cnt; i++) {
-        const leaf = R() < 0.14;
-        const pal = leaf ? LEAF_COLS : PETAL_COLS;
-        c.setHex(pal[Math.floor(R() * pal.length)]);
+        const custom = opts.petals;
+        const leaf = !custom && R() < 0.14;
+        if (custom) {
+          const [hx, k] = custom[Math.floor(R() * custom.length)];
+          c.setHex(hx).multiplyScalar(k);
+        } else {
+          const pal = leaf ? LEAF_COLS : PETAL_COLS;
+          c.setHex(pal[Math.floor(R() * pal.length)]);
+        }
         col.set([c.r, c.g, c.b, leaf ? 1 : 0], i * 4);
       }
       geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(col, 4));
@@ -439,6 +453,10 @@ export class Weather {
       const sp = 12 * (1 + 0.6 * g);
       this.vel.set(wx * sp, 0, wz * sp);
       this.center.set(cam.x, this.groundSm - 1, cam.z);
+    } else if (this.kind === 'motes') {
+      // 洋流：慢慢往一個方向漂，同時往上浮
+      this.vel.set(wx * (0.7 + g), 0.45, wz * (0.7 + g));
+      this.center.set(cam.x, cam.y + 2, cam.z);
     } else {
       // 陣風：側向把花瓣吹快、略微上揚
       const gx = Math.cos(this.gustAng) * 7 * g, gz = Math.sin(this.gustAng) * 7 * g;

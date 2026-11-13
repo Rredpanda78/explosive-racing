@@ -29,14 +29,17 @@ export function skyEnvironment(pmrem: THREE.PMREMGenerator, th: Theme): THREE.We
       cloud: { value: th.cloud === null ? 0 : 1 },
       night: { value: night ? 1 : 0 },
       mesa: { value: th.vegetation === 'desert' ? 1 : 0 },
+      ocean: { value: th.vegetation === 'ocean' ? 1 : 0 },
       neon: { value: neon },
+      glow: { value: new THREE.Vector3(...(th.horizonGlow ?? [0.16, 0.05, 0.2])) },
     },
     vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: /* glsl */ `
       varying vec3 vDir;
       uniform vec3 top, horizon, ground, road, mountain, sunDir, sunCol;
-      uniform float disc, cloud, night, mesa;
+      uniform float disc, cloud, night, mesa, ocean;
       uniform vec3 neon[5];
+      uniform vec3 glow;
       float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float noise(vec2 p) {
         vec2 i = floor(p), f = fract(p);
@@ -86,12 +89,26 @@ export function skyEnvironment(pmrem: THREE.PMREMGenerator, th: Theme): THREE.We
             float sgn = (1.0 - smoothstep(wa * 0.8, wa, da)) * (1.0 - smoothstep(he * 0.8, he, abs(y - e0)));
             c += neon[i - (i / 5) * 5] * sgn * 5.0;
           }
-          // 城市光害：地平線附近偏紫紅的光暈
-          c += vec3(0.16, 0.05, 0.2) * exp(-abs(y) * 14.0);
+          // 城市光害：地平線附近的光暈（夜城偏紫紅、夜市小鎮偏橘）
+          c += glow * exp(-abs(y) * 14.0);
         }
         // 太陽（月亮）本體與光暈：本體很亮，模糊後在車漆上變成一塊柔和的亮斑
         float s = max(dot(d, sunDir), 0.0);
         c += sunCol * disc * (pow(s, 1800.0) * 70.0 + pow(s, 90.0) * 1.4 + pow(s, 10.0) * 0.25);
+        // 海底：頭頂是水面透進來的亮窗（邊緣有波紋），四周是深藍的海水，往下是暗青色的海床與沙地，
+        // 再加幾道從水面斜射下來的光束；車漆會映出上亮下暗的水中光線
+        if (ocean > 0.5) {
+          float up = clamp(y, -1.0, 1.0);
+          vec3 deep = horizon * 0.55;
+          c = mix(horizon, deep, smoothstep(0.0, -0.5, up));
+          c = mix(c, top, smoothstep(0.05, 0.75, up));
+          float ripple = fbm(d.xz / (abs(y) + 0.3) * 6.0) * 0.5;
+          float win = smoothstep(0.62, 0.7, up + ripple * 0.06);
+          c += top * win * (1.1 + ripple);
+          float rays = pow(max(0.0, sin(az * 9.0 + fbm(vec2(az * 3.0, 1.0)) * 4.0)), 6.0) * smoothstep(-0.05, 0.4, up) * (1.0 - win);
+          c += top * rays * 0.35;
+          if (y < 0.0) c = mix(c, ground * 0.7 + horizon * 0.2, smoothstep(-0.25, -0.7, y));
+        }
         gl_FragColor = vec4(c, 1.0);
       }`,
   });

@@ -289,7 +289,11 @@ export class Hud {
         break;
       case 'hazard':
         if (e.k === p) this.hitFrom(e.x, e.z, null);
-        if (e.k === p) this.popup(e.kind === 'hammer' ? '被鐵鎚砸飛！' : e.kind === 'tram' ? '被電車撞飛！' : '被落石撞到！', 'warn');
+        if (e.k === p) {
+          const train = race.track.def.hazards?.some((h) => h.train);
+          const msg: Record<string, string> = { hammer: '被鐵鎚砸飛！', tram: train ? '被火車撞飛！' : '被電車撞飛！', boulder: '被落石撞到！', scooter: '被機車擦撞！', firecracker: '被鞭炮炸到！' };
+          this.popup(msg[e.kind] ?? '小心！', 'warn');
+        }
         break;
       case 'lock':
         if (e.k === p) this.popup('被追蹤導彈鎖定！', 'warn');
@@ -306,7 +310,7 @@ export class Hud {
         if (e.k !== p) break;
         if (e.e === 'jump') this.popup('飛越！');
         else if (e.e === 'n2o') this.popup('N2O +1', 'blue');
-        else if (e.e === 'mini') { if (p.combo < 2) this.popup('小噴！', 'gold'); }
+        // 小噴：甩完時下方已經有「小噴！」的時機提示，這裡不再另外跳一個（使用者說兩個重複）
         else if (e.e === 'combo') this.popup(`連噴 ×${p.combo}`, 'gold');
         else if (e.e === 'chain') this.popup('短接長！集氣加速', 'blue');
         else if (e.e === 'driftCancel') this.popup('斷飄');

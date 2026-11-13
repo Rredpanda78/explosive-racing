@@ -34,13 +34,19 @@ export interface Theme {
   mountain: number;
   mountainCap: number | null;
   cloud: number | null;
-  vegetation: 'forest' | 'desert' | 'city';
+  vegetation: 'forest' | 'desert' | 'city' | 'ocean';
   lake: boolean;
   lakeColor: number;
   turbines: boolean;
   flowers: boolean;
   /** 帳篷與看台的重點色 */
   accents: number[];
+  /** 夜晚路面兩側燈條的顏色（左、右）；沒設定 = 青色、洋紅 */
+  edgeNeon?: [number, number];
+  /** 夜晚地平線的光害顏色（環境光貼圖用）；沒設定 = 偏紫紅 */
+  horizonGlow?: [number, number, number];
+  /** 飄在空中的東西換顏色（[顏色, 亮度倍率]）；沒設定 = 櫻花花瓣 */
+  petals?: [number, number][];
 }
 
 export const THEMES: Record<ThemeId, Theme> = {
@@ -91,5 +97,41 @@ export const THEMES: Record<ThemeId, Theme> = {
     mountain: 0x1a2140, mountainCap: null, cloud: null,
     vegetation: 'city', lake: true, lakeColor: 0x12305c, turbines: false, flowers: false,
     accents: [0xff3d9a, 0x22e6ff, 0x9b5cff, 0xffe14d, 0x39ffb0],
+  },
+  // 海底隧道：從水面透下來的青藍色光，霧就是海水（越深越暗，見 ocean.ts 的深度氛圍）
+  ocean: {
+    id: 'ocean', night: false,
+    skyTop: 0x7fe6f6, skyHorizon: 0x0e5878, fogNear: 24, fogFar: 360,
+    sunDir: [0.22, 0.93, 0.3], sunColor: 0xd8f6ff, sunIntensity: 1.9, sunDisc: 0.7,
+    hemiSky: 0x7fd0f2, hemiGround: 0x23525c, hemiIntensity: 0.85,
+    exposure: 1.0, bloom: 0.24,
+    ground: ['#a8996f', 'rgba(214,200,160,0.45)', 'rgba(96,104,84,0.45)'],
+    groundLow: [0.6, 0.74, 0.8], groundHigh: [0.98, 0.95, 0.86],
+    shoulder: 0xb3a682, farGround: 0x5f8a8e,
+    road: '#4a5866', roadSpeck: 72,
+    walls: ['#ff6f61', '#ffd23f', '#2ec4b6', '#4d9de0'],
+    mountain: 0x1d4f66, mountainCap: null, cloud: null,
+    vegetation: 'ocean', lake: false, lakeColor: 0x1d6f8f, turbines: false, flowers: false,
+    accents: [0xff6f61, 0x2ec4b6, 0xffd23f, 0x4d9de0, 0xc77dff],
+  },
+  // 台灣小鎮的夏夜：濕熱的暖色霧氣、燈籠的紅與攤販燈泡的黃，點綴檳榔攤的粉紅、綠色霓虹
+  taiwan: {
+    id: 'taiwan', night: true,
+    skyTop: 0x0b0818, skyHorizon: 0x3a2030, fogNear: 190, fogFar: 980,
+    sunDir: [-0.4, 0.58, -0.45], sunColor: 0xc9cfff, sunIntensity: 0.85, sunDisc: 0.4,
+    hemiSky: 0xd8a27a, hemiGround: 0x4a2c24, hemiIntensity: 1.15,
+    exposure: 1.12, bloom: 0.44,
+    ground: ['#302b2c', 'rgba(86,76,70,0.5)', 'rgba(20,16,18,0.5)'],
+    groundLow: [0.86, 0.82, 0.8], groundHigh: [1.0, 0.95, 0.9],
+    shoulder: 0x7c746e, farGround: 0x3c3537,
+    road: '#4a4a52', roadSpeck: 60,
+    walls: ['#e8343f', '#f2efe8', '#e8343f', '#f2efe8'],
+    mountain: 0x1d1a2b, mountainCap: null, cloud: null,
+    vegetation: 'city', lake: false, lakeColor: 0x1a2a44, turbines: false, flowers: false,
+    accents: [0xff3b30, 0xffc23d, 0xff4fa3, 0x3dff8a, 0xff8a2a],
+    edgeNeon: [0xffb43a, 0xff4a3a],
+    horizonGlow: [0.26, 0.11, 0.05],
+    // 廟口燒金紙飄出來的火星與紙灰
+    petals: [[0xff9a3a, 2.2], [0xffc45a, 1.8], [0xff6a2a, 2.0], [0xd8b860, 0.9], [0x5a524c, 0.8], [0x48423e, 0.7]],
   },
 };
