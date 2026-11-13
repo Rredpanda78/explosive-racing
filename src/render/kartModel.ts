@@ -519,7 +519,7 @@ export class KartView {
     c.renderOrder = 1;
     gr.add(c);
     if (fx.rich) {
-      // N2O 時噴口照在地上的光（噴口顏色）
+      // N2O 時噴口照在地上的光（噴口顏色；調淡，車尾不要糊成一團）
       const em = new THREE.MeshBasicMaterial({ color: new THREE.Color(KIT_STYLE[look.model]?.flame ?? 0x59ccff), map: glowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
       this.ownMats.push(em);
       const e = (this.exhaustGlow = new THREE.Mesh(groundGeo, em));
@@ -1362,7 +1362,7 @@ export class KartView {
     if (this.exhaustGlow) {
       const on = d * clamp(1 - k.air / 4, 0, 1);
       this.exhaustGlow.visible = on > 0.02;
-      (this.exhaustGlow.material as THREE.MeshBasicMaterial).opacity = 0.5 * on * (0.85 + Math.random() * 0.3);
+      (this.exhaustGlow.material as THREE.MeshBasicMaterial).opacity = 0.22 * on * (0.85 + Math.random() * 0.3);
     }
     // 尾燈：油門往後（煞車、倒車）或減速很猛時變亮；連線的對手沒有油門資訊，就看減速
     if (this.tailMat) {

@@ -55,7 +55,8 @@ const SpeedShader = {
       vec2 dir = uv - uCenter;
       float dist = length(vec2(dir.x * uAspect, dir.y));
       // 只模糊邊緣：中央（車子與前方的路）保持清楚
-      float edge = smoothstep(0.22, 0.9, dist) * uBoost;
+      // 0.4 以內（含畫面中下方的玩家車）完全不模糊
+      float edge = smoothstep(0.4, 0.95, dist) * uBoost;
       vec2 step = dir * (0.065 * edge / 6.0);
       // 每個像素的取樣起點錯開一點（抖動），把一格一格的殘影變成平順的拖影
       float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);

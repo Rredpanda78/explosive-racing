@@ -985,7 +985,7 @@ export class GameView {
     }
   }
 
-  /** N2O 速度感後製：放射模糊與色散跟著 boostK，排氣管後方的熱浪跟著玩家的噴射 */
+  /** N2O 速度感後製：放射模糊與色散跟著 boostK，車尾只留淡淡的熱浪 */
   private updateSpeedFx(dt: number, p: Kart): void {
     const sp = this.speedPass;
     if (!sp) return;
@@ -993,7 +993,8 @@ export class GameView {
     // 只有 N2O 才有放射模糊與色散（加速帶、小噴只有排氣熱浪）；開始時跟著 boostK 漸強，結束時很快退掉
     this.speedK += ((n2o ? Math.min(1, this.boostK * 1.25) : 0) - this.speedK) * Math.min(1, dt * (n2o ? 8 : 6));
     const boost = this.speedK;
-    const hazeWant = p.dead ? 0 : n2o ? 1 : p.miniT > 0 || p.padT > 0 ? 0.45 : 0;
+    // 車尾熱浪：原本太強（使用者覺得奇怪），只在 N2O 時留一點點（3 成）
+    const hazeWant = n2o ? 0.3 : 0;
     this.hazeK += (hazeWant - this.hazeK) * Math.min(1, dt * (hazeWant > this.hazeK ? 10 : 3));
     let hx = 0.5, hy = 0.3, hr = 0.1;
     const kv = this.kartViews.get(p);
@@ -1006,7 +1007,7 @@ export class GameView {
       if (this.v3.z < 1) {
         hx = this.v3.x * 0.5 + 0.5;
         hy = this.v3.y * 0.5 + 0.5;
-        hr = clamp(0.95 / Math.max(1, d), 0.04, 0.22);
+        hr = clamp(0.7 / Math.max(1, d), 0.03, 0.15);
       } else this.hazeK = 0;
     }
     sp.set(clamp(boost, 0, 1), this.hazeK, hx, hy, hr, this.camera.aspect, performance.now() / 1000);
