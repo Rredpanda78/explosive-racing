@@ -4,6 +4,7 @@ import type { Branch, Sample, Track } from '../game/track';
 import { mulberry32 } from '../game/util';
 import { loadSettings } from '../settings';
 import { cloneModel } from './assets';
+import { runoffPad } from './runoff';
 
 /**
  * 金林飛躍的森林：
@@ -1235,13 +1236,21 @@ export function buildForest(ctx: ForestCtx): Forest {
     }
     curvMax[i] = m;
   }
-  /** 路肩的高度（從護欄外往下斜到 9 m 外），不在路肩上回傳 -Infinity */
-  const shoulderY = (s: Sample, lat: number, half: number): number => {
+  /**
+   * 路肩的高度（從護欄外往下斜 8 m），不在路肩上回傳 -Infinity。
+   * ro：軟邊界的緩衝區寬度（主線才有），路肩改從緩衝區外的屏障後面開始
+   */
+  const shoulderY = (s: Sample, lat: number, half: number, ro = 0): number => {
     const al = Math.abs(lat);
-    if (al < half + 0.95 || al > half + 9) return -Infinity;
-    if (s.curv * lat > 0 && 0.9 / Math.abs(s.curv) < half + 9) return -Infinity;
-    return s.y - 0.02 - 3.18 * ((al - half - 0.95) / 8.05);
+    const in0 = half + (ro > 0 ? ro + runoffPad(ro) : 0.95);
+    if (al < in0 || al > in0 + 8.05) return -Infinity;
+    if (s.curv * lat > 0 && 0.9 / Math.abs(s.curv) < in0 + 8.05) return -Infinity;
+    return s.y - 0.02 - 3.18 * ((al - in0) / 8.05);
   };
+  /** 軟邊界：主線這一側的外圍屏障比原本的護欄往外移了多少（沒有緩衝區是 0）；樹與林下植物都從屏障後面開始長 */
+  const roW = (si: number, lat: number) => track.runoffW(si, Math.sign(lat) || 1);
+  const roEx = (si: number, lat: number) => { const w = roW(si, lat); return w > 0 ? w + runoffPad(w) - 0.95 : 0; };
+  const roReach = track.hasRunoff ? 16 : 0;
 
   // 已經擺好的景物
   const boxes: { x0: number; x1: number; z0: number; z1: number }[] = [];
@@ -1367,7 +1376,9 @@ export function buildForest(ctx: ForestCtx): Forest {
     // 路邊留空：護欄外的路肩、彎道外側多留，樹冠不能伸到鏡頭的路線上
     const cm = curvMax[si];
     const outside = cm * lat < 0 && Math.abs(cm) > 0.01;
-    const clear = hw + 8 + (outside ? 3.5 : 0) + hash2(gi, gj, 6) * 1.5;
+    // 有緩衝區的那一側：樹緊貼在屏障後面 3 m 起（還是要留鏡頭的空間），森林照樣夾著路
+    const ex = roEx(si, lat);
+    const clear = (ex > 0 ? hw + 0.95 + ex + 3 : hw + 8) + (outside ? 3.5 : 0) + hash2(gi, gj, 6) * 1.5;
     if (dm < clear + cr * 0.4) continue;
     let nearBranch = false;
     for (const br of branches) {
@@ -1498,7 +1509,7 @@ export function buildForest(ctx: ForestCtx): Forest {
   /** 地面高度：在路肩上就用路肩的斜面 */
   const floorAt = (x: number, z: number, s: Sample, lat: number): number => {
     let y = ground(x, z);
-    const sh = shoulderY(s, lat, hw);
+    const sh = shoulderY(s, lat, hw, track.hasRunoff ? roW(track.wrap(Math.round(s.dist / track.spacing)), lat) : 0);
     if (sh > y) y = sh;
     for (const br of branches) {
       if (!br.b.inBox(x, z)) continue;
@@ -1514,7 +1525,7 @@ export function buildForest(ctx: ForestCtx): Forest {
   /** 林下植物能不能放在這裡（不在路上、捷徑上、機關與拱門的柱子旁） */
   const undOk = (x: number, z: number, si: number, dm: number, lat: number): boolean => {
     const s = S[si];
-    if (dm < hw + 2.6) return false;
+    if (dm < hw + 2.6 + roEx(si, lat)) return false;
     const al = Math.abs(lat);
     if (al < hw + 5.5) {
       for (const d of hazards) if (Math.abs(relDist(s.dist, d)) < 6) return false;
@@ -1535,14 +1546,16 @@ export function buildForest(ctx: ForestCtx): Forest {
   for (let gi = 0; gi < nUI; gi++) for (let gj = 0; gj < nUJ; gj++) {
     const x = ux0 + (gi + hash2(gi, gj, 21)) * T.undCell;
     const z = uz0 + (gj + hash2(gi, gj, 22)) * T.undCell;
-    if (main.lowerBound(x, z) > hw + 46) continue;
-    const si = main.nearest(x, z, hw + 46);
+    if (main.lowerBound(x, z) > hw + 46 + roReach) continue;
+    const si = main.nearest(x, z, hw + 46 + roReach);
     if (si < 0) continue;
     const dm = main.d;
     const s = S[si];
     const lat = (x - s.x) * s.nx + (z - s.z) * s.nz;
-    const edge = dm > hw + 6 && dm < hw + 14;
-    const p = edge ? 1 : dm < hw + 20 ? 0.85 : 0.55;
+    // 最密的一圈跟著護欄（或緩衝區的屏障）走
+    const ex = roEx(si, lat);
+    const edge = dm > hw + 6 + ex && dm < hw + 14 + ex;
+    const p = edge ? 1 : dm < hw + 20 + ex ? 0.85 : 0.55;
     if (hash2(gi, gj, 23) > p) continue;
     if (!undOk(x, z, si, dm, lat)) continue;
     zoneWeights(s.dist, L, w);
@@ -1578,13 +1591,14 @@ export function buildForest(ctx: ForestCtx): Forest {
   for (let gi = 0; gi < nLI; gi++) for (let gj = 0; gj < nLJ; gj++) {
     const x = ctx.bounds.minX - 80 + (gi + hash2(gi, gj, 31)) * T.logCell;
     const z = ctx.bounds.minZ - 80 + (gj + hash2(gi, gj, 32)) * T.logCell;
-    if (main.lowerBound(x, z) > hw + 62) continue;
-    const si = main.nearest(x, z, hw + 62);
+    if (main.lowerBound(x, z) > hw + 62 + roReach) continue;
+    const si = main.nearest(x, z, hw + 62 + roReach);
     if (si < 0) continue;
     const dm = main.d;
-    if (dm < hw + 6 || hash2(gi, gj, 33) > 0.45) continue;
+    if (hash2(gi, gj, 33) > 0.45) continue;
     const s = S[si];
     const lat = (x - s.x) * s.nx + (z - s.z) * s.nz;
+    if (dm < hw + 6 + roEx(si, lat)) continue;
     if (!undOk(x, z, si, dm, lat) || blocked(x, z, 3)) continue;
     const y = floorAt(x, z, s, lat);
     const r = hash2(gi, gj, 34), yaw = hash2(gi, gj, 35) * TAU;

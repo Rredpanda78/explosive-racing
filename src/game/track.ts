@@ -72,7 +72,7 @@ export interface TrackDef {
   runoffSurface?: RunoffSurface;
 }
 
-export type RunoffSurface = 'sand' | 'grass' | 'paved';
+export type RunoffSurface = 'sand' | 'grass' | 'paved' | 'forest';
 
 /** 一段路的緩衝區設定：from / to 為距起跑線的公尺數，side：1 = 左側、-1 = 右側、0 = 兩側 */
 export interface RunoffZone {
@@ -386,6 +386,19 @@ export const TRACKS: TrackDef[] = [
     hazards: [{kind: 'hammer', dist: 2040, period: 3.4}, {kind: 'hammer', dist: 2090, period: 3.4, phase: 0.3}],
     // 林間泥路：泥地會減速，路中間還有樹
     shortcuts: [{ from: 1840, to: 2010, lat: -6.2, via: [[-31.6, -231.7]], halfWidth: 4.4, name: '林間泥路', rough: 0.68, posts: [{ u: 0.32, lat: 1.6, r: 1.1 }, { u: 0.5, lat: -1.7, r: 1.2 }, { u: 0.68, lat: 1.5, r: 1.1 }] }],
+    // 軟邊界：路邊是森林地面（草地、泥土與落葉）緩衝區，外圍是疊起來的圓木，急彎外側是輪胎牆
+    runoff: 12,
+    runoffSurface: 'forest',
+    runoffZones: [
+      // 起跑直線：維修區牆與看台
+      { from: -80, to: 165, side: 0, width: 0 },
+      // 拱門柱子前後收窄
+      { from: 447, to: 463, side: 0, width: 0 },
+      { from: 762, to: 778, side: 0, width: 0 },
+      { from: 2332, to: 2348, side: 0, width: 0 },
+      // 擺錘門架的柱子立在路邊
+      { from: 2025, to: 2105, side: 0, width: 0 },
+    ],
   },
   {
     id: 'canyon-rush',
