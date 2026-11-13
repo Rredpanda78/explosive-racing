@@ -14,6 +14,7 @@ import { Input } from './input';
 import { setupMobileViewport } from './mobile';
 import { CAR_MODELS, DEBRIS_MODELS, KART_MODELS, LANDMARK_MODELS, loadModels, PROP_MODELS } from './render/assets';
 import { GameView } from './render/view';
+import { Haptics } from './haptics';
 import { applyLayout, LAYOUT_IDS, loadSettings, saveSettings, type Settings } from './settings';
 import { Hud } from './ui/hud';
 import { Screens, type Summary } from './ui/screens';
@@ -49,10 +50,14 @@ const view = new GameView(canvas, coarse, settings.quality);
 const input = new Input();
 const hud = new Hud(track);
 const audio = new GameAudio();
+const haptics = new Haptics();
+// 沒有後製（低畫質、手機中畫質）時，N2O 的速度感改用 CSS 的簡易版
+document.body.classList.toggle('fx-lite', !view.postFx);
 let race: Race | null = null;
 /** 套用設定裡不需要重新載入的部分 */
 function applySettings(): void {
   view.shakeMul = settings.shake;
+  haptics.enabled = settings.vibrate && coarse;
   audio.setVolumes(settings.music, settings.sfx);
   if (audio.musicStyle !== settings.musicStyle) audio.setStyle(settings.musicStyle);
   audio.setEngineStyle(settings.engineSound);
@@ -101,6 +106,8 @@ let resultsTimer = 0;
 let resultsShown = false;
 /** 擊毀瞬間的短暫慢動作（以真實時間計） */
 let slowT = 0;
+/** 擊毀瞬間的頓格：模擬完全停住幾十毫秒（只有單機；線上比賽絕不暫停模擬） */
+let freezeT = 0;
 /** 這場靠連續擊毀多賺的獎金 */
 let streakCash = 0;
 
@@ -135,6 +142,7 @@ function startRace(m?: RaceMode, seed?: number, setup?: OnlineSetup): void {
   resultsTimer = 0;
   resultsShown = false;
   slowT = 0;
+  freezeT = 0;
   streakCash = 0;
   input.clear();
   input.capture = true;
@@ -500,7 +508,12 @@ function frame(now: number): void {
   const real = Math.min(0.05, (now - last) / 1000);
   last = now;
   let dt = real;
-  if (slowT > 0) {
+  // 頓格（單機）：這幾十毫秒模擬完全停住，之後才進入慢動作
+  const frozen = freezeT > 0 && !online && !paused;
+  if (frozen) {
+    freezeT -= real;
+    dt = 0;
+  } else if (slowT > 0) {
     slowT -= real;
     dt = real * 0.25;
   }
@@ -508,12 +521,14 @@ function frame(now: number): void {
   // 線上比賽不會暫停（開著選單時車子放開油門繼續跑）
   if (race && (!paused || online)) {
     if (online) dt = real;
-    const inp = paused ? NO_INPUT : input.read();
-    online?.applyRemote(now);
-    // 幀率偏低時拆成兩小步，維持物理穩定
-    const steps = dt > 1 / 45 ? 2 : 1;
-    for (let i = 0; i < steps; i++) race.step(dt / steps, inp);
-    online?.sendState(now);
+    if (dt > 0) {
+      const inp = paused ? NO_INPUT : input.read();
+      online?.applyRemote(now);
+      // 幀率偏低時拆成兩小步，維持物理穩定
+      const steps = dt > 1 / 45 ? 2 : 1;
+      for (let i = 0; i < steps; i++) race.step(dt / steps, inp);
+      online?.sendState(now);
+    }
     const p = race.player;
     for (const e of race.events) {
       view.onEvent(e, race);
@@ -521,13 +536,20 @@ function frame(now: number): void {
       hud.onEvent(e, race);
       if (e.t === 'kill' && (e.killer === p || e.victim === p) && !resultsShown) {
         slowT = 0.12;
+        // 擊毀／被擊毀的打擊感：單機頓格 0.05 秒；鏡頭往前一推（線上也有，只是模擬不停）
+        if (!online) freezeT = 0.05;
+        view.punch(e.victim === p ? 1.3 : 1);
+        haptics.pulse(e.victim === p ? 70 : 35);
         if (e.killer === p && e.streak > 1) streakCash += (e.streak - 1) * STREAK_BONUS;
       }
+      if (e.t === 'kart' && e.k === p && e.e === 'wall') haptics.pulse(22);
+      if (e.t === 'dmg' && e.k === p && e.amount >= 15) haptics.pulse(30);
       if (e.t === 'lap' && e.k === p && race.mode === 'race' && e.lap === race.track.laps - 1) audio.setMusicRush(true);
       if (e.t === 'elim' && race.aliveCount <= 3) audio.setMusicRush(true);
     }
     race.events.length = 0;
     view.update(dt, race, input.lookBack && !resultsShown);
+    if (dt > 0 && !paused) haptics.kerb(view.kerb);
     if (!resultsShown) {
       hud.update(race, view, real);
       if (race.state === 'finished') {
@@ -556,7 +578,7 @@ function frame(now: number): void {
       }
     }
   }
-  audio.frame(race, !!race && !paused && !resultsShown);
+  audio.frame(race, !!race && !paused && !resultsShown, race ? view.kerb : 0);
   if (ready) view.render();
 }
 
@@ -577,4 +599,4 @@ void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MO
 });
 
 // 方便除錯與之後的自動化測試
-(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, input, startRace, audio, screens, get track() { return track; }, get online() { return online; } };
+(window as unknown as Record<string, unknown>).__game = { get race() { return race; }, profile, view, hud, input, startRace, audio, screens, get track() { return track; }, get online() { return online; } };

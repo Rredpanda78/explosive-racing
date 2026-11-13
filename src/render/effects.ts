@@ -93,15 +93,17 @@ export class Debris {
     }
   }
 
-  burst(x: number, y: number, z: number, ground: number, n: number, power: number): void {
+  /** (dx, dz)：指定時零件偏往這個方向飛（被打飛的零件往遠離攻擊的方向掉） */
+  burst(x: number, y: number, z: number, ground: number, n: number, power: number, dx = 0, dz = 0): void {
     const R = Math.random;
+    const aim = dx !== 0 || dz !== 0;
     for (let i = 0; i < n; i++) {
       const c = this.items[this.cursor];
       this.cursor = (this.cursor + 1) % this.items.length;
-      const a = R() * Math.PI * 2, sp = (0.4 + R() * 0.8) * power;
+      const a = aim ? Math.atan2(dz, dx) + (R() - 0.5) * 1.2 : R() * Math.PI * 2, sp = (0.4 + R() * 0.8) * power;
       c.obj.position.set(x + Math.cos(a) * 0.6, y, z + Math.sin(a) * 0.6);
       c.obj.rotation.set(R() * 6, R() * 6, R() * 6);
-      c.vx = Math.cos(a) * sp; c.vz = Math.sin(a) * sp; c.vy = 6 + R() * power * 0.9;
+      c.vx = Math.cos(a) * sp; c.vz = Math.sin(a) * sp; c.vy = (aim ? 4 : 6) + R() * power * 0.9;
       c.sx = (R() - 0.5) * 16; c.sy = (R() - 0.5) * 16; c.sz = (R() - 0.5) * 16;
       c.life = 2.2 + R() * 1.2;
       c.ground = ground;

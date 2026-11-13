@@ -4,6 +4,8 @@ import type { Kart } from '../game/kart';
 import { clamp } from '../game/util';
 import { shieldHalfArc, type PrimaryId, type SecondaryId } from '../game/weapons';
 import { cloneModel } from './assets';
+import { TIER_COLORS } from './feel';
+import { flashTexture, glowTexture } from './fxTextures';
 import { liveryMaterial, type Livery } from './livery';
 import { buildPrimary, buildSecondary } from './weaponModels';
 
@@ -43,6 +45,10 @@ function softDisc(stops: [number, number][]): THREE.CanvasTexture {
 const contactTex = softDisc([[0, 1], [0.42, 0.9], [0.72, 0.42], [1, 0]]);
 const glowTex = softDisc([[0, 1], [0.3, 0.6], [0.65, 0.18], [1, 0]]);
 const groundGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+/** 槍口星形火光（所有車共用；每幀隨機轉一下角度） */
+/** 排氣管火環原本的顏色（÷1.5，跟 TIER_COLORS 同一個尺度） */
+const SWIRL_BASE: readonly [number, number, number] = [2 / 1.5, 1.25 / 1.5, 0.45 / 1.5];
+const FLASH = new THREE.SpriteMaterial({ map: flashTexture(), color: new THREE.Color(2.2, 1.6, 0.8), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
 
 const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.36, 14).rotateZ(Math.PI / 2);
 const hubGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.38, 8).rotateZ(Math.PI / 2);
@@ -231,7 +237,7 @@ const CAR_SIZE = 1.97;
 const CAR_MAX_LENGTH = 3.4;
 
 /** 車上各種配件的位置（車體座標，車頭朝 +Z） */
-interface Mounts {
+export interface Mounts {
   gunX: number; gunY: number; gunZ: number;
   hoodY: number; hoodZ: number;
   rearY: number; rearZ: number;
@@ -379,6 +385,7 @@ export class KartView {
   private cores: THREE.Mesh[] = [];
   private muzzles: THREE.Mesh[] = [];
   private muzzleT = [0, 0];
+  private flashes: THREE.Sprite[] = [];
   private vulcanBarrels: THREE.Object3D[] = [];
   /** 火焰發射器的噴流與雷射光束（左右各一） */
   private fires: THREE.Object3D[] = [];
@@ -442,6 +449,26 @@ export class KartView {
   private brakeK = 0;
   private lastSpeed = 0;
   private night = false;
+  /** 車殼網格（受擊的彈孔、焦痕貼在這些網格的表面上；不含輪子、車手、武器） */
+  hull: THREE.Mesh[] = [];
+  /** 槍口的光暈：火焰噴嘴的餘熱、雷射蓄力（左右各一） */
+  private glows: THREE.Sprite[] = [];
+  private glowK = 0;
+  /** 六管機槍槍管：過熱時發紅（這台車自己的材質） */
+  private heatMats: THREE.MeshLambertMaterial[] = [];
+  /** 雷射射完留下、慢慢淡掉的殘影 */
+  private ghost: THREE.Object3D | null = null;
+  private ghostMats: THREE.MeshBasicMaterial[] = [];
+  private ghostT = 0;
+  private wasFiring = false;
+  /** 重傷時鬆脫、掛在車身側面晃動的鈑金（第一次用到才建立） */
+  private panel: THREE.Object3D | null = null;
+  private panelA = 0.5;
+  private panelV = 0;
+  /** 甩尾火花段數 0~3（由 GameView 每幀設定，排氣管火環跟著換色） */
+  driftTier = 0;
+  /** 損壞程度：0 完好、1 冒煙、2 重傷（鈑金鬆脫） */
+  damageStage = 0;
 
   constructor(look: KartLook, shadows: boolean, fx: KartFx = { rich: false, lights: false, night: false }) {
     const g = this.group;
@@ -576,6 +603,7 @@ export class KartView {
       this.paint = mat;
       meshes.push(mesh);
     });
+    this.hull.push(...meshes);
     this.trim = new THREE.MeshLambertMaterial({ color: look.color });
     this.ownMats.push(this.trim);
     this.body.updateMatrixWorld(true);
@@ -706,6 +734,7 @@ export class KartView {
         this.paint = tinted;
       }
       m.material = tinted;
+      this.hull.push(m);
     });
     this.trim = this.paint as THREE.MeshLambertMaterial;
   }
@@ -725,6 +754,7 @@ export class KartView {
     const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 10), look.isPlayer ? WHITE : paint);
     helmet.position.set(0, 1.42, -0.36);
     b.add(helmet);
+    this.hull = b.children.filter((o) => (o as THREE.Mesh).isMesh) as THREE.Mesh[];
     const wp: [number, number, boolean][] = [[0.98, 1.05, true], [-0.98, 1.05, true], [1.02, -1.05, false], [-1.02, -1.05, false]];
     for (const [x, z, front] of wp) {
       const w = new THREE.Mesh(wheelGeo, TIRE);
@@ -748,6 +778,23 @@ export class KartView {
       g.position.set(this.m.gunX * side, this.m.gunY - 0.2 * WS, this.m.gunZ - 0.12);
       b.add(g);
       this.vulcanBarrels.push(...parts.spinners);
+      // 六管機槍：槍管換成這台車自己的材質，過熱時才能單獨發紅
+      if (primary === 'vulcan') {
+        const map = new Map<THREE.Material, THREE.MeshLambertMaterial>();
+        for (const sp of parts.spinners) sp.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const src = mesh.material as THREE.MeshLambertMaterial;
+          let c = map.get(src);
+          if (!c) {
+            c = src.clone();
+            map.set(src, c);
+            this.ownMats.push(c);
+            this.heatMats.push(c);
+          }
+          mesh.material = c;
+        });
+      }
       const mx = g.position.x, my = g.position.y + parts.muzzle.y * WS, mzz = g.position.z + parts.muzzle.z * WS;
       if (primary === 'flame') {
         const f = new THREE.Group();
@@ -770,13 +817,43 @@ export class KartView {
           beam.visible = false;
           b.add(beam);
           this.beams.push(beam);
+          // 殘影：射完後原地留一道慢慢變細、變淡的光
+          const gh = new THREE.Group();
+          gh.position.copy(beam.position);
+          for (const [geo, src] of [[beamHaloGeo, BEAM_HALO], [beamGeo, BEAM]] as [THREE.BufferGeometry, THREE.MeshBasicMaterial][]) {
+            const mat = src.clone();
+            this.ownMats.push(mat);
+            this.ghostMats.push(mat);
+            gh.add(new THREE.Mesh(geo, mat));
+          }
+          gh.visible = false;
+          b.add(gh);
+          this.ghost = gh;
         }
+      }
+      if (primary === 'flame' || primary === 'laser') {
+        // 槍口光暈：火焰是噴嘴的橘色餘熱，雷射是蓄力時越來越亮的粉紅光
+        const sm = new THREE.SpriteMaterial({ map: glowTexture(), color: primary === 'flame' ? new THREE.Color(2.2, 0.8, 0.2) : new THREE.Color(1.7, 0.35, 0.65), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+        this.ownMats.push(sm);
+        const sp = new THREE.Sprite(sm);
+        sp.position.set(mx, my, mzz + 0.05);
+        sp.visible = false;
+        sp.renderOrder = 7;
+        b.add(sp);
+        this.glows.push(sp);
       }
       const mz = new THREE.Mesh(muzzleGeo, MUZZLE);
       mz.position.set(mx, my, mzz);
       mz.visible = false;
       b.add(mz);
       this.muzzles.push(mz);
+      // 槍口正面看得到的星形火光（機槍類）
+      const fs = new THREE.Sprite(FLASH);
+      fs.position.set(mx, my, mzz + 0.15);
+      fs.visible = false;
+      fs.renderOrder = 7;
+      b.add(fs);
+      this.flashes.push(fs);
     }
     // 副武器：火箭、榴彈、導彈在引擎蓋上；地雷與圓雷的投放器在車尾
     const sec = buildSecondary(secondary);
@@ -988,6 +1065,36 @@ export class KartView {
     if (this.shield) this.shield.visible = false;
   }
 
+  /** 車上各配件的位置（車體座標） */
+  get mounts(): Readonly<Mounts> {
+    return this.m;
+  }
+
+  /** 重傷時鬆脫的鈑金：鉸鏈在車身側面上緣，往外晃 */
+  private ensurePanel(): THREE.Object3D {
+    if (this.panel) return this.panel;
+    const pivot = new THREE.Group();
+    const m = this.m;
+    pivot.position.set(m.halfW * 0.95, Math.max(0.42, m.top * 0.36), -0.1);
+    const geo = new THREE.BoxGeometry(0.035, 0.36, 0.6).translate(0, -0.18, -0.08);
+    const mat = new THREE.MeshLambertMaterial({ color: this.trim.color.clone().multiplyScalar(0.55) });
+    this.ownMats.push(mat);
+    const plate = new THREE.Mesh(geo, mat);
+    pivot.add(plate);
+    pivot.visible = false;
+    this.body.add(pivot);
+    return (this.panel = pivot);
+  }
+
+  /** 鬆脫鈑金的下緣（世界座標）；沒有鬆脫時回傳 false */
+  panelTip(out: THREE.Vector3): boolean {
+    const p = this.panel;
+    if (!p || !p.visible || !this.group.visible) return false;
+    p.updateWorldMatrix(true, false);
+    out.set(0, -0.36, -0.36).applyMatrix4(p.matrixWorld);
+    return true;
+  }
+
   /** 開火時讓對應那一側的槍口閃一下 */
   muzzleFlash(side: number): void {
     this.muzzleT[side > 0 ? 0 : 1] = 0.05;
@@ -1004,9 +1111,12 @@ export class KartView {
     this.paint.emissive.setRGB(0.25, 0.06, 0);
     for (const f of this.flames) f.visible = false;
     for (const m of this.muzzles) m.visible = false;
+    for (const fs of this.flashes) fs.visible = false;
     for (const f of this.fires) f.visible = false;
     for (const bm of this.beams) bm.visible = false;
     for (const o of this.orbs) o.visible = false;
+    for (const sp of this.glows) sp.visible = false;
+    if (this.ghost) this.ghost.visible = false;
     for (const p of this.kit) p.o.visible = false;
     for (const n of this.nozzles) n.ring.visible = n.streak.visible = false;
     for (const m of this.sprays) m.parent!.visible = false;
@@ -1145,9 +1255,9 @@ export class KartView {
       }
     }
 
-    // 受擊時車身閃紅
-    const hit = k.sinceDamage < 0.09 ? 1 : 0;
-    this.paint.emissive.setRGB(hit * 0.9, hit * 0.15, hit * 0.05);
+    // 受擊不再整台閃紅：改由彈孔、火花、碎片、冒煙表現（見 damageFx.ts）
+    this.updateWeaponFx(k, dt, firing, laserCharging);
+    this.updatePanel(k, dt);
 
     const boosting = k.boostT > 0;
     const mini = k.miniT > 0 || k.padT > 0;
@@ -1175,9 +1285,12 @@ export class KartView {
     }
     // 螺旋火環：甩尾集氣中或小噴時出現
     const charging = (k.drifting && k.driftTime > 0.35) || k.miniT > 0 || (k.aiAssist && sliding);
+    // 火環顏色跟甩尾火花同一段（藍 → 橘 → 紫）；小噴時維持原本的橘色
+    const tc = this.driftTier > 0 && k.miniT <= 0 ? TIER_COLORS[this.driftTier] : SWIRL_BASE;
     for (const sw of this.swirls) {
       sw.visible = charging && !boosting;
       if (sw.visible) {
+        (sw.material as THREE.SpriteMaterial).color.setRGB(tc[0] * 1.5, tc[1] * 1.5, tc[2] * 1.5);
         (sw.material as THREE.SpriteMaterial).rotation -= dt * 14;
         sw.scale.setScalar(0.5 + Math.random() * 0.18 + (k.miniT > 0 ? 0.2 : 0));
       }
@@ -1238,6 +1351,9 @@ export class KartView {
         const s = 0.7 + Math.random() * 0.6;
         m.scale.set(s, s, 0.6 + Math.random() * 0.8);
       }
+      const fs = this.flashes[i];
+      fs.visible = m.visible;
+      if (fs.visible) fs.scale.setScalar(0.7 + Math.random() * 0.6);
     }
 
     // 地面：接觸陰影、N2O 照在地上的光
@@ -1274,6 +1390,59 @@ export class KartView {
       this.hpSprite.visible = k.invulnT < 10;
     }
     if (this.nameSprite) this.nameSprite.visible = !k.out;
+  }
+
+  /** 槍管過熱發紅、槍口光暈、雷射殘影 */
+  private updateWeaponFx(k: Kart, dt: number, firing: boolean, charging: boolean): void {
+    if (this.heatMats.length) {
+      const h = clamp((k.heat - 0.3) / 0.7, 0, 1);
+      const e = k.dead ? 0 : h * h;
+      for (const m of this.heatMats) m.emissive.setRGB(e * 1.5, e * 0.36, e * 0.05);
+    }
+    if (this.glows.length) {
+      // 火焰：開火時亮起並閃爍，放開後餘熱慢慢退；雷射：蓄力越久越大越亮，射出瞬間最亮
+      const laser = !!this.ghost;
+      const want = laser ? (charging ? 0.25 + Math.min(1, k.charge / 0.3) * 0.75 : firing ? 1.2 : 0) : firing ? 1 : 0;
+      this.glowK = want > this.glowK ? want : Math.max(0, this.glowK - dt * (laser ? 4 : 1.3));
+      const vis = this.glowK > 0.02 && !k.dead;
+      for (const sp of this.glows) {
+        sp.visible = vis;
+        if (!vis) continue;
+        const fl = firing && !laser ? 0.75 + Math.random() * 0.5 : 0.9 + Math.random() * 0.2;
+        sp.scale.setScalar((laser ? 0.35 + 0.85 * this.glowK : 0.45 + 0.7 * this.glowK) * fl);
+        (sp.material as THREE.SpriteMaterial).opacity = Math.min(1, this.glowK) * (laser ? 0.85 : 0.8);
+      }
+    }
+    if (this.ghost) {
+      if (this.wasFiring && !firing) this.ghostT = 0.45;
+      this.wasFiring = firing;
+      this.ghostT = Math.max(0, this.ghostT - dt);
+      const vis = this.ghostT > 0 && !k.dead;
+      this.ghost.visible = vis;
+      if (vis) {
+        const u = this.ghostT / 0.45;
+        const w = 0.5 + 1.1 * u;
+        this.ghost.scale.set(w, w, Math.max(1, k.beamLen - 1));
+        this.ghostMats[0].opacity = 0.22 * u;
+        this.ghostMats[1].opacity = 0.55 * u * u;
+      }
+    }
+  }
+
+  /** 重傷時鬆脫的鈑金：車速越快晃得越兇 */
+  private updatePanel(k: Kart, dt: number): void {
+    const on = this.damageStage >= 2 && !k.dead;
+    if (!on) {
+      if (this.panel) this.panel.visible = false;
+      return;
+    }
+    const p = this.ensurePanel();
+    p.visible = true;
+    const sp = Math.min(40, Math.abs(k.speed));
+    // 彈簧拉回下垂的角度，加上隨車速變大的亂晃
+    this.panelV += (-(this.panelA - 0.32) * 70 - this.panelV * 5 + (Math.random() - 0.5) * (40 + sp * 22)) * dt;
+    this.panelA = clamp(this.panelA + this.panelV * dt, 0.04, 0.95);
+    p.rotation.set(-0.2 - sp * 0.008, 0, this.panelA);
   }
 
   dispose(): void {

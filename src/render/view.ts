@@ -12,6 +12,10 @@ import { PRIMARY, shieldHalfArc } from '../game/weapons';
 import { Shards } from './shards';
 import { HazardView } from './hazards';
 import { BlastFx, Debris, Scorch, SkidMarks, Trails } from './effects';
+import { DamageFx } from './damageFx';
+import { FeelFx, TIER_COLORS } from './feel';
+import { SpeedPass } from './speedPass';
+import { WeaponFx } from './weaponFx';
 import { clusterMineMaterial, hexMineGeometry, steelMaterial } from './weaponModels';
 import { KartView } from './kartModel';
 import { Particles } from './particles';
@@ -117,6 +121,20 @@ export class GameView {
   private fov = 66;
   private time = 0;
   private shakeT = 0;
+  /** 手感特效：N2O 速度感後製、甩尾火花分段與路面回饋、受擊回饋、開火特效 */
+  private speedPass: SpeedPass | null = null;
+  private feel: FeelFx | null = null;
+  private dmgFx: DamageFx | null = null;
+  private wpnFx: WeaponFx | null = null;
+  /** 高畫質電腦版（武器點光源只在這裡開） */
+  private hq = false;
+  private hazeK = 0;
+  private speedK = 0;
+  /** 擊毀時鏡頭往前一推（以真實時間計，凍結畫面時也會動） */
+  private punchT0 = -1;
+  private punchK = 0;
+  /** 每條彈道最後一次留下煙的位置（火箭、導彈的煙跡） */
+  private trailAt = new WeakMap<object, { x: number; y: number; z: number }>();
   private m4 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private v3 = new THREE.Vector3();
@@ -185,6 +203,10 @@ export class GameView {
       this.composer.addPass(new RenderPass(this.scene, this.camera));
       this.bloomPass = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.3, 0.6, 1.25);
       this.composer.addPass(this.bloomPass);
+      // N2O 速度感（放射模糊、色散、排氣熱浪）：接在泛光後面；沒在噴時自動關閉
+      this.speedPass = new SpeedPass();
+      this.composer.addPass(this.speedPass);
+      this.hq = quality === 'high' && !mobile;
       this.composer.addPass(new OutputPass());
     }
 
@@ -261,6 +283,31 @@ export class GameView {
     this.resize();
   }
 
+  /** 有沒有後製（泛光、速度感 pass）；沒有的話 HUD 用 CSS 的簡易版速度感 */
+  get postFx(): boolean {
+    return !!this.composer;
+  }
+
+  /** 玩家這一幀壓在路緣上的強度 0~1（隆隆聲、手機震動） */
+  get kerb(): number {
+    return this.feel?.kerb ?? 0;
+  }
+
+  /** 擊毀／被擊毀：鏡頭往前一推再彈回（strength 約 1） */
+  punch(strength: number): void {
+    this.punchT0 = performance.now();
+    this.punchK = strength;
+  }
+
+  /** 手感特效（第一次載入賽道時建立，之後沿用） */
+  private ensureFx(): void {
+    if (this.feel) return;
+    this.feel = new FeelFx(this.fire, this.smoke, this.lowDetail);
+    this.dmgFx = new DamageFx(this.fire, this.smoke, () => this.debris, this.lowDetail, this.shadows);
+    this.wpnFx = new WeaponFx(this.fire, this.smoke, this.lowDetail, this.hq);
+    this.scene.add(this.dmgFx.group, this.wpnFx.group);
+  }
+
   /** 模型載入完成後呼叫，建立賽道場景與零件池 */
   setTrack(track: Track): void {
     if (this.world) {
@@ -312,6 +359,8 @@ export class GameView {
     });
     this.groundHint = -1;
     this.scene.add(this.weather.group);
+    this.ensureFx();
+    this.feel!.setTrack(track, th, WEATHER[th.id] === 'rain');
     if (this.debris) this.scene.remove(this.debris.group);
     this.debris = new Debris(this.lowDetail ? 16 : 36, this.shadows);
     this.scene.add(this.debris.group);
@@ -347,6 +396,12 @@ export class GameView {
     for (const s of this.shells) s.visible = false;
     this.shake = 0;
     this.boostK = 0;
+    this.hazeK = 0;
+    this.speedK = 0;
+    this.punchT0 = -1;
+    this.dmgFx?.clear();
+    this.wpnFx?.clear();
+    this.speedPass?.set(0, 0, 0.5, 0.5, 0.1, 1, 0);
     if (!race) return;
     for (const k of race.karts) {
       // 線上比賽：其他玩家（不含電腦車手）頭上顯示名字
@@ -439,17 +494,29 @@ export class GameView {
     const f = this.fire, sm = this.smoke;
     const R = Math.random;
     const p = race.player;
+    this.wpnFx?.onEvent(e, this.camera.position, p.id);
     switch (e.t) {
       case 'shot':
         this.kartViews.get(e.k)?.muzzleFlash(e.side);
         f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.06, 2.2, 0.8, 1, 0.8, 0.35, 0.9);
         break;
-      case 'rail':
-        // 雷射射出：槍口一團亮光，自己開火時鏡頭小震一下
+      case 'rail': {
+        // 雷射射出：槍口一團亮光（加一圈往外散的光點），自己開火時鏡頭小震一下
         f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.1, 3.2, 0.55, 1, 0.45, 0.6, 1);
+        f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.22, 5.5, 1.5, 0.9, 0.3, 0.5, 0.8);
+        const hx = Math.sin(e.k.heading), hz = Math.cos(e.k.heading);
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * Math.PI * 2;
+          const c = Math.cos(a) * 6, s = Math.sin(a) * 6;
+          f.spawn(e.x, e.y, e.z, e.k.vx + hz * c, s, e.k.vz - hx * c, 0.22, 0.4, 0.06, 1, 0.5, 0.75, 1);
+        }
         if (e.k === p) this.addShake(0.12);
         break;
-      case 'hit':
+      }
+      case 'hit': {
+        // 受擊回饋：彈孔、焦痕、碎屑（不再整台閃紅）
+        const kv = this.kartViews.get(e.k);
+        if (kv && this.dmgFx) this.dmgFx.hit(e.k, kv, e.by, e.w, e.x, e.y, e.z);
         if (e.w === 'flame') {
           if (e.k === p) this.addShake(0.03);
           break;
@@ -467,6 +534,7 @@ export class GameView {
         if (R() < 0.3) sm.spawn(e.x, e.y, e.z, e.k.vx * 0.5, 1, e.k.vz * 0.5, 0.5, 0.4, 1.6, 0.25, 0.25, 0.27, 0.4);
         if (e.k === p) this.addShake(0.1);
         break;
+      }
       case 'shatter': {
         // 護盾碎掉：整片裂成碎片往外噴，閃一下
         this.kartViews.get(e.k)?.shieldBreak();
@@ -524,15 +592,29 @@ export class GameView {
         this.blast.spawn(e.x, e.y, e.z, e.gy, e.r);
         if (e.y - e.gy < 3.5) this.scorch.add(e.x, e.gy, e.z, e.r * (e.kart ? 1.1 : 0.85));
         this.debris?.burst(e.x, e.y, e.z, e.gy, e.kart ? 7 : 3, e.kart ? 15 : 10);
+        // 武器爆炸波及到的車：碎屑、焦痕，夠近的打飛一塊零件
+        if (!e.kart && this.dmgFx) {
+          for (const k of race.karts) {
+            if (k.dead || k.out) continue;
+            const dk = Math.hypot(k.x - e.x, k.z - e.z);
+            if (dk > e.r + 1.2 || Math.abs(k.y + 0.8 - e.y) > e.r) continue;
+            const kv = this.kartViews.get(k);
+            if (kv) this.dmgFx.blast(k, kv, e.x, e.y, e.z, clamp(1 - dk / (e.r + 1.2), 0, 1));
+          }
+        }
         const d = Math.hypot(e.x - p.x, e.z - p.z);
         this.addShake(clamp(1 - d / 80, 0, 1) * 0.85);
         break;
       }
       case 'ram': {
-        // 撞擊：力道越大火花越多
+        // 撞擊：力道越大火花越多；兩台車都掉碎屑，夠大力會撞掉零件
         const n = Math.min(26, 5 + Math.round(e.power * 1.6));
         this.sparks(e.x, e.y, e.z, n, 10 + e.power, e.a.y, (e.a.vx + e.b.vx) * 0.5, (e.a.vz + e.b.vz) * 0.5);
-        if (e.power > 5) this.debris?.burst(e.x, e.y, e.z, e.a.y, 1, 7);
+        if (this.dmgFx && e.power > 3) {
+          const ka = this.kartViews.get(e.a), kb = this.kartViews.get(e.b);
+          if (ka) this.dmgFx.ram(e.a, ka, e.x, e.y, e.z, e.power, e.b);
+          if (kb) this.dmgFx.ram(e.b, kb, e.x, e.y, e.z, e.power, e.a);
+        } else if (e.power > 5) this.debris?.burst(e.x, e.y, e.z, e.a.y, 1, 7);
         if (e.a === p || e.b === p) this.addShake(Math.min(0.6, 0.12 + e.power * 0.04));
         break;
       }
@@ -594,12 +676,21 @@ export class GameView {
   }
 
   update(dt: number, race: Race, lookBack: boolean): void {
+    const p = race.player;
+    // 擊毀瞬間的凍結畫面：模擬停住，只有鏡頭的推近動作繼續（用真實時間）
+    if (dt <= 0) {
+      this.updateChaseCam(0, p, lookBack);
+      this.updateSpeedFx(0, p);
+      return;
+    }
     this.time += dt;
     const R = Math.random;
     const f = this.fire, sm = this.smoke;
     const track = race.track;
     const wallLat = track.halfWidth - 1.05;
-    const p = race.player;
+    const feel = this.feel;
+    const cam = this.camera.position;
+    if (feel) feel.kerb = 0;
 
     for (const k of race.karts) {
       const kv = this.kartViews.get(k);
@@ -624,9 +715,16 @@ export class GameView {
         }
         continue;
       }
-      if (kv.wrecked) kv.endWreck();
+      if (kv.wrecked) {
+        kv.endWreck();
+        // 重生：新的一條命，彈孔與焦痕清掉
+        this.dmgFx?.clearKart(kv);
+      }
+      // 甩尾火花分段（藍 → 橘 → 紫）：排氣管的火環也跟著換色
+      const tier = feel ? feel.driftTier(k, dt) : 0;
+      kv.driftTier = tier;
       kv.update(k, dt);
-      kv.fitName(this.camera.position.distanceTo(kv.group.position));
+      kv.fitName(cam.distanceTo(kv.group.position));
 
       const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
       const lx = fz, lz = -fx;
@@ -641,11 +739,14 @@ export class GameView {
         if (R() < dt * 50) {
           sm.spawn(wx, k.y + 0.25, wz, k.vx * 0.15 + (R() - 0.5) * 1.2, 0.8 + R(), k.vz * 0.15 + (R() - 0.5) * 1.2, 0.5 + R() * 0.5, 1, 3.4, 0.94, 0.94, 0.96, 0.5, -0.5, 1);
         }
-        // 拖得夠久會磨出火花
-        if (k.drifting && k.driftTime > 0.7 && R() < dt * 55) {
-          const hot = k.driftTime > 1.8;
-          f.spawn(wx, k.y + 0.12, wz, k.vx * 0.3 - fx * 3 + (R() - 0.5) * 5, 1.5 + R() * 4, k.vz * 0.3 - fz * 3 + (R() - 0.5) * 5, 0.2 + R() * 0.25, 0.42, 0.08, hot ? 0.45 : 1, hot ? 0.8 : 0.72, hot ? 1 : 0.25, 1, 16, 0, k.y);
-        }
+        // 甩夠久（能小噴）就磨出火花，顏色代表這次甩尾集了多少氣
+        if (k.drifting && tier > 0) feel!.sparks(k, tier, wx, wz, fx, fz, dt);
+      }
+      // 路面回饋：碎石／泥地揚土、雨天濺水、壓路緣
+      if (feel) {
+        const c2 = (k.x - cam.x) ** 2 + (k.z - cam.z) ** 2;
+        feel.surface(k, track, dt, c2, k === p);
+        if (k === p && feel.kerb > 0) this.addShake(dt * 0.9 * feel.kerb);
       }
       // 開在路邊的砂石緩衝區：揚起沙塵
       this.runoffDust(k, track, dt);
@@ -672,11 +773,14 @@ export class GameView {
         const boost = k.boostT > 0;
         const drift = grounded && k.speed > 16 && (k.drifting ? Math.abs(k.slip) > 0.1 : sliding);
         const dk = drift ? clamp(Math.abs(k.slip) * 2.4 + (k.aiAssist ? 0.45 : 0.15), 0.35, 0.95) : 0;
+        // 貼地光痕也帶一點甩尾火花那一段的顏色
+        const tc = tier > 0 ? TIER_COLORS[tier] : null;
+        const sr = tc ? 0.35 + tc[0] * 0.4 : 0.75, sg = tc ? 0.35 + tc[1] * 0.4 : 0.85, sb = tc ? 0.35 + tc[2] * 0.4 : 1.05;
         for (let w = 0; w < 2; w++) {
           const side = w === 0 ? 1 : -1;
           this.trails.push(k.id * 2 + w, k.x + lx * side * 1.0 - fx * 0.75, k.y + 1.0, k.z + lz * side * 1.0 - fz * 0.75, boost ? 1 : 0, 0.35, 0.8, 1.6);
           const wx = k.x + lx * side * 0.6 - fx * 0.75, wz = k.z + lz * side * 0.6 - fz * 0.75;
-          this.streaks.push(k.id * 2 + w, wx, k.y + 0.06, wz, dk, 0.75, 0.85, 1.05, lx, 0, lz);
+          this.streaks.push(k.id * 2 + w, wx, k.y + 0.06, wz, dk, sr, sg, sb, lx, 0, lz);
         }
       }
       // 火焰發射器：從兩側噴嘴往前噴出火舌
@@ -701,13 +805,10 @@ export class GameView {
           f.spawn(k.x + lx * side + fx * (2 + R() * 4), k.y + 0.4 + R() * 1.6, k.z + lz * side + fz * (2 + R() * 4), k.vx * 0.25, 0, k.vz * 0.25, 0.22, 0.5, 0.12, 0.85, 0.95, 1, 0.7);
         }
       }
-      // 受損冒煙，瀕死時著火
-      const hpR = k.hp / k.maxHp;
-      if (hpR < 0.5 && R() < dt * (hpR < 0.25 ? 22 : 10)) {
-        sm.spawn(k.x - fx * 0.9, k.y + 1, k.z - fz * 0.9, k.vx * 0.3, 1.6 + R(), k.vz * 0.3, 0.9, 0.8, 2.8, 0.1, 0.1, 0.1, 0.6, -1, 0.8);
-        if (hpR < 0.25) f.spawn(k.x - fx * 0.9, k.y + 0.9, k.z - fz * 0.9, k.vx * 0.5, 1.5 + R() * 2, k.vz * 0.5, 0.3, 1.2, 0.3, 1, 0.5, 0.1, 0.9);
-      }
+      // 受損冒煙、起火、鈑金鬆脫：見 DamageFx.update（依血量分段）
     }
+    this.dmgFx?.update(dt, race.karts, this.kartViews, cam);
+    this.wpnFx?.update(dt, race.karts, cam, p);
 
     // 爆炸桶：引爆後消失，重生前不顯示；即將連鎖引爆時發白光
     for (let i = 0; i < this.barrels.length; i++) {
@@ -745,7 +846,18 @@ export class GameView {
         mm.scale.setScalar(m.homing ? 1.35 : 1);
         if (m.homing && R() < 0.6) f.spawn(m.x, m.y, m.z, 0, 0, 0, 0.12, 1.2, 0.2, 1, 0.25, 0.2, 1);
         const bx = Math.sin(m.a), bz = Math.cos(m.a);
-        for (let j = 0; j < 2; j++) sm.spawn(m.x - bx * (0.8 + j), m.y, m.z - bz * (0.8 + j), (R() - 0.5) * 1.5, R(), (R() - 0.5) * 1.5, 0.6, 0.6, 2.1, 0.92, 0.92, 0.92, 0.5);
+        // 煙跡：依飛行距離每隔一小段留一團煙，慢慢變大、飄散（跟幀率無關）
+        const tx = m.x - bx * 0.9, tz = m.z - bz * 0.9;
+        let last = this.trailAt.get(m);
+        if (!last) this.trailAt.set(m, (last = { x: tx, y: m.y, z: tz }));
+        const gap = this.lowDetail ? 1.6 : 0.9;
+        const seg = Math.hypot(tx - last.x, tz - last.z);
+        const cnt = Math.min(8, Math.floor(seg / gap));
+        for (let j = 1; j <= cnt; j++) {
+          const u = (j * gap) / seg;
+          sm.spawn(last.x + (tx - last.x) * u, last.y + (m.y - last.y) * u, last.z + (tz - last.z) * u, (R() - 0.5) * 1.2, 0.3 + R() * 0.5, (R() - 0.5) * 1.2, this.lowDetail ? 1.1 : 1.7 + R() * 0.5, 0.5, 3 + R(), 0.86, 0.86, 0.88, 0.42, -0.25, 1.2);
+        }
+        if (cnt > 0 || seg > 30) { last.x = tx; last.y = m.y; last.z = tz; }
         f.spawn(m.x - bx * 0.9, m.y, m.z - bz * 0.9, 0, 0, 0, 0.09, 1.8, 0.5, 1, 0.62, 0.2, 1);
       }
       const ss = this.shells[i];
@@ -800,6 +912,7 @@ export class GameView {
       this.headlight.target.position.set(p.x + hx * 32, p.y - 0.5, p.z + hz * 32);
     }
     this.updateChaseCam(dt, p, lookBack);
+    this.updateSpeedFx(dt, p);
     this.updateWeather(dt, p.vx, p.vz);
     this.world?.update(dt, this.time, this.camera);
     this.updateSun(p.x, p.y - p.air, p.z);
@@ -839,7 +952,11 @@ export class GameView {
     const bk = k.boostT > 0 ? 1 : k.padT > 0 ? 0.7 : k.miniT > 0 ? 0.5 : 0;
     this.boostK += (bk - this.boostK) * Math.min(1, dt * 5);
     const ratio = clamp(k.speed / k.topSpeed, 0, 1.4);
-    const dist = 8.6 + this.boostK * 1.6;
+    // 擊毀的鏡頭衝擊：0.06 秒內往前推近，再帶一點回彈地退回來
+    const pt = this.punchT0 < 0 ? 9 : (performance.now() - this.punchT0) / 1000;
+    const env = pt < 0.06 ? pt / 0.06 : pt < 0.7 ? Math.exp(-(pt - 0.06) * 8) * Math.cos((pt - 0.06) * 10) : 0;
+    const pk = env * this.punchK;
+    const dist = 8.6 + this.boostK * 1.6 - pk * 2.2;
     // 震動：強度平方 × 幾個不同頻率的正弦波相加（比每幀亂數平滑）
     this.shake = Math.max(0, this.shake - dt * 1.9);
     this.shakeT += dt * 34;
@@ -856,11 +973,39 @@ export class GameView {
     this.camera.rotateZ(Math.sin(t * 1.1) * sh * 0.05 + this.driftRoll * (lookBack ? -1 : 1));
     const fov = 64 + ratio * 9 + this.boostK * 14;
     this.fov += (fov - this.fov) * Math.min(1, dt * 6);
-    if (Math.abs(this.camera.fov - this.fov) > 0.05) {
-      this.camera.fov = this.fov;
+    const camFov = this.fov - pk * 9;
+    if (Math.abs(this.camera.fov - camFov) > 0.05) {
+      this.camera.fov = camFov;
       this.camera.updateProjectionMatrix();
       this.updateParticleScale();
     }
+  }
+
+  /** N2O 速度感後製：放射模糊與色散跟著 boostK，排氣管後方的熱浪跟著玩家的噴射 */
+  private updateSpeedFx(dt: number, p: Kart): void {
+    const sp = this.speedPass;
+    if (!sp) return;
+    const n2o = p.boostT > 0 && !p.dead;
+    // 只有 N2O 才有放射模糊與色散（加速帶、小噴只有排氣熱浪）；開始時跟著 boostK 漸強，結束時很快退掉
+    this.speedK += ((n2o ? Math.min(1, this.boostK * 1.25) : 0) - this.speedK) * Math.min(1, dt * (n2o ? 8 : 6));
+    const boost = this.speedK;
+    const hazeWant = p.dead ? 0 : n2o ? 1 : p.miniT > 0 || p.padT > 0 ? 0.45 : 0;
+    this.hazeK += (hazeWant - this.hazeK) * Math.min(1, dt * (hazeWant > this.hazeK ? 10 : 3));
+    let hx = 0.5, hy = 0.3, hr = 0.1;
+    const kv = this.kartViews.get(p);
+    if (this.hazeK > 0.01 && kv) {
+      const M = kv.mounts;
+      const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+      const x = p.x + fx * (M.tailZ - 0.6), y = p.y + M.exhaustY + 0.25, z = p.z + fz * (M.tailZ - 0.6);
+      const d = this.camera.position.distanceTo(this.v3.set(x, y, z));
+      this.v3.project(this.camera);
+      if (this.v3.z < 1) {
+        hx = this.v3.x * 0.5 + 0.5;
+        hy = this.v3.y * 0.5 + 0.5;
+        hr = clamp(0.95 / Math.max(1, d), 0.04, 0.22);
+      } else this.hazeK = 0;
+    }
+    sp.set(clamp(boost, 0, 1), this.hazeK, hx, hy, hr, this.camera.aspect, performance.now() / 1000);
   }
 
   /** 主選單背景：沿賽道飛行 */

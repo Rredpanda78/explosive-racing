@@ -633,6 +633,7 @@ export class Screens {
           <b>甩尾輔助</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> 自動回正、限制甩尾角度</label>
           <div class="touch-only">
             <h3>手機操控</h3>
+            <b>震動</b><label><input type="checkbox" data-set="vibrate" ${s.vibrate ? 'checked' : ''} /> 壓到路緣、撞擊、擊毀時手機震動（iPhone 不支援）</label>
             <b>甩尾鍵</b>${pick('tdrift', s.touchDrift, [['single', '一顆（配合方向鍵）'], ['dual', '左甩／右甩兩顆']])}
             <b>轉向方式</b>${pick('ctrl', s.control, [['buttons', '左右按鈕'], ['tilt', '傾斜手機']])}
             ${s.control === 'tilt' ? `<b>傾斜靈敏度</b>${range('tiltRange', 52 - s.tiltRange, 12, 40, 1)}

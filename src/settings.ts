@@ -22,6 +22,8 @@ export interface Settings {
   weaponSound: WeaponPack;
   /** 畫面震動強度 0~1 */
   shake: number;
+  /** 手機震動（壓路緣、撞擊、擊毀；iPhone 不支援） */
+  vibrate: boolean;
   dmgNumbers: boolean;
   /** 畫面角落顯示 FPS（線上比賽另外顯示延遲） */
   netInfo: boolean;
@@ -50,6 +52,7 @@ export function defaultSettings(mobile: boolean): Settings {
     engineSound: 'kart',
     weaponSound: 'classic',
     shake: 1,
+    vibrate: true,
     dmgNumbers: true,
     netInfo: true,
     control: 'buttons',
