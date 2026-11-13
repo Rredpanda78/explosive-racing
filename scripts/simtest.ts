@@ -223,6 +223,35 @@ runAll('elim', 777);
   if (!hard.ev.includes('hardDrift')) throw new Error('double tap did not trigger a hard drift');
   // 使用者要求：比一般甩尾多轉一些就好（約 15~20%）
   if (hard.deg < plain.deg * 1.1 || hard.deg > plain.deg * 1.3) throw new Error('hard drift should turn 10-30% more than a normal drift');
+
+  // 重甩甩過頭不能突然停下來：同一次甩尾連續重甩兩次、N2O 中重甩（以前滑角超過 90 度會被當成倒車，速度一格歸零）
+  const overRot = (boost: boolean): { minV: number; worst: number; v0: number } => {
+    const race = new Race(wide, defaultProfile(), 'race', 1);
+    for (const o of race.karts) if (!o.isPlayer) o.x += 5000;
+    const k = race.player;
+    const inp = emptyInput();
+    while (race.state === 'countdown') race.step(dt, inp);
+    inp.accel = 1;
+    for (let i = 0; i < 60 * 5; i++) race.step(dt, inp);
+    if (boost) { k.n2o = 2; inp.boost = true; race.step(dt, inp); inp.boost = false; }
+    const v0 = Math.hypot(k.vx, k.vz);
+    let minV = v0, worst = 0, prev = v0;
+    for (let t = 0; t < 2.5; t += dt) {
+      inp.drift = t < 2;
+      inp.steer = (t > 0.2 && t < 0.3) || (t > 0.9 && t < 1.0) ? 0 : 1;
+      race.step(dt, inp);
+      const v = Math.hypot(k.vx, k.vz);
+      minV = Math.min(minV, v);
+      worst = Math.max(worst, prev - v);
+      prev = v;
+    }
+    return { minV, worst, v0 };
+  };
+  for (const boost of [false, true]) {
+    const r = overRot(boost);
+    console.log(`hard drift over-rotation${boost ? ' (N2O)' : ''}: v0 ${r.v0.toFixed(1)} min ${r.minV.toFixed(1)} worst one-frame drop ${r.worst.toFixed(2)}`);
+    if (r.worst > 2 || r.minV < r.v0 * 0.6) throw new Error('hard drift over-rotation stopped the kart');
+  }
 }
 // ---- 4. 後方護盾：後面來的爆炸、子彈擋得住，前面的擋不住 ----
 {

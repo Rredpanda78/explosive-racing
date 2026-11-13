@@ -261,7 +261,8 @@ export class Kart {
     let fx = Math.sin(this.heading), fz = Math.cos(this.heading);
     let sp = Math.hypot(this.vx, this.vz);
     const vf = this.vx * fx + this.vz * fz;
-    const reversing = vf < -0.3;
+    // 甩尾中不算倒車（滑角過大時車頭朝後，之前會被當成倒車、速度瞬間歸零）
+    const reversing = vf < -0.3 && !this.drifting;
     // 坡頂的小飛躍不影響操控
     if (this.air <= 0) this.hop = false;
     const flying = this.air > 0 && !this.hop;
@@ -401,7 +402,9 @@ export class Kart {
     let s: number;
     if (sp > 1 && !reversing) {
       const slip0 = wrapAngle(Math.atan2(this.vx, this.vz) - this.heading);
-      const slip = slip0 * Math.exp(-grip * dt);
+      let slip = slip0 * Math.exp(-grip * dt);
+      // 甩尾滑角上限：連續重甩、N2O 中重甩會甩過 90 度，車頭朝後就會突然停下來
+      if (this.drifting && Math.abs(slip) > C.maxDriftSlip) slip = Math.sign(slip) * C.maxDriftSlip;
       // 短漂與斷飄後減速比較少
       // 一般過彎的小滑角不太減速（滑行感），甩尾才明顯減速
       const dragMul = this.cancelT > 0 ? 0 : !this.drifting ? 0.35 : (this.shortDrift ? C.shortDriftDrag : 1) * (1 + (C.hardDrag - 1) * hk);
