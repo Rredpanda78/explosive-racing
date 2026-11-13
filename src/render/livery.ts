@@ -15,11 +15,15 @@ export interface Livery {
 }
 
 /**
- * 把基本材質換成有光澤、會反射環境的車漆材質，並套上花色（hue = 0、tint = null 時就是原廠色）
+ * 把基本材質換成有光澤、會反射環境的車漆材質，並套上花色（hue = 0、tint = null 時就是原廠色）。
+ * gloss = true（精緻畫質）時多一層清漆：表面一層很亮很銳利的反射，映出天空、夕陽與霓虹。
  */
-export function liveryMaterial(base: THREE.Material, lv: Livery | undefined): THREE.MeshStandardMaterial {
+export function liveryMaterial(base: THREE.Material, lv: Livery | undefined, gloss = false): THREE.MeshStandardMaterial {
   const b = base as THREE.MeshLambertMaterial;
-  const m = new THREE.MeshStandardMaterial({ map: b.map, color: b.color?.clone() ?? new THREE.Color(0xffffff), roughness: 0.5, metalness: 0.1, envMapIntensity: 1 });
+  const opt = { map: b.map, color: b.color?.clone() ?? new THREE.Color(0xffffff), roughness: 0.5, metalness: 0.1, envMapIntensity: 1 };
+  const m = gloss
+    ? new THREE.MeshPhysicalMaterial({ ...opt, roughness: 0.42, clearcoat: 1, clearcoatRoughness: 0.07 })
+    : new THREE.MeshStandardMaterial(opt);
   if (!lv || (lv.hue === 0 && lv.tint === null)) return m;
   const uHue = { value: (lv.hue * Math.PI) / 180 };
   const uTint = { value: new THREE.Color(lv.tint ?? 0xffffff) };

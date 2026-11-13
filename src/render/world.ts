@@ -6,6 +6,7 @@ import { makeTerrain } from '../game/terrain';
 import { PAD_HALF_WIDTH, PAD_LENGTH, type Branch, type Sample, type SceneRange, type Track } from '../game/track';
 import { mulberry32 } from '../game/util';
 import { makeInstanced, makeLandmark, makeProp } from './assets';
+import { applyTerrainDetail, grassTufts, roadDetailMaterial } from './detail';
 import type { Theme } from './themes';
 
 export interface World {
@@ -92,8 +93,11 @@ function strip(track: Path, o: StripOpt): THREE.BufferGeometry {
 /** 比 1 亮的顏色：在泛光下會發亮 */
 const glow = (hex: number, k: number) => new THREE.Color(hex).multiplyScalar(k);
 
-/** 依賽道與主題建立整個場景：路面、護欄、地形、景物、天空 */
-export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDetail: boolean): World {
+/**
+ * 依賽道與主題建立整個場景：路面、護欄、地形、景物、天空。
+ * detail：地面細節（路面法線／粗糙度、地形岩石泥土、草叢）——0 = 不做、1 = 草叢稀疏、2 = 全部
+ */
+export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDetail: boolean, detail: 0 | 1 | 2 = 0): World {
   const root = new THREE.Group();
   const hw = track.halfWidth;
   const S = track.samples;
@@ -189,7 +193,9 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     g.setIndex(idx);
     g.computeVertexNormals();
-    addMesh(g, new THREE.MeshLambertMaterial({ map: grassTex, vertexColors: true }));
+    const terrainMat = new THREE.MeshLambertMaterial({ map: grassTex, vertexColors: true });
+    if (detail) applyTerrainDetail(g, terrainMat, theme);
+    addMesh(g, terrainMat);
     // 遠方的平地：高度是 baseY，一定低於賽道最低點
     const farTex = grassTex.clone();
     farTex.repeat.set(500, 500);
@@ -242,7 +248,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     c.fillStyle = '#ffd94a';
     c.fillRect(252, 0, 8, 250);
   });
-  addMesh(strip(track, { latA: hw, yA: 0.02, latB: -hw, yB: 0.02, scale: 12 }), new THREE.MeshLambertMaterial({ map: roadTex }));
+  addMesh(strip(track, { latA: hw, yA: 0.02, latB: -hw, yB: 0.02, scale: 12 }), detail ? roadDetailMaterial(roadTex, theme, hw * 2) : new THREE.MeshLambertMaterial({ map: roadTex }));
 
   // 彎道的紅白路緣
   const curbTex = canvasTex(32, 64, (c) => {
@@ -1143,6 +1149,28 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     }
     flowers.frustumCulled = false;
     root.add(flowers);
+  }
+
+  // 草原路邊的草叢（精緻畫質）：越靠近護欄越密；高度取路肩斜坡與地形較高的那個
+  if (detail && theme.id === 'meadow') {
+    const want = detail === 2 ? 14000 : 4500;
+    const gr = mulberry32(77 + n);
+    const spots: THREE.Vector3[] = [];
+    for (let tries = 0; tries < want * 3 && spots.length < want; tries++) {
+      const s = S[Math.floor(gr() * n)];
+      const sg = gr() > 0.5 ? 1 : -1;
+      const cl = latClamp(s, sg * (hw + 1.5 + Math.pow(gr(), 1.7) * 9));
+      const x = s.x + s.nx * cl, z = s.z + s.nz * cl;
+      if (trackDist(x, z) < hw + 1.3 || inLake(x, z, 2) || (BR.length && inBranch(x, z, 1.2))) continue;
+      const a = Math.abs(cl);
+      const sy = a < hw + 9 ? s.y - 0.02 - 3.18 * ((a - (hw + 0.95)) / (9 - 0.95)) : -Infinity;
+      spots.push(new THREE.Vector3(x, Math.max(sy, terrainH(x, z)) - 0.03, z));
+    }
+    if (spots.length) {
+      const grass = grassTufts(spots, 5);
+      root.add(grass.mesh);
+      updaters.push((_dt, time) => grass.tick(time));
+    }
   }
 
   // 風力發電機（遠處會轉的地標）
