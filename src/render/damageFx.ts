@@ -216,6 +216,23 @@ export class DamageFx {
         r.lastScorch = this.time;
         this.addDecal(kv, 1, by.x, by.y + 0.8, by.z, x + (R() - 0.5) * 1.6, y + (R() - 0.6) * 0.7, z + (R() - 0.5) * 1.6, 0.75);
       }
+    } else if (w === 'arc') {
+      // 電弧：小小的電灼焦痕
+      if (this.time - r.lastScorch > 0.3) {
+        r.lastScorch = this.time;
+        this.addDecal(kv, 1, by.x, by.y + 0.95, by.z, x + (R() - 0.5) * 1.2, y + (R() - 0.5) * 0.5, z + (R() - 0.5) * 1.2, 0.45);
+      }
+    } else if (w === 'freeze') {
+      // 冷凍光束：不留痕跡（車身結霜由 KartView 表現）
+    } else if (w === 'sonic') {
+      if (this.time - r.lastChip > 0.2) {
+        r.lastChip = this.time;
+        this.chipBurst(k, x, y, z, 2, 5);
+      }
+    } else if (w === 'harpoon') {
+      // 魚叉：碎屑 + 一個孔
+      this.chipBurst(k, x, y, z, 4, 5);
+      this.addDecal(kv, 0, by.x, by.y + 0.95, by.z, x, y, z, 0.34);
     } else {
       // 雷射：一整道燒穿的焦痕
       this.chipBurst(k, x, y, z, 6, 7);

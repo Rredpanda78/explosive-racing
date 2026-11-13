@@ -8,7 +8,11 @@ import type { Profile } from './save';
 import type { HazardDef, Track } from './track';
 import { initStreet, updateStreet, type CrackerMat, type StreetRider } from './street';
 import { clamp, mulberry32, wrapAngle } from './util';
-import { BURN_DPS, BURN_TIME, LASER_CHARGE, laserCooldown, laserKeep, laserWidth, lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, shieldHalfArc, shieldHp, shieldTime, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
+import {
+  ARC_KEEP, ARC_W, arcHops, arcJump, BURN_DPS, BURN_TIME, CHILL_DECAY, CHILL_DECAY_DEEP, CHILL_HOLD, chillRate, FREEZE_W, HOOK_SPEED, LASER_CHARGE, laserCooldown, laserKeep, laserWidth,
+  lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, pullBonus, ROPE_MAX, ROPE_PULL, SECONDARY, SECONDARY_IDS, shieldHalfArc, shieldHp, shieldTime, SHOVE_T, SONIC_SLAM, sonicPush,
+  tetherTime, weaponLvlMul, type PrimaryDef, type SecondaryId,
+} from './weapons';
 import { DIFFICULTY } from './difficulty';
 
 export type RaceMode = 'race' | 'elim';
@@ -55,7 +59,12 @@ export interface HazardState {
   gust?: number;
 }
 
-export type HitWeapon = 'gun' | 'flame' | 'laser';
+/** 魚叉鉤射出去還在飛的叉頭；side = 從哪一側的槍射出（畫繩子用） */
+export interface Hook { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; dmg: number; owner: Kart; idx: number; side: number }
+
+export type HitWeapon = 'gun' | 'flame' | 'laser' | 'arc' | 'freeze' | 'sonic' | 'harpoon';
+/** 魚叉繩斷掉的原因：追上對方、放開（或時間到）、被扯斷（撞牆、被擋住、拉太遠） */
+export type TetherEnd = 'catch' | 'release' | 'snap';
 
 export type RaceEvent =
   | { t: 'shot'; k: Kart; x: number; y: number; z: number; side: number }
@@ -70,6 +79,14 @@ export type RaceEvent =
   | { t: 'shatter'; k: Kart }
   /** 雷射射出：hits = 打中幾台車 */
   | { t: 'rail'; k: Kart; x: number; y: number; z: number; len: number; hits: number }
+  /** 電弧槍放電：chain = 依序被電到的車（空 = 沒電到人，電弧停在槍口前方 len 公尺處） */
+  | { t: 'zap'; k: Kart; x: number; y: number; z: number; chain: Kart[]; len: number }
+  /** 音波炮打出一圈震波：a = 方向、r = 射程、w = 扇形半角 */
+  | { t: 'pulse'; k: Kart; x: number; y: number; z: number; a: number; r: number; w: number }
+  /** 魚叉射出（side = 哪一側的槍） */
+  | { t: 'hook'; k: Kart; x: number; y: number; z: number; side: number }
+  /** 魚叉繩叉住（on）或斷掉 */
+  | { t: 'tether'; k: Kart; v: Kart; on: boolean; why?: TetherEnd }
   | { t: 'lock'; k: Kart; by: Kart }
   | { t: 'hazard'; k: Kart; kind: HazardDef['kind']; x: number; y: number; z: number }
   | { t: 'rock'; x: number; y: number; z: number; r: number }
@@ -123,6 +140,7 @@ export class Race {
   player: Kart;
   ais = new Map<Kart, AIController>();
   bullets: Bullet[] = [];
+  hooks: Hook[] = [];
   missiles: Missile[] = [];
   shells: Shell[] = [];
   barrels: Barrel[] = [];
@@ -317,6 +335,7 @@ export class Race {
 
     for (const k of this.karts) {
       if (k.out) continue;
+      this.updateStatus(k, dt);
       if (k.remote) {
         this.stepRemote(k, dt, racing);
         continue;
@@ -379,7 +398,13 @@ export class Race {
       const inp = useAI ? ai.think(k, this, dt) : pin;
       const prevIdx = k.idx;
       const wasBranch = k.branch;
+      const e0 = ev.length;
       k.update(dt, inp, track, (e) => ev.push({ t: 'kart', k, e }));
+      // 撞牆：魚叉繩扯斷；被音波炮推去撞牆（Lv.5）額外受傷
+      for (let i = e0; i < ev.length; i++) {
+        const e = ev[i];
+        if (e.t === 'kart' && e.e === 'wall') { this.onWall(k); break; }
+      }
       if (k.branch && !wasBranch) {
         if (!k.finished) k.stats.shortcuts++;
         ev.push({ t: 'shortcut', k });
@@ -421,6 +446,7 @@ export class Race {
       this.updateDraft(dt);
       this.updateBarrels(dt);
       this.updateBullets(dt);
+      this.updateHooks(dt);
       this.updateMissiles(dt);
       this.updateShells(dt);
       this.updateMines(dt);
@@ -465,12 +491,29 @@ export class Race {
     k.sinceDamage += dt;
     if (!racing || k.dead || k.finished) {
       k.charge = 0;
+      if (k.tether) this.breakTether(k, 'release');
       return;
     }
+    // 魚叉繩（只是畫面）：車主放開、時間到，或車主的旗標說已經沒叉住了就收掉
+    if (k.tether) {
+      const t = k.tether;
+      k.tetherT -= dt;
+      k.tetherAge += dt;
+      if (!k.netFire || k.tetherT <= 0) this.breakTether(k, 'release');
+      else if (t.dead || t.out || (k.tetherAge > 0.6 && !k.netTether)) this.breakTether(k, Math.hypot(t.x - k.x, t.z - k.z) < 6 ? 'catch' : 'snap');
+    }
     REMOTE_INPUT.firePrimary = k.netFire;
-    const P = PRIMARY[k.primary];
-    if (P.kind === 'laser') this.updateLaser(k, REMOTE_INPUT, dt);
-    else this.updateGun(k, REMOTE_INPUT, P, dt);
+    this.updatePrimary(k, REMOTE_INPUT, dt);
+  }
+
+  /** 別人的車（由車主判定）叉住了某台車：畫面上的繩子以車主說的為準 */
+  remoteTether(k: Kart, v: Kart): void {
+    if (k.dead || k.out || v.dead || v.out || this.state === 'countdown') return;
+    k.tetherAge = 0;
+    if (k.tether === v) return;
+    k.tether = v;
+    k.tetherT = tetherTime(k.primaryLvl);
+    this.events.push({ t: 'tether', k, v, on: true });
   }
 
   /** 別人發射了副武器：照同樣的參數生出砲彈 */
@@ -574,7 +617,20 @@ export class Race {
     return best;
   }
 
+  /** t 附近 r 公尺內還有幾台車（不算 t 與 not）：電腦判斷電弧槍值不值得開 */
+  crowd(t: Kart, r: number, not: Kart): number {
+    let n = 0;
+    for (const o of this.karts) {
+      if (o === t || o === not || o.dead || o.out || o.invulnT > 0) continue;
+      const dx = o.x - t.x, dz = o.z - t.z;
+      if (dx * dx + dz * dz < r * r) n++;
+    }
+    return n;
+  }
+
   resetToTrack(k: Kart): void {
+    if (k.tether) this.breakTether(k, 'snap');
+    k.pullSpeed = 0;
     const s = this.track.samples[k.idx];
     k.branch = null;
     k.runoff = false;
@@ -902,10 +958,16 @@ export class Race {
     return false;
   }
 
-  private updateWeapons(k: Kart, inp: KartInput, dt: number): void {
+  /** 主武器：雷射（蓄力＋冷卻）、魚叉鉤（一次一發、叉住後拉扯），其他照射速連發 */
+  private updatePrimary(k: Kart, inp: KartInput, dt: number): void {
     const P = PRIMARY[k.primary];
     if (P.kind === 'laser') this.updateLaser(k, inp, dt);
+    else if (P.kind === 'harpoon') this.updateHarpoon(k, inp, P, dt);
     else this.updateGun(k, inp, P, dt);
+  }
+
+  private updateWeapons(k: Kart, inp: KartInput, dt: number): void {
+    this.updatePrimary(k, inp, dt);
 
     k.secCd = Math.max(0, k.secCd - dt);
     if (inp.fireSecondary && k.secCd <= 0) {
@@ -986,7 +1048,8 @@ export class Race {
         k.fireCd += 1 / P.rate;
         k.heat += P.heat * heatMul;
       }
-      if (P.kind !== 'gun') k.firing = 0.1;
+      // 持續噴射的武器（火焰、冷凍光束）：畫面上的噴流／光束跟著這個亮
+      if (P.kind === 'flame' || P.kind === 'freeze') k.firing = 0.1;
     } else if (k.fireCd < 0) {
       k.fireCd = 0;
     }
@@ -1002,7 +1065,12 @@ export class Race {
   /** 主武器：全部沿車頭方向（沒有輔助瞄準） */
   private firePrimary(k: Kart, P: PrimaryDef): void {
     const dmg = P.dmg * weaponLvlMul(k.primaryLvl) * k.dmgMul;
-    if (P.kind === 'flame') return this.fireFlame(k, P, dmg);
+    switch (P.kind) {
+      case 'flame': return this.fireFlame(k, P, dmg);
+      case 'arc': return this.fireArc(k, P, dmg);
+      case 'freeze': return this.fireFreeze(k, P, dmg);
+      case 'sonic': return this.fireSonic(k, P, dmg);
+    }
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
     const lx = fz, lz = -fx;
     k.gunSide = -k.gunSide;
@@ -1052,10 +1120,9 @@ export class Race {
     for (const b of this.boulders) if (!b.dead && b.enterT <= 0.45 && inCone(b.x, b.z, b.y - b.r, b.r) >= 0) this.hurtBoulder(b, dmg, k);
   }
 
-  /** 雷射光束從槍口沿車頭方向射出，打到護欄或坡面就停住 */
-  private laserReach(k: Kart): { ox: number; oy: number; oz: number; fx: number; fz: number; tp: number; len: number } {
+  /** 雷射（與冷凍光束、電弧）從槍口沿車頭方向射出，打到護欄或坡面就停住 */
+  private laserReach(k: Kart, range = PRIMARY.laser.range): { ox: number; oy: number; oz: number; fx: number; fz: number; tp: number; len: number } {
     const track = this.track;
-    const range = PRIMARY.laser.range;
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
     const ox = k.x + fx * 1.3, oz = k.z + fz * 1.3, oy = k.y + 0.95;
     const tp = Math.tan(k.pitch);
@@ -1126,6 +1193,337 @@ export class Race {
     k.beamLen = end + 1.3;
     k.beamHit = n > 0;
     this.events.push({ t: 'rail', k, x: ox, y: oy, z: oz, len: end, hits: n });
+  }
+
+  // ------------------------------------------------------------------
+  // 功能型主武器：電弧槍、冷凍光束、音波炮、魚叉鉤
+  // （遠端車開火也在這裡模擬；只有打到自己控制的車才扣血、結冰、被推、被拖慢——由被打的人自己判定）
+
+  /**
+   * 電弧槍：槍口前方窄錐內最近的一台車先被電到，接著電流跳到離它最近、還沒被電過的車（arcJump 公尺內），
+   * 每跳一次威力 ×ARC_KEEP，最多再跳 arcHops 台。打到後方護盾：擋下、電流不再往下跳。
+   */
+  private fireArc(k: Kart, P: PrimaryDef, dmg: number): void {
+    const lvl = k.primaryLvl;
+    const { ox, oy, oz, fx, fz, tp, len } = this.laserReach(k, P.range);
+    let first: Kart | null = null, bt = len;
+    for (const o of this.karts) {
+      if (o === k || o.dead || o.out || o.invulnT > 0) continue;
+      const dx = o.x - ox, dz = o.z - oz;
+      const t = dx * fx + dz * fz;
+      if (t < -0.8 || t > bt) continue;
+      if (Math.abs(dx * fz - dz * fx) > ARC_W + Math.max(0, t) * P.spread) continue;
+      if (Math.abs(o.y + 0.9 - (oy + tp * t)) > 2.4) continue;
+      bt = Math.max(0, t);
+      first = o;
+    }
+    const chain: Kart[] = [];
+    let cur = first, px = ox, pz = oz, power = 1;
+    const jump = arcJump(lvl), maxN = 1 + arcHops(lvl);
+    while (cur && chain.length < maxN) {
+      chain.push(cur);
+      if (this.shieldBlocks(cur, px, pz)) {
+        this.blockAt(cur, px, pz, dmg * power);
+        break;
+      }
+      this.events.push({ t: 'hit', k: cur, by: k, x: cur.x, y: cur.y + 0.9, z: cur.z, w: 'arc' });
+      this.damage(cur, dmg * power, k);
+      power *= ARC_KEEP;
+      px = cur.x;
+      pz = cur.z;
+      // 下一台：離這台最近、還沒被電到的車（不會跳回開火的人）
+      let next: Kart | null = null, bd = jump;
+      for (const o of this.karts) {
+        if (o === k || o.dead || o.out || o.invulnT > 0 || chain.includes(o) || Math.abs(o.y - cur.y) > 3) continue;
+        const d = Math.hypot(o.x - cur.x, o.z - cur.z);
+        if (d < bd) { bd = d; next = o; }
+      }
+      cur = next;
+    }
+    this.events.push({ t: 'zap', k, x: ox, y: oy, z: oz, chain, len: first ? bt : len });
+  }
+
+  /**
+   * 冷凍光束：打到第一台車就停住；傷害很低，但每次判定都讓對方多結冰一點（chill 0~1），
+   * 結冰會讓輪胎抓不住、轉向變鈍、極速降一點（見 Kart.update），沒被照到之後慢慢退冰。
+   */
+  private fireFreeze(k: Kart, P: PrimaryDef, dmg: number): void {
+    const lvl = k.primaryLvl;
+    const { ox, oy, oz, fx, fz, tp, len } = this.laserReach(k, P.range);
+    let best: Kart | null = null, bt = len;
+    for (const o of this.karts) {
+      if (o === k || o.dead || o.out || o.invulnT > 0) continue;
+      const dx = o.x - ox, dz = o.z - oz;
+      const t = dx * fx + dz * fz;
+      if (t < -0.8 || t > bt) continue;
+      if (Math.abs(dx * fz - dz * fx) > FREEZE_W) continue;
+      if (Math.abs(o.y + 0.9 - (oy + tp * t)) > 2.2) continue;
+      bt = Math.max(0, t);
+      best = o;
+    }
+    k.beamHit = !!best;
+    k.beamLen = bt + 1.3;
+    if (!best) return;
+    if (this.shieldBlocks(best, ox, oz)) {
+      this.blockAt(best, ox, oz, dmg, this.rng() < 0.2);
+      return;
+    }
+    this.damage(best, dmg, k);
+    // 結冰：遠端的車只是畫面（他自己的電腦會判定自己有沒有被照到）
+    best.chill = Math.min(1, best.chill + chillRate(lvl) * Math.min(1, k.dmgMul));
+    best.chillT = 0;
+    if (lvl >= PERK_LVL5) best.chillDeep = true;
+    this.events.push({ t: 'hit', k: best, by: k, x: best.x - fx * 0.9, y: best.y + 0.9, z: best.z - fz * 0.9, w: 'freeze' });
+  }
+
+  /**
+   * 音波炮：車頭前方扇形內的車全部被震到——小傷害，並往旁邊（加一點往前）推開，越遠推得越輕。
+   * 對方正好在正前方時，往他離得比較近的路邊推。被推的那一下抓地力變差（才推得動），Lv.5 推去撞牆額外受傷。
+   */
+  private fireSonic(k: Kart, P: PrimaryDef, dmg: number): void {
+    const lvl = k.primaryLvl;
+    const h = k.heading, fx = Math.sin(h), fz = Math.cos(h), lx = fz, lz = -fx;
+    const range = P.range, half = P.spread;
+    for (const o of this.karts) {
+      if (o === k || o.dead || o.out || o.invulnT > 0) continue;
+      const dx = o.x - k.x, dz = o.z - k.z;
+      const d = Math.hypot(dx, dz);
+      if (d > range || d < 0.5 || Math.abs(o.y - k.y) > 2.6) continue;
+      if (dx * fx + dz * fz <= 0) continue;
+      if (Math.abs(wrapAngle(Math.atan2(dx, dz) - h)) > half + Math.atan2(1.1, d)) continue;
+      if (this.shieldBlocks(o, k.x, k.z)) {
+        this.blockAt(o, k.x, k.z, dmg);
+        continue;
+      }
+      const f = 1 - 0.55 * (d / range);
+      this.events.push({ t: 'hit', k: o, by: k, x: o.x - (dx / d) * 1.1, y: o.y + 0.8, z: o.z - (dz / d) * 1.1, w: 'sonic' });
+      this.damage(o, dmg * f, k);
+      // 推開：只有自己控制的車真的被推（遠端車由他自己的電腦判定）
+      if (o.remote || o.dead || o.air > 1.5) continue;
+      const side = dx * lx + dz * lz;
+      let px: number, pz: number;
+      if (Math.abs(side) > 0.6 || o.branch) {
+        const sg = Math.sign(side) || 1;
+        px = lx * sg;
+        pz = lz * sg;
+      } else {
+        const s = this.track.samples[o.idx], sg = Math.sign(o.lat) || 1;
+        px = s.nx * sg;
+        pz = s.nz * sg;
+      }
+      px += fx * 0.45;
+      pz += fz * 0.45;
+      const pl = Math.hypot(px, pz);
+      const imp = (sonicPush(lvl) * f * Math.min(1, k.dmgMul) * o.blastMul) / pl;
+      o.vx += px * imp;
+      o.vz += pz * imp;
+      // 車頭也被往推的方向扭一點（順著被推出去）
+      o.spinVel += (px * fz - pz * fx > 0 ? 1 : -1) * 0.6 * f;
+      o.shoveT = SHOVE_T;
+      o.shoveBy = k;
+      o.shoveDmg = lvl >= PERK_LVL5 ? SONIC_SLAM : 0;
+    }
+    this.events.push({ t: 'pulse', k, x: k.x + fx * 1.6, y: k.y + 0.95, z: k.z + fz * 1.6, a: h, r: range, w: half });
+  }
+
+  /** 撞牆：魚叉繩扯斷；剛被音波炮推過來（Lv.5 共振）額外受傷，算在推的人頭上 */
+  private onWall(k: Kart): void {
+    if (k.tether) this.breakTether(k, 'snap');
+    if (k.shoveT > 0 && k.shoveDmg > 0 && k.shoveBy) {
+      const by = k.shoveBy, amt = k.shoveDmg;
+      k.shoveDmg = 0;
+      this.events.push({ t: 'hit', k, by, x: k.x, y: k.y + 0.8, z: k.z, w: 'sonic' });
+      this.damage(k, amt, by);
+    }
+  }
+
+  /**
+   * 魚叉鉤：沒叉住東西時按住就射（一次只有一支叉頭在飛）；叉住後按住維持拉扯。
+   * 熱量只在放開時散掉，所以拉著繩子也很耗熱量。
+   */
+  private updateHarpoon(k: Kart, inp: KartInput, P: PrimaryDef, dt: number): void {
+    k.fireCd = Math.max(0, k.fireCd - dt);
+    const held = inp.firePrimary;
+    if (k.tether) {
+      // 遠端車的繩子只是畫面（在 stepRemote 處理）
+      if (!k.remote) this.updateTether(k, held, dt);
+    } else if (held && !k.overheated && k.fireCd <= 0 && !this.hooks.some((h) => h.owner === k)) {
+      this.fireHook(k, P);
+      k.fireCd = 1 / P.rate;
+      k.heat += P.heat * lvl3Mul(k.primaryLvl);
+    }
+    if (!held || k.overheated) k.heat = Math.max(0, k.heat - 0.4 * dt);
+    if (k.heat >= 1) { k.heat = 1; k.overheated = true; }
+    if (k.overheated && k.heat < 0.35) k.overheated = false;
+  }
+
+  private fireHook(k: Kart, P: PrimaryDef): void {
+    const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
+    const lx = fz, lz = -fx;
+    k.gunSide = -k.gunSide;
+    const ox = k.x + lx * 0.7 * k.gunSide + fx * 1.6;
+    const oz = k.z + lz * 0.7 * k.gunSide + fz * 1.6;
+    const oy = k.y + 0.95;
+    const sp = HOOK_SPEED + Math.max(0, k.speed);
+    this.hooks.push({
+      x: ox, y: oy, z: oz, vx: fx * sp, vy: Math.tan(k.pitch) * sp, vz: fz * sp, life: P.range / HOOK_SPEED,
+      dmg: P.dmg * weaponLvlMul(k.primaryLvl) * k.dmgMul, owner: k, idx: k.idx, side: k.gunSide,
+    });
+    this.events.push({ t: 'hook', k, x: ox, y: oy, z: oz, side: k.gunSide });
+  }
+
+  /** 飛行中的叉頭：打到車就叉住（開火的人還按著的話），打到護欄或飛完射程就掉落 */
+  private updateHooks(dt: number): void {
+    const H = this.hooks;
+    for (let i = H.length - 1; i >= 0; i--) {
+      const h = H[i];
+      const o = h.owner;
+      const sx = h.vx * dt, sz = h.vz * dt;
+      const sl2 = sx * sx + sz * sz;
+      let hit: Kart | null = null;
+      let ht = 2;
+      for (const k of this.karts) {
+        if (k === o || k.dead || k.out || k.invulnT > 0) continue;
+        const t = clamp(((k.x - h.x) * sx + (k.z - h.z) * sz) / sl2, 0, 1);
+        const cx = h.x + sx * t - k.x, cz = h.z + sz * t - k.z;
+        if (cx * cx + cz * cz < 2.4 && t < ht && Math.abs(h.y - (k.y + 0.9)) < 2.2) { ht = t; hit = k; }
+      }
+      const remove = () => { H[i] = H[H.length - 1]; H.pop(); };
+      if (!hit && this.hitObject(h.x + sx, h.z + sz, 0.4, o, h.dmg)) { remove(); continue; }
+      if (hit) {
+        if (this.shieldBlocks(hit, o.x, o.z)) {
+          this.blockAt(hit, o.x, o.z, h.dmg);
+        } else {
+          this.events.push({ t: 'hit', k: hit, by: o, x: h.x + sx * ht, y: h.y, z: h.z + sz * ht, w: 'harpoon' });
+          this.damage(hit, h.dmg, o);
+          this.latch(o, hit);
+        }
+        remove();
+        continue;
+      }
+      h.x += sx;
+      h.y += h.vy * dt;
+      h.z += sz;
+      h.life -= dt;
+      h.idx = this.track.probe(h.x, h.z, h.idx, 0.7);
+      if (!this.track.probeOn || h.y < this.track.probeY) {
+        this.events.push({ t: 'impact', x: h.x, y: Math.max(h.y, this.track.probeY + 0.2), z: h.z });
+        remove();
+        continue;
+      }
+      if (h.life <= 0) remove();
+    }
+  }
+
+  /**
+   * 叉中了：開火的人（還按著）開始被繩子拉過去；被叉中的人如果是自己控制的車就被拖慢。
+   * 開火的人是遠端的車時，這裡的繩子只是畫面（車主會傳來他判定叉住的是誰）
+   */
+  private latch(s: Kart, v: Kart): void {
+    if (!s.netFire || s.dead || s.out || s.finished || v.dead || v.out) return;
+    const T = tetherTime(s.primaryLvl);
+    if (!s.tether) {
+      s.tether = v;
+      s.tetherT = T;
+      s.tetherAge = 0;
+      this.events.push({ t: 'tether', k: s, v, on: true });
+      if (!s.remote) this.net?.onTether(s, v);
+    }
+    if (!v.remote) {
+      v.towT = T;
+      v.towBy = s;
+      v.towAge = 0;
+    }
+  }
+
+  /** 自己控制的車拉著繩子：追速跟著對方車速，並往對方的方向拉；放開、追上、扯斷就結束 */
+  private updateTether(k: Kart, held: boolean, dt: number): void {
+    const t = k.tether!;
+    k.tetherT -= dt;
+    k.tetherAge += dt;
+    const dx = t.x - k.x, dz = t.z - k.z;
+    const d = Math.hypot(dx, dz);
+    const ahead = dx * Math.sin(k.heading) + dz * Math.cos(k.heading);
+    if (!held || k.tetherT <= 0) return this.breakTether(k, 'release');
+    if (t.dead || t.out || d > ROPE_MAX || Math.abs(t.y - k.y) > 8) return this.breakTether(k, 'snap');
+    if (d < 4.2 || ahead < 1.5) return this.breakTether(k, 'catch');
+    if (this.ropeBlocked(k, t)) return this.breakTether(k, 'snap');
+    k.pullSpeed = Math.min(Math.max(0, t.speed) + pullBonus(k.primaryLvl), k.topSpeed * 1.5);
+    // 繩子往對方的方向拉：只拉側向（把車往對方那邊帶），往前的速度由追速決定
+    const v = Math.hypot(k.vx, k.vz);
+    if (k.air <= 0 && v > 1) {
+      const ux = k.vx / v, uz = k.vz / v, rx = dx / d, rz = dz / d;
+      const al = rx * ux + rz * uz;
+      k.vx += (rx - ux * al) * ROPE_PULL * dt;
+      k.vz += (rz - uz * al) * ROPE_PULL * dt;
+    }
+  }
+
+  /** 繩子中間經過路面以外（彎道內側的牆、捷徑兩側的岩壁）就算被擋住 */
+  private ropeBlocked(k: Kart, t: Kart): boolean {
+    let hint = k.idx;
+    for (const u of [0.3, 0.6, 0.85]) {
+      hint = this.track.probe(k.x + (t.x - k.x) * u, k.z + (t.z - k.z) * u, hint, 1.2);
+      if (!this.track.probeOn) return true;
+    }
+    return false;
+  }
+
+  /** 魚叉繩斷掉；Lv.5 甩射：收線追上對方的瞬間自動小噴 */
+  private breakTether(k: Kart, why: TetherEnd): void {
+    const v = k.tether;
+    k.tether = null;
+    k.tetherT = 0;
+    k.pullSpeed = 0;
+    if (!v) return;
+    if (v.towBy === k && !v.remote) {
+      v.towT = 0;
+      v.towBy = null;
+    }
+    if (why === 'catch' && !k.remote && !k.dead && k.primaryLvl >= PERK_LVL5) {
+      k.miniT = Math.max(k.miniT, CFG.miniTime * k.miniMul);
+      this.events.push({ t: 'kart', k, e: 'mini' });
+    }
+    this.events.push({ t: 'tether', k, v, on: false, why });
+  }
+
+  /**
+   * 冷凍、震波、魚叉的狀態（本機與遠端的車都跑：遠端車的只影響畫面）。
+   * 結冰沒被照到一小段時間後慢慢退；被魚叉叉住的拖慢由自己判定什麼時候結束。
+   */
+  private updateStatus(k: Kart, dt: number): void {
+    k.chillT += dt;
+    if (k.chill > 0 && k.chillT > CHILL_HOLD) {
+      k.chill = Math.max(0, k.chill - dt / (k.chillDeep ? CHILL_DECAY_DEEP : CHILL_DECAY));
+      if (k.chill <= 0) k.chillDeep = false;
+    }
+    k.shoveT = Math.max(0, k.shoveT - dt);
+    if (k.shoveT <= 0) k.shoveBy = null;
+    if (k.dead || k.finished) {
+      k.chill = 0;
+      k.chillDeep = false;
+      k.shoveT = 0;
+      k.towT = 0;
+      k.towBy = null;
+      if (k.tether && !k.remote) this.breakTether(k, 'snap');
+      return;
+    }
+    if (k.towT <= 0) return;
+    // 被叉住：叉中自己的人放開、追上、斷掉（遠端的人看他的旗標）或拉太遠就結束
+    k.towT -= dt;
+    k.towAge += dt;
+    const s = k.towBy;
+    let live = !!s && !s.dead && !s.out && s.netFire;
+    if (live && s) {
+      if (!s.remote) live = s.tether === k;
+      else if (k.towAge > 0.6) live = s.netTether;
+      const dx = k.x - s.x, dz = k.z - s.z;
+      if (dx * dx + dz * dz > ROPE_MAX * ROPE_MAX) live = false;
+    }
+    if (!live || k.towT <= 0) {
+      k.towT = 0;
+      k.towBy = null;
+    }
   }
 
   /** 火箭：朝正前方直線飛行 */

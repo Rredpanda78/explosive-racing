@@ -72,6 +72,29 @@ const M = {
   slit: glow(2.2, 0.3, 0.45),
   pilot: glow(0.5, 0.9, 2.4),
   mineLight: glow(2.2, 0.15, 0.1),
+  // 電弧槍：銅線圈、白色陶瓷絕緣管、電藍色的放電球
+  copper: lambert(0xc8743a, { emissive: 0x2a1004 }),
+  ceramic: lambert(0xe9e4d8),
+  arcGlow: glow(0.75, 1.35, 2.8),
+  // 冷凍光束：白色冷卻罐、冰藍色鰭片與發光鏡頭
+  cryo: lambert(0xdde8f0),
+  ice: lambert(0x8fd3ff, { emissive: 0x0c2a40 }),
+  iceGlow: glow(0.55, 1.6, 2.6),
+  // 音波炮：深紫色擴音箱、發光的音圈
+  violet: lambert(0x4a3a7a),
+  hornIn: lambert(0x1c1924, { side: THREE.BackSide }),
+  sonicGlow: glow(1.9, 0.55, 2.4),
+  // 魚叉鉤：麻繩、紅色氣瓶
+  rope: lambert(0xffa31a, { emissive: 0x3a1c00 }),
+  // 散熱套筒上的圓孔
+  grille: lambert(0xffffff, {
+    map: canvasTex(64, 64, (c) => {
+      c.fillStyle = '#2a2433';
+      c.fillRect(0, 0, 64, 64);
+      c.fillStyle = '#0d0b10';
+      for (let y = 4; y < 64; y += 8) for (let x = 4 + ((y / 8) % 2) * 4; x < 64; x += 8) { c.beginPath(); c.arc(x, y, 2.6, 0, Math.PI * 2); c.fill(); }
+    }, 1, 1),
+  }),
 };
 
 const SHARED = new Set<THREE.Material>(Object.values(M));
@@ -100,6 +123,26 @@ export interface PrimaryParts {
   muzzle: THREE.Vector3;
   /** 會繞 Z 軸旋轉的部分（六管機槍的槍管組） */
   spinners: THREE.Object3D[];
+  /** 裝填在槍上的彈藥（魚叉鉤的魚叉：射出去之後藏起來） */
+  ammo?: THREE.Object3D;
+  /** 開火時會往前一震的部分（音波炮的喇叭） */
+  kick?: THREE.Object3D;
+  /** 繞 X 軸轉的捲線輪（魚叉鉤收線時轉） */
+  reel?: THREE.Object3D;
+}
+
+/** 魚叉：細長的桿子、尖頭與兩片倒鉤，原點在桿尾，朝 +Z（槍上裝填的與飛出去的共用） */
+export function buildHarpoonSpear(): THREE.Group {
+  const g = new THREE.Group();
+  g.add(tube(0.022, 0.9, M.steel, 0, 0, 0.45, 6));
+  g.add(tube(0.035, 0.08, M.red, 0, 0, 0.06, 8));
+  g.add(mesh(new THREE.ConeGeometry(0.06, 0.22, 8).rotateX(Math.PI / 2), M.steelDark, 0, 0, 1.0));
+  for (const s of [1, -1]) {
+    const barb = box(0.016, 0.1, 0.03, M.steelDark, 0, s * 0.055, 0.86);
+    barb.rotation.x = s * 0.6;
+    g.add(barb);
+  }
+  return g;
 }
 
 /** 主武器。side = 1 裝在左側、-1 裝在右側（彈藥箱之類的配件放在外側） */
@@ -108,6 +151,9 @@ export function buildPrimary(id: PrimaryId, side = 1): PrimaryParts {
   const spinners: THREE.Object3D[] = [];
   const Y = 0.2;
   let muzzleZ = 1.1;
+  let ammo: THREE.Object3D | undefined;
+  let kick: THREE.Object3D | undefined;
+  let reelObj: THREE.Object3D | undefined;
   mount(g, 0.12);
   if (id === 'mg') {
     // .50 機槍：方形機匣、打孔散熱套筒、外側彈藥箱與彈鏈、後方握把
@@ -163,6 +209,74 @@ export function buildPrimary(id: PrimaryId, side = 1): PrimaryParts {
     g.add(tube(0.012, 0.18, M.steel, 0, Y - 0.08, 0.76, 6));
     g.add(mesh(new THREE.SphereGeometry(0.025, 6, 4), M.pilot, 0, Y - 0.08, 0.86));
     muzzleZ = 0.9;
+  } else if (id === 'arc') {
+    // 電弧槍：後方高壓電箱（外側一條發光的電池槽）、白色陶瓷絕緣管上繞著一圈圈銅線圈、前端兩根電極夾著一顆放電球
+    g.add(box(0.22, 0.2, 0.34, M.gun, 0, Y, -0.16));
+    g.add(box(0.06, 0.14, 0.28, M.steelDark, side * 0.13, Y - 0.01, -0.16));
+    g.add(box(0.01, 0.1, 0.22, M.arcGlow, side * 0.162, Y - 0.01, -0.16));
+    for (const dz of [-0.28, -0.08]) g.add(tube(0.03, 0.05, M.ceramic, 0, Y + 0.13, dz, 8));
+    g.add(tube(0.045, 0.74, M.ceramic, 0, Y, 0.38, 10));
+    for (let i = 0; i < 7; i++) {
+      const ring = mesh(new THREE.TorusGeometry(0.075, 0.022, 6, 14), M.copper, 0, Y, 0.1 + i * 0.085);
+      g.add(ring);
+    }
+    g.add(tube(0.09, 0.05, M.steelDark, 0, Y, 0.72, 12));
+    for (const s of [1, -1]) {
+      const prong = box(0.028, 0.028, 0.26, M.copper, s * 0.06, Y, 0.86);
+      prong.rotation.y = -s * 0.22;
+      g.add(prong);
+    }
+    g.add(mesh(new THREE.SphereGeometry(0.05, 10, 8), M.arcGlow, 0, Y, 0.97));
+    muzzleZ = 0.99;
+  } else if (id === 'freeze') {
+    // 冷凍光束：後方兩罐白色冷卻劑（冰藍色束帶）、六角槍管上一片片冰藍散熱鰭片、前端發光的冰藍鏡頭
+    for (const [dy, dx] of [[0.065, 0], [-0.065, side * 0.02]] as [number, number][]) {
+      g.add(tube(0.07, 0.4, M.cryo, dx, Y + dy + 0.02, -0.2, 12));
+      for (const z of [-0.1, -0.3]) g.add(tube(0.073, 0.035, M.ice, dx, Y + dy + 0.02, z, 12));
+      g.add(mesh(new THREE.SphereGeometry(0.07, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(-Math.PI / 2), M.cryo, dx, Y + dy + 0.02, -0.4));
+    }
+    g.add(tube(0.02, 0.2, M.ice, side * 0.09, Y + 0.08, 0.02, 6));
+    g.add(tube(0.065, 0.78, M.steelDark, 0, Y, 0.44, 6));
+    for (let i = 0; i < 6; i++) g.add(tube(0.1, 0.018, M.ice, 0, Y, 0.16 + i * 0.09, 6));
+    g.add(tube(0.085, 0.08, M.steel, 0, Y, 0.86, 12, 0.07));
+    g.add(tube(0.055, 0.02, M.iceGlow, 0, Y, 0.905, 12));
+    muzzleZ = 0.92;
+  } else if (id === 'sonic') {
+    // 音波炮：後方紫色擴音箱（側面喇叭網）、往前張開的大喇叭口，喉部一圈發光的音圈
+    g.add(box(0.26, 0.24, 0.34, M.violet, 0, Y, -0.16));
+    g.add(box(0.005, 0.18, 0.26, M.grille, side * 0.133, Y, -0.16));
+    g.add(box(0.27, 0.03, 0.35, M.steelDark, 0, Y + 0.13, -0.16));
+    g.add(tube(0.07, 0.24, M.steelDark, 0, Y, 0.1, 12));
+    const horn = new THREE.Group();
+    horn.position.set(0, Y, 0.22);
+    // 外殼（往前張開的喇叭）＋內側（深色）
+    horn.add(mesh(new THREE.CylinderGeometry(0.24, 0.075, 0.5, 18, 1, true).rotateX(Math.PI / 2), M.steel, 0, 0, 0.25));
+    horn.add(mesh(new THREE.CylinderGeometry(0.225, 0.065, 0.49, 18, 1, true).rotateX(Math.PI / 2), M.hornIn, 0, 0, 0.25));
+    horn.add(mesh(new THREE.TorusGeometry(0.24, 0.022, 6, 22), M.violet, 0, 0, 0.5));
+    horn.add(mesh(new THREE.TorusGeometry(0.07, 0.018, 6, 14), M.sonicGlow, 0, 0, 0.05));
+    horn.add(mesh(new THREE.SphereGeometry(0.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2), M.steelDark, 0, 0, 0.04));
+    g.add(horn);
+    kick = horn;
+    muzzleZ = 0.72;
+  } else if (id === 'harpoon') {
+    // 魚叉鉤：長長的發射軌、下方紅色氣瓶、外側纏著麻繩的捲線輪，軌道上裝著一支魚叉
+    g.add(box(0.16, 0.12, 0.5, M.gun, 0, Y - 0.02, -0.1));
+    g.add(box(0.07, 0.05, 0.9, M.steelDark, 0, Y + 0.05, 0.3));
+    g.add(tube(0.055, 0.42, M.red, 0, Y - 0.1, 0.12, 12));
+    g.add(tube(0.057, 0.03, M.steel, 0, Y - 0.1, 0.32, 12));
+    const reel = new THREE.Group();
+    reel.position.set(side * 0.17, Y, -0.12);
+    reel.add(mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.1, 14).rotateZ(Math.PI / 2), M.rope));
+    for (const s of [1, -1]) reel.add(mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.015, 14).rotateZ(Math.PI / 2), M.steelDark, s * 0.055, 0, 0));
+    g.add(reel);
+    reelObj = reel;
+    // 前端導環
+    g.add(mesh(new THREE.TorusGeometry(0.05, 0.015, 6, 12), M.steel, 0, Y + 0.09, 0.72));
+    const spear = buildHarpoonSpear();
+    spear.position.set(0, Y + 0.09, -0.05);
+    g.add(spear);
+    ammo = spear;
+    muzzleZ = 0.95;
   } else {
     // 雷射砲：後方電源箱與三根電容、長方形槍管（側面有發光導槽）、前端發光鏡頭
     g.add(box(0.24, 0.22, 0.32, M.gun, 0, Y, -0.2));
@@ -178,7 +292,7 @@ export function buildPrimary(id: PrimaryId, side = 1): PrimaryParts {
     g.add(tube(0.05, 0.03, M.lens, 0, Y, 1.05, 12));
     muzzleZ = 1.07;
   }
-  return { group: g, muzzle: new THREE.Vector3(0, Y, muzzleZ), spinners };
+  return { group: g, muzzle: new THREE.Vector3(0, Y, muzzleZ), spinners, ammo, kick, reel: reelObj };
 }
 
 /** 地雷本體（六角形，中間紅燈）：車尾投放箱上與賽道上共用造型 */

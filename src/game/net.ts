@@ -46,6 +46,8 @@ export interface SecParams {
 export interface RaceNet {
   host: boolean;
   onSecondary(k: Kart, p: SecParams): void;
+  /** 自己控制的車用魚叉鉤叉住了 v（別人的畫面照這個畫繩子；被叉中的人自己判定有沒有被拖慢） */
+  onTether(k: Kart, v: Kart): void;
   /** 自己控制的車被打（攻擊者的電腦要加集氣、顯示傷害數字） */
   onDamage(v: Kart, by: Kart | null, amount: number): void;
   onKill(v: Kart, by: Kart | null): void;

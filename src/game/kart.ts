@@ -2,7 +2,7 @@ import type { CarId } from './cars';
 import { CFG } from './config';
 import { KERB_WIDTH, type Branch, type Post, type Sample, type Track } from './track';
 import { clamp, lerp, wrapAngle } from './util';
-import type { PrimaryId, SecondaryId } from './weapons';
+import { CHILL_GRIP, CHILL_GRIP_DEEP, CHILL_SPEED, CHILL_SPEED_DEEP, CHILL_TURN, PULL_ACCEL, SHOVE_GRIP, TOW_SLOW, type PrimaryId, type SecondaryId } from './weapons';
 
 export interface KartInput {
   /** +1 = 左，-1 = 右 */
@@ -186,6 +186,28 @@ export class Kart {
   shieldBreakT = 0;
   /** 剛被機關打到後的保護時間（避免同一個機關連續判定） */
   hazardCd = 0;
+  /** 冷凍光束：結冰程度 0~1、距離上次被照到的秒數、是不是 Lv.5 的深度凍結 */
+  chill = 0;
+  chillT = 99;
+  chillDeep = false;
+  /** 音波炮：被震波推開後抓地力變差的剩餘秒數、推的人，以及這段時間撞牆的額外傷害（Lv.5） */
+  shoveT = 0;
+  shoveBy: Kart | null = null;
+  shoveDmg = 0;
+  /**
+   * 魚叉鉤（開火的人）：叉住的車、剩餘秒數、叉住多久了（繩子從 gunSide 那一側的槍拉出去）；
+   * pullSpeed > 0 時被繩子拉著跑（由 Race 每幀依目標車速設定）
+   */
+  tether: Kart | null = null;
+  tetherT = 0;
+  tetherAge = 0;
+  pullSpeed = 0;
+  /** 連線：遠端車的車主說他現在有叉住人（狀態封包的旗標） */
+  netTether = false;
+  /** 魚叉鉤（被叉中的人）：被拖慢的剩餘秒數、叉中自己的人、被叉住多久了 */
+  towT = 0;
+  towBy: Kart | null = null;
+  towAge = 0;
 
   // 車款專屬特性與花色
   livery = 0;
@@ -364,6 +386,8 @@ export class Kart {
       const rate = lerp(C.gripTurnLow, hi, t) * Math.min(1, av / 5);
       omega = inp.steer * rate * (reversing ? -1 : 1);
     }
+    // 結冰：方向盤變鈍（轉不過彎）
+    if (this.chill > 0 && !flying) omega *= 1 - CHILL_TURN * this.chill;
     // 角速度平滑跟上方向盤（滑行感）；甩尾開始的甩動也分幾幀轉完，不會一下跳過去
     const resp = this.aiAssist ? 40 : flying ? 6 : this.drifting ? C.yawRespDrift : C.yawResp;
     this.yawRate += (omega - this.yawRate) * (1 - Math.exp(-resp * dt));
@@ -395,6 +419,9 @@ export class Kart {
     }
     // 重甩：抓地力更低，車尾甩得更開
     if (hk > 0) grip = lerp(grip, Math.min(grip, C.hardGrip), hk);
+    // 結冰：輪胎抓不住，行進方向跟不上車頭（打滑、推頭）；剛被音波炮推開的一小段時間也抓不住
+    if (this.chill > 0) grip = Math.max(1.1, grip * (1 - (this.chillDeep ? CHILL_GRIP_DEEP : CHILL_GRIP) * this.chill));
+    if (this.shoveT > 0) grip = Math.min(grip, SHOVE_GRIP);
     if (flying) grip = 0.4; // 空中幾乎不能改變行進方向
     // 甩尾輔助：限制最大甩尾角度（重甩時放寬）
     if (this.drifting && this.driftAssist && Math.abs(this.slip) > (hk > 0 ? 0.95 : 0.6)) grip = Math.max(grip, 6);
@@ -448,11 +475,17 @@ export class Kart {
     // 捷徑的碎石、泥地：沒有 N2O、小噴、加速帶時跑不快
     const rough = this.branch?.def.rough;
     if (rough && !boosting && !padOn && this.miniT <= 0 && !flying) vmax *= rough;
-    const forced = boosting || padOn || this.miniT > 0;
+    // 魚叉鉤：被繩子拉著跑（追速由 Race 依目標車速設定），跟加速帶一樣不用踩油門、不怕碎石與緩衝區
+    const pulling = this.pullSpeed > 0 && !flying;
+    const forced = boosting || padOn || this.miniT > 0 || pulling;
     // 路邊的緩衝區：跟碎石捷徑一樣，沒有加速效果時跑不快；沙地、草地還會把速度很快吃掉（鋪面不會）
     const sand = this.runoff && !forced && !flying;
     const ro = C.runoffSurfaces[track.runoffSurface];
     if (sand) vmax *= ro.speed;
+    // 結冰：極速降一點；被魚叉叉住：被拖慢
+    if (this.chill > 0) vmax *= 1 - (this.chillDeep ? CHILL_SPEED_DEEP : CHILL_SPEED) * this.chill;
+    if (this.towT > 0) vmax *= TOW_SLOW;
+    if (pulling) vmax = Math.max(vmax, this.pullSpeed);
     const throttle = inp.accel < -0.1 ? inp.accel : forced ? 1 : inp.accel;
     this.gas = throttle;
     const sm0 = this.surface(track);
@@ -467,6 +500,7 @@ export class Kart {
         if (s < vmax) {
           let a: number;
           if (boosting) a = C.boostAccel;
+          else if (pulling) a = PULL_ACCEL;
           else if (padOn) a = C.padAccel;
           else if (this.miniT > 0) a = C.miniAccel;
           else {

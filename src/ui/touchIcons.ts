@@ -23,6 +23,14 @@ const PRIMARY_ICON: Record<PrimaryId, string> = {
   vulcan: svg('<path d="M4 18h10v13H4zM14 19h28M14 24.5h30M14 30h28M36 17v15"/>'),
   flame: svg('<path d="M22 42c-7 0-11-5-11-11 0-8 7-11 8-19 4 3 6 7 6 11 2-2 3-5 3-7 5 4 7 9 7 15 0 6-5 11-13 11z" fill="currentColor" fill-opacity=".25"/>'),
   laser: svg('<path d="M4 20h14v9H4zM18 24.5h26" /><path d="M36 18l4 6.5-4 6.5" stroke-width="2.4"/><circle cx="44" cy="24.5" r="2" fill="currentColor" stroke="none"/>'),
+  // 電弧槍：槍身射出一道鋸齒狀的電弧
+  arc: svg('<path d="M4 20h11v9H4z"/><path d="M15 24.5l6-6 4 10 6-11 4 9 6-5" stroke-width="2.6"/><circle cx="43" cy="21" r="2.2" fill="currentColor" stroke="none"/>'),
+  // 冷凍光束：雪花
+  freeze: svg('<path d="M24 6v36M8.4 15l31.2 18M8.4 33l31.2-18"/><path d="M19 9l5 4 5-4M19 39l5-4 5 4M8 21l6-2-1-6M40 27l-6 2 1 6M8 27l6 2-1 6M40 21l-6-2 1-6" stroke-width="2.2"/>'),
+  // 音波炮：喇叭加三圈震波
+  sonic: svg('<path d="M5 19h6l9-7v25l-9-7H5z"/><path d="M26 18a9 9 0 0 1 0 13M31 13a16 16 0 0 1 0 23M36 8a23 23 0 0 1 0 33" stroke-width="2.6"/>'),
+  // 魚叉鉤：帶倒鉤的魚叉與尾端的繩子
+  harpoon: svg('<path d="M10 38 39 9M39 9l-10 2M39 9l-2 10M31 17l-5-1M31 17l1 5"/><path d="M10 38c-4 1-6 4-3 6s6-2 9-1" stroke-width="2.4"/>'),
 };
 
 const SECONDARY_ICON: Record<SecondaryId, string> = {
