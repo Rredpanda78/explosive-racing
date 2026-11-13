@@ -259,6 +259,86 @@ export interface KartLook {
   secondaryLvl?: number;
   /** 頭上的名牌（線上比賽的其他玩家） */
   label?: string;
+  /** 名牌樣式（預設 NAME_STYLE；試看不同樣式用） */
+  labelStyle?: number;
+}
+
+const NAVY = '#13284b', CREAM = '#f3ead5', CORAL = '#e8574a';
+/** 名牌樣式：0 深藍膠囊、1 奶油標籤、2 珊瑚紅、3 海報條、4 描邊字 */
+export const NAME_STYLES = ['深藍膠囊', '奶油標籤', '珊瑚紅', '海報條', '描邊字'];
+export let NAME_STYLE = 0;
+export function setNameStyle(i: number): void {
+  NAME_STYLE = i;
+}
+
+/** 畫名牌（主題色：深藍、奶油、珊瑚紅）；高 60 像素，描邊字多一個往下的小箭頭 */
+export function drawNameTag(text: string, style: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d')!;
+  const font = '800 38px system-ui, "Microsoft JhengHei", "PingFang TC", sans-serif';
+  ctx.font = font;
+  const tw = Math.min(420, Math.ceil(ctx.measureText(text).width));
+  const pill = (x: number, w: number, fill: string, border?: string, bw = 0) => {
+    ctx.beginPath();
+    ctx.roundRect(x + bw / 2, 3 + bw / 2, w - bw, 54 - bw, 27);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    if (border) { ctx.lineWidth = bw; ctx.strokeStyle = border; ctx.stroke(); }
+  };
+  const write = (s: string, x: number, col: string) => {
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = col;
+    ctx.fillText(s, x, 32, 420);
+  };
+  switch (style) {
+    case 1: // 奶油底、深藍字、深藍框、珊瑚紅圓點
+      c.width = tw + 70; c.height = 60;
+      pill(2, c.width - 4, CREAM, NAVY, 5);
+      ctx.fillStyle = CORAL;
+      ctx.beginPath(); ctx.arc(31, 30, 9, 0, Math.PI * 2); ctx.fill();
+      write(text, 50, NAVY);
+      break;
+    case 2: // 珊瑚紅底、奶油字、深藍框
+      c.width = tw + 52; c.height = 60;
+      pill(2, c.width - 4, CORAL, NAVY, 5);
+      write(text, 26, CREAM);
+      break;
+    case 3: { // 海報條：左邊珊瑚紅斜紋小方塊＋深藍長條
+      c.width = tw + 78; c.height = 60;
+      ctx.fillStyle = NAVY;
+      ctx.beginPath(); ctx.roundRect(2, 4, c.width - 4, 52, 8); ctx.fill();
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(2, 4, 44, 52, [8, 0, 0, 8]); ctx.clip();
+      ctx.fillStyle = CORAL; ctx.fillRect(2, 4, 44, 52);
+      ctx.strokeStyle = 'rgba(243,234,213,.55)'; ctx.lineWidth = 6;
+      for (let x = -40; x < 60; x += 16) { ctx.beginPath(); ctx.moveTo(x, 60); ctx.lineTo(x + 50, 0); ctx.stroke(); }
+      ctx.restore();
+      ctx.strokeStyle = CREAM; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(3.5, 5.5, c.width - 7, 49, 7); ctx.stroke();
+      write(text, 60, CREAM);
+      break;
+    }
+    case 4: // 描邊字：沒有底，奶油字＋粗深藍描邊，下面一個珊瑚紅小箭頭
+      c.width = tw + 30; c.height = 78;
+      ctx.font = font;
+      ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 10; ctx.strokeStyle = NAVY;
+      ctx.strokeText(text, 15, 30, 420);
+      ctx.fillStyle = CREAM; ctx.fillText(text, 15, 30, 420);
+      ctx.fillStyle = CORAL; ctx.strokeStyle = NAVY; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(c.width / 2 - 11, 56); ctx.lineTo(c.width / 2 + 11, 56); ctx.lineTo(c.width / 2, 72); ctx.closePath();
+      ctx.stroke(); ctx.fill();
+      break;
+    default: // 深藍底、奶油字、奶油細框、珊瑚紅圓點
+      c.width = tw + 70; c.height = 60;
+      pill(2, c.width - 4, 'rgba(19,40,75,0.92)', CREAM, 3);
+      ctx.fillStyle = CORAL;
+      ctx.beginPath(); ctx.arc(31, 30, 9, 0, Math.PI * 2); ctx.fill();
+      write(text, 50, CREAM);
+  }
+  return c;
 }
 
 /** 一台車的畫面：車體模型 + 武器 + 火焰 + 血條。車頭朝 +Z。 */
@@ -366,37 +446,18 @@ export class KartView {
       this.hpSprite.renderOrder = 20;
       g.add(this.hpSprite);
     }
-    if (look.label) this.addNameTag(look.label, look.color);
+    if (look.label) this.addNameTag(look.label, look.labelStyle ?? NAME_STYLE);
   }
 
-  /** 頭上的名牌：深藍圓角底、奶油色字，左邊一個車手代表色的圓點 */
-  private addNameTag(text: string, color: number): void {
-    const c = document.createElement('canvas');
-    const ctx = c.getContext('2d')!;
-    const font = '800 40px system-ui, "Microsoft JhengHei", "PingFang TC", sans-serif';
-    ctx.font = font;
-    const tw = Math.min(420, Math.ceil(ctx.measureText(text).width));
-    c.width = tw + 66;
-    c.height = 60;
-    ctx.font = font;
-    ctx.fillStyle = 'rgba(19,40,75,0.85)';
-    ctx.beginPath();
-    ctx.roundRect(2, 2, c.width - 4, c.height - 4, 26);
-    ctx.fill();
-    ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
-    ctx.beginPath();
-    ctx.arc(30, 30, 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#f3ead5';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 48, 32, 420);
+  private addNameTag(text: string, style: number): void {
+    const c = drawNameTag(text, style);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     // sizeAttenuation 關掉 = 不管遠近，名牌在螢幕上都一樣大（約畫面高度的 4%）
     const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false });
     this.ownMats.push(mat);
     const s = (this.nameSprite = new THREE.Sprite(mat));
-    this.nameH = 0.052;
+    this.nameH = (0.052 * c.height) / 60;
     this.nameW = (this.nameH * c.width) / c.height;
     s.scale.set(this.nameW, this.nameH, 1);
     s.renderOrder = 21;
