@@ -119,7 +119,7 @@ function shared(ctx: BaseAudioContext): Shared {
     noise, crush, bit,
     soft: tanhC(1.2),
     hard: tanhC(4),
-    stairs: mkCurve((x) => 0.55 * (Math.round(x * 10) / 10) + 0.45 * x),
+    stairs: mkCurve((x) => 0.55 * (Math.round(x * 16) / 16) + 0.45 * x),
     w: {
       v8,
       p25: mkWave(ctx, (p) => (p < 0.25 ? 1 : -1)),
@@ -233,7 +233,6 @@ interface EngState {
   load: number; // 油門負載 0..1
   boost: number; // 加速 0..1
   drift: number; // 甩尾 0..1
-  air: number; // 騰空 0..1
   spd: number; // 車速比 0..1.4
 }
 interface EngVoice {
@@ -282,7 +281,7 @@ function kartVoice(ctx: BaseAudioContext, sh: Shared): EngVoice {
       c.frequency.setTargetAtTime(f * 2.01, t, 0.04);
       T(cg.gain, 0.08 + 0.12 * s.boost + 0.05 * s.load, t, 0.05);
       T(lp.frequency, (380 + s.rev * 1500 + s.load * 300) * (1 - 0.15 * s.drift), t, 0.05);
-      T(lv.gain, 0.08 + 0.035 * s.load + 0.035 * Math.min(1.2, s.rev), t, 0.06);
+      T(lv.gain, 0.088 + 0.035 * s.load + 0.035 * Math.min(1.2, s.rev), t, 0.06);
       T(wf.frequency, 900 + s.rev * 1600, t, 0.08);
       T(wg.gain, 0.05 * s.boost, t, 0.08);
     },
@@ -319,7 +318,7 @@ function v8Voice(ctx: BaseAudioContext, sh: Shared): EngVoice {
       m.frequency.setTargetAtTime(fc, t, 0.04);
       sub.frequency.setTargetAtTime(fc * 4, t, 0.04);
       T(lp.frequency, (160 + s.rev * 1100 + s.load * 500) * (1 - 0.12 * s.drift), t, 0.05);
-      T(lv.gain, 0.07 + 0.06 * s.load + 0.03 * s.rev, t, 0.07);
+      T(lv.gain, 0.065 + 0.04 * s.load + 0.025 * s.rev, t, 0.07);
       T(nf.frequency, 500 + s.rev * 1500, t, 0.05);
       T(ng.gain, 0.1 + 0.25 * s.load, t, 0.06);
       T(sc.frequency, 1100 + s.rev * 2600, t, 0.05);
@@ -374,7 +373,7 @@ function sportVoice(ctx: BaseAudioContext, sh: Shared): EngVoice {
       c.frequency.setTargetAtTime(f * 0.5, t, 0.025);
       T(pk.frequency, f * 3, t, 0.03);
       T(lp.frequency, (1000 + s.rev * 5000) * (0.55 + 0.45 * s.load) * (1 - 0.12 * s.drift), t, 0.04);
-      T(lv.gain, 0.045 + 0.045 * s.load + 0.03 * s.rev, t, 0.05);
+      T(lv.gain, 0.032 + 0.022 * s.load + 0.012 * s.rev, t, 0.05);
       T(nf.frequency, f * 4, t, 0.04);
       T(ng.gain, 0.04 * s.load * Math.min(1, s.rev), t, 0.06);
       T(tw.frequency, 2200 + s.rev * 4200, t, 0.08);
@@ -424,9 +423,9 @@ function turbineVoice(ctx: BaseAudioContext, sh: Shared): EngVoice {
       w1.frequency.setTargetAtTime(f, t, 0.06);
       w2.frequency.setTargetAtTime(f * 2.02, t, 0.06);
       w3.frequency.setTargetAtTime(f * 3.5, t, 0.06);
-      T(lv.gain, 0.05 + 0.035 * s.load + 0.02 * s.rev, t, 0.08);
+      T(lv.gain, 0.07 + 0.05 * s.load + 0.028 * s.rev, t, 0.08);
       T(af.frequency, 400 + s.spd * 2600, t, 0.1);
-      T(ag.gain, 0.012 + 0.045 * Math.min(1.2, s.spd), t, 0.1);
+      T(ag.gain, 0.015 + 0.056 * Math.min(1.2, s.spd), t, 0.1);
       tw.frequency.setTargetAtTime(1800 + s.rev * 3800, t, 0.1);
       tw2.frequency.setTargetAtTime((1800 + s.rev * 3800) * 1.006, t, 0.1);
       T(twg.gain, 0.004 + 0.01 * s.load * s.rev + 0.008 * s.boost, t, 0.1);
@@ -461,8 +460,8 @@ function retroVoice(ctx: BaseAudioContext, sh: Shared): EngVoice {
       tr.frequency.setValueAtTime(f / 2, t);
       p2.frequency.setValueAtTime(f * (s.boost > 0.5 ? 2 : 1.006), t); // 加速時第二聲部跳高八度
       T(g2.gain, 0.12 + 0.25 * s.boost, t, 0.01);
-      // 音量量化成 4 位元的階梯，用極短的平滑避免爆音
-      const v = Math.round((0.07 + 0.035 * s.load + 0.03 * s.rev) * 120) / 120;
+      // 音量量化成小階梯（像紅白機的音量暫存器），用極短的平滑避免爆音
+      const v = Math.round((0.1 + 0.05 * s.load + 0.045 * s.rev) * 120) / 120;
       T(lv.gain, v, t, 0.004);
       nz.playbackRate.setValueAtTime(0.4 + s.rev * 0.6, t);
       T(nzg.gain, 0.05 * s.boost, t, 0.01);
@@ -484,7 +483,7 @@ export class EngineSound {
   private readonly master: GainNode;
   private style: EngineStyle = 'kart';
   private voice?: EngVoice;
-  private readonly st: EngState = { rev: 0.1, load: 0, boost: 0, drift: 0, air: 0, spd: 0 };
+  private readonly st: EngState = { rev: 0.1, load: 0, boost: 0, drift: 0, spd: 0 };
   private lastT = -1;
   private gear = 0;
   private shiftT = -9;
@@ -543,7 +542,7 @@ export class EngineSound {
       this.voice.out.connect(this.master);
     }
     const voice = this.voice, st = this.st;
-    const s = clamp(rpm, 0, 1.4), thr = clamp(throttle, -1, 1);
+    const s = clamp(Math.abs(rpm), 0, 1.4), thr = clamp(throttle, -1, 1);
 
     // 檔位（有遲滯，避免在門檻附近來回跳）
     const gs = spec.gears;
@@ -566,7 +565,6 @@ export class EngineSound {
     this.wasAir = airborne;
 
     st.drift += ((drifting ? 1 : 0) - st.drift) * ease(dt, 0.12);
-    st.air += ((airborne ? 1 : 0) - st.air) * ease(dt, airborne ? 0.08 : 0.05);
     st.boost += ((boosting ? 1 : 0) - st.boost) * ease(dt, boosting ? 0.1 : 0.35);
     st.load += ((airborne ? 0.25 : 1) * Math.max(0, thr) - st.load) * ease(dt, 0.08);
     rev = clamp(rev * (1 - 0.06 * st.drift), spec.idle, 1.22); // 甩尾：負載變大、轉速略降
@@ -639,7 +637,7 @@ class Shots {
   }
 
   private ok(v: number): boolean {
-    return v >= 0.004 && (this.live < MAX_LIVE || v > 0.15);
+    return v >= 0.002 && (this.live < MAX_LIVE || v > 0.15);
   }
 
   /** 濾波雜訊脈衝（f = 0 表示不濾波） */
@@ -724,22 +722,48 @@ const SHOT: Record<WeaponPack, GunCfg> = {
     vulcan: { n: ['bandpass', 2400, 1.2, 0.22, 0.07] },
   },
   punchy: {
-    mg: { n: ['bandpass', 1700, 0.9, 0.2, 0.05], c: [3500, 0.16, 0.012], o: { w: 'sine', f: 150, to: 50, v: 0.3, d: 0.07 } },
-    vulcan: { n: ['bandpass', 2600, 0.9, 0.17, 0.032], c: [4500, 0.11, 0.008], o: { w: 'sine', f: 190, to: 70, v: 0.17, d: 0.04 } },
+    mg: { n: ['bandpass', 1700, 0.9, 0.15, 0.05], c: [3500, 0.07, 0.012], o: { w: 'sine', f: 150, to: 50, v: 0.055, d: 0.07 } },
+    vulcan: { n: ['bandpass', 2600, 0.9, 0.13, 0.032], c: [4500, 0.08, 0.008], o: { w: 'sine', f: 190, to: 70, v: 0.08, d: 0.04 } },
   },
   scifi: {
-    mg: { n: ['highpass', 3000, 0.7, 0.05, 0.03], o: { w: 'square', f: 1700, to: 320, v: 0.06, d: 0.09, lp: 3500 } },
-    vulcan: { n: ['highpass', 3000, 0.7, 0.04, 0.02], o: { w: 'square', f: 2600, to: 900, v: 0.045, d: 0.045, lp: 4500 } },
+    mg: { n: ['highpass', 3000, 0.7, 0.026, 0.03], o: { w: 'square', f: 1700, to: 320, v: 0.031, d: 0.09, lp: 3500 } },
+    vulcan: { n: ['highpass', 3000, 0.7, 0.045, 0.02], o: { w: 'square', f: 2600, to: 900, v: 0.05, d: 0.045, lp: 4500 } },
   },
   arcade: {
-    mg: { n: ['lowpass', 5000, 0.7, 0.2, 0.05], o: { w: 'p25', f: 900, to: 450, v: 0.035, d: 0.04, step: true }, rate: 1 },
-    vulcan: { n: ['lowpass', 5000, 0.7, 0.16, 0.03], o: { w: 'p25', f: 1300, to: 650, v: 0.025, d: 0.025, step: true }, rate: 1.6 },
+    mg: { n: ['lowpass', 5000, 0.7, 0.05, 0.05], o: { w: 'p25', f: 900, to: 450, v: 0.025, d: 0.04, step: true }, rate: 1 },
+    vulcan: { n: ['lowpass', 5000, 0.7, 0.07, 0.03], o: { w: 'p25', f: 1300, to: 650, v: 0.015, d: 0.025, step: true }, rate: 1.6 },
   },
   heavy: {
-    mg: { n: ['bandpass', 900, 0.8, 0.2, 0.09], c: [2500, 0.07, 0.015], o: { w: 'sine', f: 110, to: 42, v: 0.3, d: 0.1 } },
-    vulcan: { n: ['bandpass', 1500, 0.9, 0.16, 0.05], o: { w: 'sine', f: 130, to: 55, v: 0.18, d: 0.055 } },
+    mg: { n: ['bandpass', 900, 0.8, 0.13, 0.09], c: [2500, 0.04, 0.015], o: { w: 'sine', f: 110, to: 42, v: 0.05, d: 0.1 } },
+    vulcan: { n: ['bandpass', 1500, 0.9, 0.11, 0.05], o: { w: 'sine', f: 130, to: 55, v: 0.09, d: 0.055 } },
   },
 };
+
+type Ev = 'rail' | Launch | 'blast' | 'blastBig' | 'hitMe' | 'hitThem' | 'block' | 'shatter' | 'lock' | 'flame' | 'charge';
+/**
+ * 響度校正（dB）：離線渲染量測 K-weighted 響度（BS.1770），對齊經典包（= 原本 audio.ts 的音量）；
+ * 寫實與電影級允許比經典響 1～1.5 dB
+ */
+const TRIM: Record<WeaponPack, Partial<Record<Ev, number>>> = {
+  classic: {},
+  punchy: {
+    rail: 2.3, rocket: -8.7, missile: -7.8, grenade: 4.6, mine: -0.9, cluster: -3.2, shield: 4.9, blast: 3, blastBig: 2.8,
+    hitMe: -12.4, hitThem: -8.1, block: 3, shatter: 3.8, lock: 3, flame: -9.6, charge: 0,
+  },
+  scifi: {
+    rail: 1.4, rocket: 0.5, missile: -0.9, grenade: 5.5, mine: -0.9, cluster: -1.1, shield: -1.5, blast: 0, blastBig: -1.2,
+    hitMe: -4.6, hitThem: -14.5, block: 1.2, shatter: 3.3, lock: 0.9, flame: -4.1, charge: -4.6,
+  },
+  arcade: {
+    rail: 3.7, rocket: -11.1, missile: -11.5, grenade: 5.5, mine: 7.7, cluster: 7.3, shield: 10.2, blast: 1.2, blastBig: -0.5,
+    hitMe: -13.5, hitThem: -7.4, block: 10.1, shatter: 1.4, lock: 7.7, flame: -15.6, charge: 2.7,
+  },
+  heavy: {
+    rail: -3.1, rocket: -11.5, missile: -11.2, grenade: -0.7, mine: -7.4, cluster: -8.1, shield: -4.9, blast: -0.2, blastBig: -1,
+    hitMe: -20.6, hitThem: -17.6, block: 0.4, shatter: 0, lock: 8.9, flame: -1.1, charge: -4.5,
+  },
+};
+const trim = (p: WeaponPack, e: Ev): number => Math.pow(10, (TRIM[p][e] ?? 0) / 20);
 
 interface Gun {
   g: Graph;
@@ -1377,7 +1401,7 @@ export class WeaponSfx {
         this.flameL.out.connect(this.chain.inp);
       }
       this.flameOff = -1;
-      this.flameL.set(1, vol, t);
+      this.flameL.set(1, vol * trim(this.pack, 'flame'), t);
     } else if (this.flameL) {
       if (this.flameOff < 0) {
         this.flameOff = t;
@@ -1401,7 +1425,8 @@ export class WeaponSfx {
         this.chargeL.out.connect(this.chain.inp);
       }
       this.chargeOff = -1;
-      this.chargeL.set(x, x >= 0.999 && Math.floor(t * 14) % 2 ? vol * 0.65 : vol, t);
+      const v = vol * trim(this.pack, 'charge');
+      this.chargeL.set(x, x >= 0.999 && Math.floor(t * 14) % 2 ? v * 0.65 : v, t);
     } else if (this.chargeL) {
       if (this.chargeOff < 0) {
         this.chargeOff = t;
@@ -1416,13 +1441,13 @@ export class WeaponSfx {
   /** 雷射射出 */
   rail(vol: number): void {
     if (this.disposed) return;
-    FX[this.pack].rail(this.P, this.ctx.currentTime, vol);
+    FX[this.pack].rail(this.P, this.ctx.currentTime, vol * trim(this.pack, 'rail'));
   }
 
   /** 副武器發射（含護盾展開） */
   launch(kind: Launch, vol: number): void {
     if (this.disposed) return;
-    FX[this.pack].launch(this.P, this.ctx.currentTime, kind, vol);
+    FX[this.pack].launch(this.P, this.ctx.currentTime, kind, vol * trim(this.pack, kind));
   }
 
   /** 爆炸（big = 車輛爆炸／大範圍）；vol 已含距離衰減 */
@@ -1433,7 +1458,7 @@ export class WeaponSfx {
     if (t - this.blastT < 0.05 && vol <= this.blastV * 1.3) return;
     this.blastT = t;
     this.blastV = vol;
-    FX[this.pack].blast(this.P, t, vol, big);
+    FX[this.pack].blast(this.P, t, vol * trim(this.pack, big ? 'blastBig' : 'blast'), big);
   }
 
   /** 子彈／光束命中（onMe = 玩家被打中，否則是玩家打中別人） */
@@ -1442,7 +1467,7 @@ export class WeaponSfx {
     const t = this.ctx.currentTime, k = onMe ? 1 : 0;
     if (t - this.hitT[k] < 0.04) return;
     this.hitT[k] = t;
-    FX[this.pack].hit(this.P, t, vol, onMe);
+    FX[this.pack].hit(this.P, t, vol * trim(this.pack, onMe ? 'hitMe' : 'hitThem'), onMe);
   }
 
   /** 後方護盾擋下攻擊 */
@@ -1451,7 +1476,7 @@ export class WeaponSfx {
     const t = this.ctx.currentTime;
     if (t - this.blockT < 0.06) return;
     this.blockT = t;
-    FX[this.pack].block(this.P, t, vol);
+    FX[this.pack].block(this.P, t, vol * trim(this.pack, 'block'));
   }
 
   /** 護盾碎裂 */
@@ -1460,7 +1485,7 @@ export class WeaponSfx {
     const t = this.ctx.currentTime;
     if (t - this.shatterT < 0.1) return;
     this.shatterT = t;
-    FX[this.pack].shatter(this.P, t, vol);
+    FX[this.pack].shatter(this.P, t, vol * trim(this.pack, 'shatter'));
   }
 
   /** 被導彈鎖定的警告嗶聲（可每幀呼叫，內部限制在每 0.2 秒一聲） */
@@ -1469,7 +1494,7 @@ export class WeaponSfx {
     const t = this.ctx.currentTime;
     if (t - this.lockT < 0.2) return;
     this.lockT = t;
-    FX[this.pack].lock(this.P, t, vol, this.lockN++);
+    FX[this.pack].lock(this.P, t, vol * trim(this.pack, 'lock'), this.lockN++);
   }
 
   dispose(): void {
@@ -1477,9 +1502,9 @@ export class WeaponSfx {
     this.disposed = true;
     const t = this.ctx.currentTime;
     T(this.bus.gain, 0, t, 0.02);
-    this.gun?.g.stop(t + 0.1);
-    this.flameL?.g.stop(t + 0.1);
-    this.chargeL?.g.stop(t + 0.1);
+    this.gun?.g.stop(t + 0.15);
+    this.flameL?.g.stop(t + 0.15);
+    this.chargeL?.g.stop(t + 0.15);
     this.gun = this.flameL = this.chargeL = undefined;
     const bus = this.bus, nodes = this.chain.nodes;
     setTimeout(() => {

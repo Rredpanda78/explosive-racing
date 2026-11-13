@@ -1,4 +1,4 @@
-import type { MusicStyle } from './audio';
+import type { EngineStyle, MusicStyle, WeaponPack } from './audio';
 
 /** 這台裝置的設定（跟存檔分開：畫質、音量、按鈕位置都是看裝置的） */
 export type Quality = 'low' | 'medium' | 'high';
@@ -17,6 +17,9 @@ export interface Settings {
   sfx: number;
   /** 比賽配樂風格 */
   musicStyle: MusicStyle;
+  /** 引擎聲與武器音效組 */
+  engineSound: EngineStyle;
+  weaponSound: WeaponPack;
   /** 畫面震動強度 0~1 */
   shake: number;
   dmgNumbers: boolean;
@@ -44,6 +47,8 @@ export function defaultSettings(mobile: boolean): Settings {
     music: 0.8,
     sfx: 0.9,
     musicStyle: 'synth',
+    engineSound: 'kart',
+    weaponSound: 'classic',
     shake: 1,
     dmgNumbers: true,
     netInfo: true,

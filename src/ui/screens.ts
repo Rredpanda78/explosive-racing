@@ -5,7 +5,7 @@ import { liverySwatch } from '../render/livery';
 import { carIcon, weaponIcon } from '../render/weaponIcons';
 import { DIFFICULTY, DIFFICULTY_IDS, type DifficultyId } from '../game/difficulty';
 import type { Settings } from '../settings';
-import { MUSIC_STYLES } from '../audio';
+import { ENGINE_STYLES, MUSIC_STYLES, WEAPON_PACKS } from '../audio';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
 import type { OnlineSession } from '../net/online';
@@ -53,6 +53,8 @@ export interface ScreenActions {
   calibrateTilt(): void;
   /** 進出設定頁：在設定頁可以試聽比賽配樂 */
   settingsOpen(open: boolean): void;
+  /** 試聽目前選的引擎聲或武器音效 */
+  previewSound(kind: 'engine' | 'weapon'): void;
   /** 帳號面板 */
   account(): void;
   /** 線上對戰：開房、加入、房主設定、開始、回到房間、離開 */
@@ -172,6 +174,20 @@ export class Screens {
         this.act.settingChanged('musicStyle');
         this.settingsPage();
         break;
+      case 'engsnd':
+      case 'wpnsnd': {
+        // 選了就試聽；只換按鈕的亮起狀態，不重畫整頁（避免捲動位置跳回頂端）
+        const eng = act === 'engsnd';
+        if (eng) this.settings.engineSound = id as Settings['engineSound'];
+        else this.settings.weaponSound = id as Settings['weaponSound'];
+        this.act.settingChanged(eng ? 'engineSound' : 'weaponSound');
+        this.act.previewSound(eng ? 'engine' : 'weapon');
+        this.root.querySelectorAll<HTMLElement>(`[data-act="${act}"]`).forEach((b) => b.classList.toggle('on', b.dataset.id === id));
+        const info = (eng ? ENGINE_STYLES : WEAPON_PACKS).find((x) => x.id === id);
+        const note = this.root.querySelector<HTMLElement>(eng ? '[data-engdesc]' : '[data-wpndesc]');
+        if (note && info) note.textContent = info.desc + '・點一下試聽';
+        break;
+      }
       case 'tdrift':
         this.settings.touchDrift = id as Settings['touchDrift'];
         this.act.settingChanged('touchDrift');
@@ -608,6 +624,10 @@ export class Screens {
           <b>音效音量</b>${range('sfx', s.sfx, 0, 1, 0.05)}
           <b>比賽配樂</b>${pick('style', s.musicStyle, MUSIC_STYLES.map((m) => [m.id, m.name]))}
           <small>在這頁可以直接試聽</small>
+          <b>引擎音效</b>${pick('engsnd', s.engineSound, ENGINE_STYLES.map((m) => [m.id, m.name]))}
+          <small data-engdesc>${ENGINE_STYLES.find((m) => m.id === s.engineSound)?.desc ?? ''}・點一下試聽</small>
+          <b>武器音效</b>${pick('wpnsnd', s.weaponSound, WEAPON_PACKS.map((m) => [m.id, m.name]))}
+          <small data-wpndesc>${WEAPON_PACKS.find((m) => m.id === s.weaponSound)?.desc ?? ''}・點一下試聽</small>
           <h3>操控輔助</h3>
           <b>自動小噴</b><label><input type="checkbox" data-set="autoMini" ${s.autoMini ? 'checked' : ''} /> 甩尾結束自動噴（不用自己按）</label>
           <b>甩尾輔助</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> 自動回正、限制甩尾角度</label>

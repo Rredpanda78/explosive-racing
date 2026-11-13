@@ -60,6 +60,8 @@ export class Kart {
   /** 離地高度（跳台飛出去或被炸飛之後 > 0） */
   air = 0;
   vy = 0;
+  /** 這一幀的油門（-1 倒車 ~ 1 全油門；引擎聲用） */
+  gas = 0;
   /** 這次離地是不是自己飛越跳台（被炸飛不算，落地沒有獎勵） */
   jumped = false;
   /** 衝過坡頂輕輕飛起（操控照常，只有高度在飛） */
@@ -443,6 +445,7 @@ export class Kart {
     if (rough && !boosting && !padOn && this.miniT <= 0 && !flying) vmax *= rough;
     const forced = boosting || padOn || this.miniT > 0;
     const throttle = inp.accel < -0.1 ? inp.accel : forced ? 1 : inp.accel;
+    this.gas = throttle;
     const sm0 = this.surface(track);
     if (flying) {
       // 空中：引擎使不上力，只有 N2O 還能推

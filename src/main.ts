@@ -55,6 +55,8 @@ function applySettings(): void {
   view.shakeMul = settings.shake;
   audio.setVolumes(settings.music, settings.sfx);
   if (audio.musicStyle !== settings.musicStyle) audio.setStyle(settings.musicStyle);
+  audio.setEngineStyle(settings.engineSound);
+  audio.setWeaponPack(settings.weaponSound);
   hud.dmgNumbers = settings.dmgNumbers;
   hud.showInfo = settings.netInfo;
   input.tiltMode = settings.control === 'tilt';
@@ -186,6 +188,7 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     return audio.muted;
   },
   settingChanged,
+  previewSound: (k) => (k === 'engine' ? audio.previewEngine() : audio.previewWeapons()),
   editLayout,
   resetLayout: () => {
     settings.layout = {};
