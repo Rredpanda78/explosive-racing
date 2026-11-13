@@ -1,0 +1,52 @@
+// 公開房間列表測試：node server/test/lobby.cjs [ws://127.0.0.1:8787] [origin]
+const WebSocket = require('../node_modules/ws');
+const WS = process.argv[2] ?? 'ws://127.0.0.1:8787';
+const HTTP = WS.replace(/^ws/, 'http');
+const ORIGIN = process.argv[3] ?? 'http://localhost:5173';
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+let fails = 0;
+const ok = (c, m) => { if (!c) { fails++; console.error('FAIL ' + m); } else console.log('ok   ' + m); };
+const code = 'L' + Math.floor(Math.random() * 90000 + 10000);
+const open = (cid, name, create) => new Promise((res) => {
+  const ws = new WebSocket(`${WS}/room/${code}?cid=${cid}${create ? '&create=1' : ''}`, { origin: ORIGIN });
+  const c = { ws, msgs: [] };
+  ws.on('open', () => { ws.send(JSON.stringify({ t: 'hi', info: { name } })); res(c); });
+  ws.on('message', (d, bin) => { if (!bin) c.msgs.push(JSON.parse(d.toString())); });
+  ws.on('error', () => {});
+});
+const list = async () => {
+  const r = await fetch(HTTP + '/rooms', { headers: { Origin: ORIGIN } });
+  return r.ok ? (await r.json()).rooms : null;
+};
+(async () => {
+  const forbidden = await fetch(HTTP + '/rooms', { headers: { Origin: 'https://evil.example.com' } });
+  ok(forbidden.status === 403, 'foreign origin cannot read the list');
+  const A = await open('la', '阿明', true);
+  await wait(600);
+  let l = await list();
+  let me = l && l.find((r) => r.code === code);
+  ok(me && me.players === 1 && me.host === '阿明' && !me.started, 'new room listed with host name');
+  A.ws.send(JSON.stringify({ t: 'pub', d: { public: true, track: 3, mode: 'elim' } }));
+  const B = await open('lb', '小華', false);
+  await wait(700);
+  l = await list();
+  me = l.find((r) => r.code === code);
+  ok(me && me.players === 2 && me.track === 3 && me.mode === 'elim', 'join + host settings reflected');
+  A.ws.send(JSON.stringify({ t: 'start', d: {} }));
+  await wait(500);
+  me = (await list()).find((r) => r.code === code);
+  ok(me && me.started, 'racing rooms show as started');
+  A.ws.send(JSON.stringify({ t: 'pub', d: { public: false } }));
+  await wait(500);
+  ok(!(await list()).some((r) => r.code === code), 'invite-only room hidden');
+  A.ws.send(JSON.stringify({ t: 'pub', d: { public: true } }));
+  await wait(400);
+  ok((await list()).some((r) => r.code === code), 'public again');
+  B.ws.send(JSON.stringify({ t: 'bye' }));
+  A.ws.send(JSON.stringify({ t: 'bye' }));
+  await wait(700);
+  ok(!(await list()).some((r) => r.code === code), 'empty room removed from the list');
+  A.ws.close(); B.ws.close();
+  console.log(fails ? `${fails} FAILED` : 'ALL OK');
+  process.exit(fails ? 1 : 0);
+})();

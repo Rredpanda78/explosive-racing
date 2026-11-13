@@ -5,7 +5,7 @@ import { emptyInput } from './game/kart';
 import type { NetRacer, OnlineSetup } from './game/net';
 import { Race, type RaceMode } from './game/race';
 import { OnlineSession, type StartMsg } from './net/online';
-import { cleanCode, ERR_TEXT, newRoomCode } from './net/room';
+import { cleanCode, ERR_TEXT, fetchRooms, newRoomCode } from './net/room';
 import { loadProfile, saveProfile } from './game/save';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
@@ -54,6 +54,7 @@ function applySettings(): void {
   audio.setVolumes(settings.music, settings.sfx);
   if (audio.musicStyle !== settings.musicStyle) audio.setStyle(settings.musicStyle);
   hud.dmgNumbers = settings.dmgNumbers;
+  hud.showInfo = settings.netInfo;
   input.tiltMode = settings.control === 'tilt';
   input.tilt.range = settings.tiltRange;
   input.tilt.invert = settings.tiltInvert;
@@ -118,6 +119,9 @@ function startRace(m?: RaceMode, seed?: number, setup?: OnlineSetup): void {
   if (input.tiltMode) void input.tilt.enable().then(() => input.tilt.calibrate());
   race = new Race(track, profile, mode, seed, setup);
   if (setup && online) online.attach(race);
+  // 線上比賽：角落顯示延遲與直連人數
+  const net = setup ? online : null;
+  hud.netSummary = net ? () => net.summary() : null;
   race.player.autoMini = settings.autoMini;
   race.player.driftAssist = settings.driftAssist;
   view.setRace(race);
@@ -208,6 +212,7 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     if (key === 'track') online.setCfg({ track: Number(val) });
     else if (key === 'mode') online.setCfg({ mode: val as RaceMode });
     else if (key === 'ai') online.setCfg({ aiFill: val === '1' });
+    else if (key === 'pub') online.setCfg({ public: val === '1' });
     else online.setCfg({ difficulty: val as typeof profile.difficulty });
   },
   roomStart: () => online?.start(),
@@ -223,11 +228,24 @@ screens.settings = settings;
 
 function openOnline(msg = '', code = ''): void {
   screens.onlineMenu(playerName() || '車手' + Math.floor(10 + Math.random() * 90), msg, code);
+  pollRooms();
+}
+
+/** 公開房間列表：開著線上對戰畫面時每 4 秒更新一次 */
+let roomPoll = 0;
+function pollRooms(): void {
+  window.clearTimeout(roomPoll);
+  if (screens.current !== 'online') return;
+  void fetchRooms().then((list) => {
+    if (screens.current !== 'online') return;
+    screens.roomList(list);
+    roomPoll = window.setTimeout(pollRooms, 4000);
+  });
 }
 
 function enterRoom(code: string, create: boolean): void {
   online?.leave();
-  const s = new OnlineSession(myRacer, { track: trackIndex, mode: 'race', aiFill: true, difficulty: profile.difficulty });
+  const s = new OnlineSession(myRacer, { track: trackIndex, mode: 'race', aiFill: true, difficulty: profile.difficulty, public: true });
   online = s;
   s.onChange = () => {
     if (online !== s) return;

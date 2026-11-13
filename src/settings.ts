@@ -20,6 +20,8 @@ export interface Settings {
   /** 畫面震動強度 0~1 */
   shake: number;
   dmgNumbers: boolean;
+  /** 畫面角落顯示 FPS（線上比賽另外顯示延遲） */
+  netInfo: boolean;
   /** 手機操控：按鈕或傾斜轉向 */
   control: 'buttons' | 'tilt';
   /** 操控輔助：甩完自動小噴、甩尾自動回正並限制角度 */
@@ -44,6 +46,7 @@ export function defaultSettings(mobile: boolean): Settings {
     musicStyle: 'synth',
     shake: 1,
     dmgNumbers: true,
+    netInfo: true,
     control: 'buttons',
     autoMini: false,
     driftAssist: false,

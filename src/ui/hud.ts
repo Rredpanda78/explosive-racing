@@ -18,6 +18,12 @@ export class Hud {
   private lapSep = $('lap-sep');
   private time = $('hud-time');
   private speed = $('speed').querySelector('b')!;
+  private netinfo = $('netinfo');
+  private fps = 60;
+  private infoT = 0;
+  /** 角落資訊：顯示 FPS；線上比賽時另外附上連線摘要 */
+  showInfo = true;
+  netSummary: (() => string) | null = null;
   private gauge = $('gauge').querySelector('i')!;
   private n2o = Array.from($('n2o').querySelectorAll('i'));
   private hp = $('hp');
@@ -227,6 +233,14 @@ export class Hud {
   }
 
   update(race: Race, view: GameView, dt: number): void {
+    if (dt > 0) this.fps += (1 / Math.max(dt, 1 / 240) - this.fps) * 0.05;
+    this.infoT -= dt;
+    if (this.infoT <= 0) {
+      this.infoT = 0.5;
+      const net = this.netSummary?.();
+      const txt = this.showInfo || net ? [this.showInfo ? `FPS ${Math.round(this.fps)}` : '', net ?? ''].filter(Boolean).join('・') : '';
+      this.set('netinfo', this.netinfo, txt);
+    }
     const p = race.player;
     const elim = race.mode === 'elim';
     this.set('pos', this.pos, String(p.rank));

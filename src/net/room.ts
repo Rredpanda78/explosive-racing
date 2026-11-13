@@ -4,6 +4,22 @@
 const ENV = (import.meta as unknown as { env?: { VITE_SERVER?: string; DEV?: boolean } }).env ?? {};
 export const SERVER: string = ENV.VITE_SERVER ?? (ENV.DEV ? 'ws://localhost:8787' : 'wss://explosive-racing-rooms.rredpanda78.workers.dev');
 
+/** 一般 HTTP 請求用的網址（公開房間列表、TURN、帳號） */
+export const HTTP_SERVER = SERVER.replace(/^ws/, 'http');
+
+/** 公開房間列表的一筆 */
+export interface PublicRoom { code: string; players: number; host: string; started: boolean; track: number; mode: 'race' | 'elim' }
+
+export async function fetchRooms(): Promise<PublicRoom[] | null> {
+  try {
+    const r = await fetch(HTTP_SERVER + '/rooms', { cache: 'no-store' });
+    if (!r.ok) return null;
+    return ((await r.json()) as { rooms?: PublicRoom[] }).rooms ?? [];
+  } catch {
+    return null;
+  }
+}
+
 /** 房間代碼：4 個字，去掉容易看錯的 I、O、0、1 */
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const newRoomCode = (): string => Array.from({ length: 4 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');

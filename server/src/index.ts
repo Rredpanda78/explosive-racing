@@ -11,6 +11,8 @@
 
 export interface Env {
   ROOM: DurableObjectNamespace;
+  /** 公開房間列表（全世界一個） */
+  LOBBY: DurableObjectNamespace;
   /** 允許連線的網頁（逗號分隔） */
   ALLOWED_ORIGINS: string;
   /** 本機開發（wrangler dev --var DEV_ORIGINS:1）另外允許 localhost */
@@ -93,6 +95,15 @@ export default {
         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': origin!, 'Cache-Control': 'no-store', Vary: 'Origin' },
       });
     }
+    if (url.pathname === '/rooms') {
+      // 公開房間列表（只給我們的網頁）
+      const origin = req.headers.get('Origin');
+      if (!originAllowed(origin, env)) return new Response('forbidden', { status: 403 });
+      const r = await env.LOBBY.get(env.LOBBY.idFromName('lobby')).fetch('https://lobby/list');
+      return new Response(await r.text(), {
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': origin!, 'Cache-Control': 'no-store', Vary: 'Origin' },
+      });
+    }
     const m = url.pathname.match(/^\/room\/([A-Z0-9]{4,6})$/);
     if (!m) return new Response('not found', { status: 404 });
     if (!originAllowed(req.headers.get('Origin'), env)) return new Response('forbidden', { status: 403 });
@@ -111,11 +122,31 @@ type Seats = Record<string, Seat>;
 
 export class Room {
   private state: DurableObjectState;
+  private env: Env;
   /** 每個連線的訊息計數（休眠後清掉沒關係） */
   private rate = new Map<number, { t: number; n: number }>();
 
-  constructor(state: DurableObjectState, _env: Env) {
+  constructor(state: DurableObjectState, env: Env) {
     this.state = state;
+    this.env = env;
+  }
+
+  /** 把房間現況告訴公開房間列表（沒人了、或房主設成不公開就從列表拿掉） */
+  private async publish(): Promise<void> {
+    const code = await this.state.storage.get<string>('code');
+    if (!code) return;
+    const seats = Object.values(await this.seats());
+    const pub = (await this.state.storage.get<{ public?: boolean; track?: number; mode?: string }>('pub')) ?? {};
+    const host = await this.state.storage.get<number>('host');
+    const hostInfo = seats.find((s) => s.pid === host)?.info as { name?: string } | null | undefined;
+    const entry = {
+      code, players: seats.length, host: String(hostInfo?.name ?? '').slice(0, 12),
+      started: (await this.state.storage.get<boolean>('started')) === true,
+      track: Number(pub.track) || 0, mode: pub.mode === 'elim' ? 'elim' : 'race', public: pub.public !== false,
+    };
+    try {
+      await this.env.LOBBY.get(this.env.LOBBY.idFromName('lobby')).fetch('https://lobby/update', { method: 'POST', body: JSON.stringify(entry) });
+    } catch { /* 列表晚一點更新沒關係 */ }
   }
 
   private peers(): { ws: WebSocket; a: Attach }[] {
@@ -173,6 +204,7 @@ export class Room {
     };
     if (!cid) return fail('closed');
     const colo = url.searchParams.get('colo') ?? '';
+    const code = url.pathname.match(/\/room\/([A-Z0-9]{4,6})$/)?.[1];
     let seats = await this.seats();
     const mine = seats[cid];
     if (mine) {
@@ -201,6 +233,7 @@ export class Room {
       // 新房間：清掉舊資料
       await this.state.storage.deleteAll();
       seats = {};
+      if (code) await this.state.storage.put('code', code);
     }
     const used = new Set(Object.values(seats).map((s) => s.pid));
     let pid = 1;
@@ -270,6 +303,15 @@ export class Room {
         } else {
           this.broadcast({ t: 'info', pid: a.pid, info: seat.info }, ws);
         }
+        await this.publish();
+        break;
+      }
+      case 'pub': {
+        // 房主的公開設定與目前的賽道、模式（公開房間列表顯示用）
+        if (a.pid !== (await this.state.storage.get<number>('host'))) return;
+        const d = (msg.d ?? {}) as { public?: boolean; track?: number; mode?: string };
+        await this.state.storage.put('pub', { public: d.public !== false, track: Number(d.track) || 0, mode: d.mode === 'elim' ? 'elim' : 'race' });
+        await this.publish();
         break;
       }
       case 'r': {
@@ -290,12 +332,14 @@ export class Room {
         if (a.pid !== (await this.state.storage.get<number>('host'))) return;
         await this.state.storage.put('started', true);
         this.broadcast({ t: 'start', d: msg.d }, ws);
+        await this.publish();
         break;
       }
       case 'lobby':
         if (a.pid !== (await this.state.storage.get<number>('host'))) return;
         await this.state.storage.put('started', false);
         this.broadcast({ t: 'lobby' }, ws);
+        await this.publish();
         break;
       case 'bye':
         // 按「離開房間」：馬上讓出座位
@@ -320,10 +364,13 @@ export class Room {
     await this.state.storage.delete('colo:' + cid);
     this.broadcast({ t: 'leave', pid: seat.pid });
     if (Object.keys(seats).length === 0) {
+      // 沒人了：從公開列表拿掉，再清掉資料
+      await this.publish();
       await this.state.storage.deleteAll();
       return;
     }
     await this.fixHost(seats);
+    await this.publish();
   }
 
   /** 斷線：座位先保留，AWAY_MS 後還沒回來才讓出 */
@@ -363,5 +410,44 @@ export class Room {
 
   async webSocketError(ws: WebSocket): Promise<void> {
     await this.dropped(ws);
+  }
+}
+
+
+interface LobbyEntry { code: string; players: number; host: string; started: boolean; track: number; mode: string; public: boolean; at: number }
+
+/**
+ * 公開房間列表：全世界一個物件。房間有變化（有人進出、開始、回到房間、房主改設定）就送一筆更新來；
+ * 沒人或不公開的房間拿掉。30 分鐘沒有更新的視為過期。
+ */
+export class Lobby {
+  private state: DurableObjectState;
+
+  constructor(state: DurableObjectState, _env: Env) {
+    this.state = state;
+  }
+
+  async fetch(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const rooms = (await this.state.storage.get<Record<string, LobbyEntry>>('rooms')) ?? {};
+    const now = Date.now();
+    if (url.pathname === '/update' && req.method === 'POST') {
+      let e: Partial<LobbyEntry>;
+      try { e = await req.json(); } catch { return new Response('bad', { status: 400 }); }
+      const code = String(e.code ?? '');
+      if (!/^[A-Z0-9]{4,6}$/.test(code)) return new Response('bad', { status: 400 });
+      if (!e.players || e.players <= 0 || e.public === false) delete rooms[code];
+      else rooms[code] = { code, players: Math.min(8, Number(e.players)), host: String(e.host ?? '').slice(0, 12), started: !!e.started, track: Number(e.track) || 0, mode: e.mode === 'elim' ? 'elim' : 'race', public: true, at: now };
+      for (const [c, r] of Object.entries(rooms)) if (now - r.at > 30 * 60e3) delete rooms[c];
+      await this.state.storage.put('rooms', rooms);
+      return new Response('ok');
+    }
+    // 等待中的房間排前面，人多的排前面
+    const list = Object.values(rooms)
+      .filter((r) => now - r.at < 30 * 60e3)
+      .sort((a, b) => Number(a.started) - Number(b.started) || b.players - a.players || b.at - a.at)
+      .slice(0, 40)
+      .map(({ code, players, host, started, track, mode }) => ({ code, players, host, started, track, mode }));
+    return new Response(JSON.stringify({ rooms: list }), { headers: { 'Content-Type': 'application/json' } });
   }
 }

@@ -9,6 +9,7 @@ import { MUSIC_STYLES } from '../audio';
 import { saveProfile, type Profile } from '../game/save';
 import { formatTime } from '../game/util';
 import type { OnlineSession } from '../net/online';
+import type { PublicRoom } from '../net/room';
 import {
   BURN_DPS, PERK_LVL3, PERK_LVL5, CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
   laserCooldown, laserKeep, shieldHalfArc, shieldTime, weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
@@ -56,7 +57,7 @@ export interface ScreenActions {
   online(): void;
   createRoom(name: string): void;
   joinRoom(code: string, name: string): void;
-  roomCfg(key: 'track' | 'mode' | 'ai' | 'diff', val: string): void;
+  roomCfg(key: 'track' | 'mode' | 'ai' | 'diff' | 'pub', val: string): void;
   roomStart(): void;
   roomScreen(): void;
   leaveRoom(): void;
@@ -202,6 +203,8 @@ export class Screens {
       case 'rmode': this.act.roomCfg('mode', id ?? 'race'); break;
       case 'rai': this.act.roomCfg('ai', id ?? '1'); break;
       case 'rdiff': this.act.roomCfg('diff', id ?? 'normal'); break;
+      case 'rpub': this.act.roomCfg('pub', id ?? '1'); break;
+      case 'joinpub': if (id) this.act.joinRoom(id, this.val('#net-name')); break;
       case 'rstart': this.act.roomStart(); break;
       case 'copylink': {
         const link = location.origin + location.pathname + '?room=' + (id ?? '');
@@ -354,6 +357,8 @@ export class Screens {
           <div class="or">或輸入朋友的房間代碼</div>
           <div class="joinrow"><input id="net-code" maxlength="6" placeholder="例如 K7QX" value="${esc(code)}" autocapitalize="characters" autocomplete="off" /><button class="btn" data-act="joinroom">加入</button></div>
           ${msg ? `<div class="net-msg">${esc(msg)}</div>` : ''}
+          <div class="pub-head"><b>公開房間</b><span>點一下直接加入</span></div>
+          <div class="pub-list" data-publist><div class="pub-empty">讀取中…</div></div>
           <button class="btn small" data-act="backmenu">返回</button>
         </div>
       </div>`;
@@ -385,6 +390,25 @@ export class Screens {
     });
     const r = this.root.querySelector<HTMLElement>('[data-route]');
     if (r) r.innerHTML = this.routeText(s);
+  }
+
+  /** 更新公開房間列表（null = 讀不到） */
+  roomList(list: PublicRoom[] | null): void {
+    const box = this.root.querySelector<HTMLElement>('[data-publist]');
+    if (!box) return;
+    if (!list) { box.innerHTML = '<div class="pub-empty">讀不到房間列表（檢查網路）</div>'; return; }
+    if (!list.length) { box.innerHTML = '<div class="pub-empty">目前沒有公開房間，建立一個吧！</div>'; return; }
+    box.innerHTML = list.map((r) => {
+      const t = this.tracks[r.track]?.name ?? '';
+      const full = r.players >= 8;
+      const dis = full || r.started ? 'disabled' : '';
+      return `<button class="pub-row" data-act="joinpub" data-id="${esc(r.code)}" ${dis}>
+        <b>${esc(r.code)}</b><span class="pr-host">${esc(r.host || '房主')}</span>
+        <span>${esc(t)}・${r.mode === 'elim' ? '淘汰賽' : '競速賽'}</span>
+        <span class="pr-n">${r.players}/8</span>
+        <em class="${r.started ? 'busy' : full ? 'busy' : 'open'}">${r.started ? '比賽中' : full ? '已滿' : '等待中'}</em>
+      </button>`;
+    }).join('');
   }
 
   /** 房間：車手名單與房主的比賽設定 */
@@ -428,6 +452,7 @@ export class Screens {
               <div class="m-diff"><span>模式</span>${seg('rmode', c.mode, [['race', '競速賽'], ['elim', '淘汰賽']])}</div>
               <div class="m-diff"><span>空位</span>${seg('rai', c.aiFill ? '1' : '0', [['1', '補電腦車手'], ['0', '只有玩家']])}</div>
               <div class="m-diff"><span>電腦</span>${seg('rdiff', c.difficulty, DIFFICULTY_IDS.map((d) => [d, DIFFICULTY[d].name] as [string, string]))}</div>
+              <div class="m-diff"><span>房間</span>${seg('rpub', c.public === false ? '0' : '1', [['1', '公開（列表看得到）'], ['0', '只限邀請']])}</div>
             </div>
           </div>
           <div class="row">
@@ -572,6 +597,7 @@ export class Screens {
           <small>變更後會重新載入</small>
           <b>畫面震動</b>${range('shake', s.shake, 0, 1, 0.05)}
           <b>傷害數字</b><label><input type="checkbox" data-set="dmgNumbers" ${s.dmgNumbers ? 'checked' : ''} /> 打中對手時顯示</label>
+          <b>角落資訊</b><label><input type="checkbox" data-set="netInfo" ${s.netInfo ? 'checked' : ''} /> 顯示每秒幀數（線上比賽另外顯示延遲與直連人數）</label>
           <h3>聲音</h3>
           <b>音樂音量</b>${range('music', s.music, 0, 1, 0.05)}
           <b>音效音量</b>${range('sfx', s.sfx, 0, 1, 0.05)}

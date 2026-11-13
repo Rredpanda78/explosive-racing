@@ -530,3 +530,20 @@ body.touch #missions { top: calc(33 * var(--u)); }
 /* 結算面板是奶油色底：一般按鈕改成深藍字、深藍框（原本奶油色字在奶油色底上看不到） */
 .results .btn:not(.primary) { color: var(--navy); border-color: var(--navy); }
 .results .btn:not(.primary):hover { background: rgba(19,40,75,.08); }
+
+/* 角落資訊：FPS、延遲 */
+#netinfo { position: absolute; left: 50%; bottom: calc(.6 * var(--u) + env(safe-area-inset-bottom)); transform: translateX(-50%); font: 700 clamp(10px, 1.3vw, 13px)/1.2 system-ui, sans-serif; font-style: normal; color: rgba(255,255,255,.8); background: rgba(8,12,24,.45); padding: .15em .6em; border-radius: 6px; white-space: nowrap; pointer-events: none; }
+#netinfo:empty { display: none; }
+/* 公開房間列表 */
+.pub-head { display: flex; align-items: baseline; justify-content: space-between; margin-top: .3em; }
+.pub-head span { font-size: .8em; opacity: .7; font-weight: 700; }
+.pub-list { display: flex; flex-direction: column; gap: .35em; max-height: min(34vh, 260px); overflow-y: auto; touch-action: pan-y; }
+.pub-row { display: grid; grid-template-columns: auto 1fr auto auto auto; gap: .6em; align-items: center; text-align: left; background: var(--navy-3); color: var(--cream); border: 2px solid transparent; border-radius: 10px; padding: .45em .7em; font-weight: 700; font-size: clamp(12px, 1.5vw, 14px); }
+.pub-row:hover:not(:disabled) { border-color: var(--coral); }
+.pub-row:disabled { opacity: .55; cursor: default; }
+.pub-row b { letter-spacing: .15em; color: var(--coral); font-size: 1.1em; }
+.pub-row .pr-host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pub-row em { font-style: normal; font-size: .8em; padding: .1em .5em; border-radius: 6px; }
+.pub-row em.open { background: #2f9e6e; color: #fff; }
+.pub-row em.busy { background: rgba(243,234,213,.2); }
+.pub-empty { opacity: .7; font-weight: 700; text-align: center; padding: .6em; font-size: .9em; }

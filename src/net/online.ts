@@ -13,6 +13,8 @@ export interface RoomConfig {
   mode: RaceMode;
   aiFill: boolean;
   difficulty: DifficultyId;
+  /** 出現在公開房間列表（不公開 = 只能用代碼或邀請連結加入） */
+  public?: boolean;
 }
 
 /** 開始比賽：每個人照同樣的設定、亂數種子與名單建立比賽 */
@@ -195,7 +197,27 @@ export class OnlineSession {
     if (!this.isHost) return;
     Object.assign(this.cfg, c);
     this.send({ e: 'cfg', cfg: this.cfg });
+    this.publish();
     this.onChange();
+  }
+
+  /** 房主：把公開設定與賽道、模式告訴伺服器（公開房間列表顯示用） */
+  private publish(): void {
+    if (this.isHost) this.client.send({ t: 'pub', d: { public: this.cfg.public !== false, track: this.cfg.track, mode: this.cfg.mode } });
+  }
+
+  /** 角落顯示的連線摘要：平均延遲與直連人數 */
+  summary(): string {
+    const others = this.others();
+    if (!others.length) return this.client.connected ? '房間只有你' : '連線中…';
+    let sum = 0, n = 0, direct = 0;
+    for (const p of others) {
+      const l = this.link(p);
+      if (l.rtt) { sum += l.rtt; n++; }
+      if (l.path !== 'server') direct++;
+    }
+    const ms = n ? Math.round(sum / n) + ' ms' : '— ms';
+    return `延遲 ${ms}・不經伺服器 ${direct}/${others.length}${this.reconnecting ? '・重新連線中' : ''}`;
   }
 
   /** 房主按開始 */
@@ -272,6 +294,7 @@ export class OnlineSession {
           this.mesh.ensure(p.pid);
         }
         if (this.status !== 'racing') this.status = 'lobby';
+        this.publish();
         // 自己斷線回來：把斷線期間自己發生的擊毀、完賽補送給大家（對方用 id 去掉重複）
         if (m.rejoin && this.race) for (const d of this.evLog) this.send(d);
         this.hostChanged();
@@ -313,6 +336,7 @@ export class OnlineSession {
         break;
       case 'host':
         this.hostPid = m.pid;
+        this.publish();
         this.hostChanged();
         this.onChange();
         break;
