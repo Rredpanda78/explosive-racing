@@ -7,7 +7,7 @@ import { pickMissions, type Mission } from './missions';
 import type { Profile } from './save';
 import type { HazardDef, Track } from './track';
 import { clamp, mulberry32, wrapAngle } from './util';
-import { BURN_DPS, BURN_TIME, LASER_CHARGE, laserCooldown, laserKeep, laserWidth, lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, shieldHalfArc, shieldTime, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
+import { BURN_DPS, BURN_TIME, LASER_CHARGE, laserCooldown, laserKeep, laserWidth, lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, shieldHalfArc, shieldHp, shieldTime, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
 import { DIFFICULTY } from './difficulty';
 
 export type RaceMode = 'race' | 'elim';
@@ -60,8 +60,9 @@ export type RaceEvent =
   | { t: 'blast'; x: number; y: number; z: number; r: number; gy: number; kart: boolean }
   | { t: 'kill'; killer: Kart | null; victim: Kart; streak: number }
   | { t: 'launch'; k: Kart; kind: SecondaryId }
-  /** 後方護盾擋下一次攻擊 */
+  /** 後方護盾擋下一次攻擊；shatter = 護盾被打碎 */
   | { t: 'block'; k: Kart; x: number; y: number; z: number }
+  | { t: 'shatter'; k: Kart }
   /** 雷射射出：hits = 打中幾台車 */
   | { t: 'rail'; k: Kart; x: number; y: number; z: number; len: number; hits: number }
   | { t: 'lock'; k: Kart; by: Kart }
@@ -94,6 +95,8 @@ const GRENADE_CONE = 0.7;
 const GRENADE_RANGE = 120;
 /** 追蹤導彈的轉向速度（弧度／秒）：比急轉彎的車慢，所以甩得掉 */
 const HOMING_TURN = 2.3;
+/** 追蹤導彈的飛行高度上限（離腳下路面幾公尺）：目標跳起來或被炸飛時不會一路追上天，飛越跳台可以躲掉 */
+const HOMING_MAX_ALT = 4.5;
 const MAX_MINES = 3;
 const MAX_MINES_PERK = 5;
 
@@ -314,6 +317,7 @@ export class Race {
       k.lockT = Math.max(0, k.lockT - dt);
       k.hazardCd = Math.max(0, k.hazardCd - dt);
       k.shieldT = Math.max(0, k.shieldT - dt);
+      k.shieldBreakT = Math.max(0, k.shieldBreakT - dt);
       if (k.dead) {
         k.respawnT -= dt;
         if (k.respawnT <= 0) {
@@ -428,6 +432,7 @@ export class Race {
   private stepRemote(k: Kart, dt: number, racing: boolean): void {
     k.firing = Math.max(0, k.firing - dt);
     k.shieldT = Math.max(0, k.shieldT - dt);
+    k.shieldBreakT = Math.max(0, k.shieldBreakT - dt);
     k.lockT = Math.max(0, k.lockT - dt);
     k.sinceDamage += dt;
     if (!racing || k.dead || k.finished) {
@@ -583,6 +588,7 @@ export class Race {
   private destroy(v: Kart, attacker: Kart | null): void {
     v.hp = 0;
     v.shieldT = 0;
+    v.shieldHp = 0;
     v.dead = true;
     v.deaths++;
     v.streak = 0;
@@ -627,11 +633,26 @@ export class Race {
     return cos > Math.cos(shieldHalfArc(v.secondaryLvl));
   }
 
-  /** 擋下的位置：從車中心往攻擊來源方向，護盾半徑上的一點 */
-  private blockAt(v: Kart, sx: number, sz: number): void {
+  /**
+   * 護盾擋下一次攻擊：在護盾上濺出火花，扣護盾耐久，扣光就碎掉（這一下還是擋住了）。
+   * 連線時護盾耐久由車主的電腦判定，別人的畫面只顯示擋下的火花
+   */
+  private blockAt(v: Kart, sx: number, sz: number, dmg = 0, fx = true): void {
     const dx = sx - v.x, dz = sz - v.z;
     const d = Math.max(0.01, Math.hypot(dx, dz));
-    this.events.push({ t: 'block', k: v, x: v.x + (dx / d) * 2.1, y: v.y + 0.9, z: v.z + (dz / d) * 2.1 });
+    if (fx) this.events.push({ t: 'block', k: v, x: v.x + (dx / d) * 2.1, y: v.y + 0.9, z: v.z + (dz / d) * 2.1 });
+    if (v.remote || dmg <= 0) return;
+    v.shieldHp -= dmg;
+    if (v.shieldHp <= 0) this.shatter(v);
+  }
+
+  /** 護盾碎掉 */
+  shatter(v: Kart): void {
+    if (v.shieldT <= 0) return;
+    v.shieldT = 0;
+    v.shieldHp = 0;
+    v.shieldBreakT = 0.5;
+    this.events.push({ t: 'shatter', k: v });
   }
 
   /** 把車撞飛：往 (dx,dz) 方向推、離地、翻滾 */
@@ -662,7 +683,7 @@ export class Race {
       if (d > radius + 1.2) continue;
       // 爆炸中心在護盾後面：整個擋下
       if (this.shieldBlocks(k, x, z)) {
-        this.blockAt(k, x, z);
+        this.blockAt(k, x, z, dmg * clamp(1 - 0.6 * (d / radius), 0.3, 1));
         continue;
       }
       const f = clamp(1 - 0.6 * (d / radius), 0.3, 1);
@@ -892,7 +913,10 @@ export class Race {
       case 'mine': this.dropMine(k); break;
       case 'cluster': this.dropCluster(k, p.seed); break;
       case 'missile': this.fireHoming(k, p.targets ?? []); break;
-      case 'shield': k.shieldT = shieldTime(k.secondaryLvl); break;
+      case 'shield':
+        k.shieldT = shieldTime(k.secondaryLvl);
+        k.shieldMax = k.shieldHp = shieldHp(k.secondaryLvl);
+        break;
     }
     this.events.push({ t: 'launch', k, kind: k.secondary });
   }
@@ -986,7 +1010,7 @@ export class Race {
       const d = inCone(o.x, o.z, o.y, 1.1);
       if (d < 0) continue;
       if (this.shieldBlocks(o, k.x, k.z)) {
-        if (this.rng() < 0.15) this.blockAt(o, k.x, k.z);
+        this.blockAt(o, k.x, k.z, dmg, this.rng() < 0.15);
         continue;
       }
       this.damage(o, dmg * (1 - 0.4 * (d / range)), k);
@@ -1038,7 +1062,7 @@ export class Race {
       if (t < 0 || Math.abs(o.y + 0.9 - (oy + tp * t)) > 2.2) continue;
       hits.push({ t, hit: (p) => {
         if (this.shieldBlocks(o, ox, oz)) {
-          this.blockAt(o, ox, oz);
+          this.blockAt(o, ox, oz, o.maxHp * 1.02 * p);
           return -1;
         }
         this.damage(o, Math.min(o.hp + 0.5, o.maxHp * 1.02 * p), k);
@@ -1310,7 +1334,7 @@ export class Race {
       }
       if (hit && this.shieldBlocks(hit, b.x - b.vx, b.z - b.vz)) {
         // 從後面打來的子彈打在護盾上
-        this.blockAt(hit, b.x - b.vx, b.z - b.vz);
+        this.blockAt(hit, b.x - b.vx, b.z - b.vz, b.dmg);
         B[i] = B[B.length - 1];
         B.pop();
         continue;
@@ -1355,7 +1379,8 @@ export class Race {
       const m = M[i];
       m.age += dt;
       m.idx = track.probe(m.x, m.z, m.idx);
-      const roadY = track.probeY;
+      // 離開路面（導彈抄近路飛過內場）時不要用斜率往外推算高度，直接用最近的路面高度
+      const roadY = track.probeOn ? track.probeY : track.samples[m.idx].y;
       let boom = false;
       if (m.homing) {
         m.speed = Math.min(80, m.speed + 50 * dt);
@@ -1368,7 +1393,7 @@ export class Race {
           m.a += clamp(wrapAngle(want - m.a), -HOMING_TURN * dt, HOMING_TURN * dt);
           t.lockT = Math.max(t.lockT, 0.3);
           const d = Math.hypot(t.x - m.x, t.z - m.z);
-          if (d < 18) wantY = t.y + 0.9;
+          if (d < 18) wantY = Math.min(t.y + 0.9, roadY + HOMING_MAX_ALT);
           if (d < 2.6 && Math.abs(t.y + 0.9 - m.y) < 2.5) boom = true;
         }
         m.y += (wantY - m.y) * Math.min(1, dt * 6);
@@ -1380,6 +1405,12 @@ export class Race {
       }
       m.x += Math.sin(m.a) * m.speed * dt;
       m.z += Math.cos(m.a) * m.speed * dt;
+      if (m.homing) {
+        // 飛行高度上限：用移動後腳下的路面算（畫面上看到的位置）
+        m.idx = track.probe(m.x, m.z, m.idx);
+        const g = track.probeOn ? track.probeY : track.samples[m.idx].y;
+        m.y = clamp(m.y, g + 0.5, g + HOMING_MAX_ALT);
+      }
       m.life -= dt;
       if (m.life <= 0) boom = true;
       if (!boom) {

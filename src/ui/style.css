@@ -509,3 +509,24 @@ body.touch #missions { top: calc(33 * var(--u)); }
 .lk i.away { background: var(--coral); color: var(--cream); }
 .net-route { font-size: clamp(11px, 1.3vw, 13px); font-weight: 700; opacity: .75; }
 .lk i.turn { background: #3b6fd6; color: #fff; }
+
+/* 內容比畫面高時從上面開始排、可以捲動（直接置中會把上半部推到捲不到的地方） */
+.screen { justify-content: flex-start; }
+.screen > * { margin-top: auto; margin-bottom: auto; flex-shrink: 0; }
+/* 結算：按鈕固定在面板底部，永遠看得到 */
+.results .row { position: sticky; bottom: 0; padding: .6em 0 .3em; background: linear-gradient(rgba(243,234,213,0), var(--cream) 30%); }
+/* 手機橫屏（矮螢幕）：名次表放左邊，任務、收入、按鈕放右邊 */
+@media (max-height: 520px) and (orientation: landscape) {
+  .results { width: min(920px, 100%); padding: .5em .9em .4em; }
+  .results h2 { font-size: 24px; }
+  .results .res-body { display: grid; grid-template-columns: 1.15fr 1fr; gap: .8em; align-items: start; }
+  .results table { margin: .2em 0; font-size: 12px; }
+  .results td { padding: .08em .4em; }
+  .results .missions-box { font-size: 12px; margin: .2em 0; padding: .4em .6em; }
+  .results .earn { font-size: 12px; margin: .3em 0 .2em; line-height: 1.5; }
+  .results .row { flex-wrap: nowrap; gap: .5em; position: static; background: none; }
+  .results .row .btn { font-size: 14px; padding: .45em .8em; min-width: 0; flex: 1; }
+}
+/* 結算面板是奶油色底：一般按鈕改成深藍字、深藍框（原本奶油色字在奶油色底上看不到） */
+.results .btn:not(.primary) { color: var(--navy); border-color: var(--navy); }
+.results .btn:not(.primary):hover { background: rgba(19,40,75,.08); }

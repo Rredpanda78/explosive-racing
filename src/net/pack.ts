@@ -15,7 +15,7 @@ const clampI = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 export function flagsOf(k: Kart): number {
-  return (k.drifting ? 1 : 0) | (k.dead ? 2 : 0) | (k.netFire ? 4 : 0) | (k.driftDir > 0 ? 8 : 0) | (k.hop ? 16 : 0) | (k.shieldT > 0 ? 32 : 0);
+  return (k.drifting ? 1 : 0) | (k.dead ? 2 : 0) | (k.netFire ? 4 : 0) | (k.driftDir > 0 ? 8 : 0) | (k.hop ? 16 : 0) | (k.shieldT > 0 ? 32 : 0) | (k.shieldBreakT > 0 ? 64 : 0);
 }
 
 export function encodeStates(karts: Kart[], hits: [number, number, number][]): Uint8Array<ArrayBuffer> {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Kart } from '../game/kart';
+import { clamp } from '../game/util';
 import { shieldHalfArc, type PrimaryId, type SecondaryId } from '../game/weapons';
 import { cloneModel } from './assets';
 import { liveryMaterial, type Livery } from './livery';
@@ -712,6 +713,13 @@ export class KartView {
     this.shieldFlash = 1;
   }
 
+  /** 護盾碎掉：立刻消失（碎片由畫面的碎片特效負責） */
+  shieldBreak(): void {
+    this.shieldK = 0;
+    this.shieldFlash = 0;
+    if (this.shield) this.shield.visible = false;
+  }
+
   /** 開火時讓對應那一側的槍口閃一下 */
   muzzleFlash(side: number): void {
     this.muzzleT[side > 0 ? 0 : 1] = 0.05;
@@ -835,9 +843,11 @@ export class KartView {
       this.shield.visible = vis;
       if (vis) {
         const mat = this.shield.material as THREE.MeshBasicMaterial;
-        // 快結束時閃爍提醒
-        const ending = k.shieldT < 0.8 && Math.floor(this.t * 12) % 2 === 0 ? 0.35 : 1;
-        mat.opacity = (0.32 + 0.06 * Math.sin(this.t * 9) + this.shieldFlash * 0.6) * this.shieldK * ending;
+        // 耐久（只有自己控制的車知道）：越低越偏橘、越透明；快結束或快碎時閃爍提醒
+        const hp = k.remote ? 1 : clamp(k.shieldHp / Math.max(1, k.shieldMax), 0, 1);
+        mat.color.setRGB(0.45 + (1 - hp) * 1.9, 1.3 - (1 - hp) * 0.5, 2.2 - (1 - hp) * 1.9);
+        const ending = (k.shieldT < 0.8 || hp < 0.3) && Math.floor(this.t * 12) % 2 === 0 ? 0.35 : 1;
+        mat.opacity = (0.22 + 0.12 * hp + 0.06 * Math.sin(this.t * 9) + this.shieldFlash * 0.6) * this.shieldK * ending;
         if (mat.map) mat.map.offset.x = (this.t * 0.15) % 1;
         const s = 0.9 + 0.1 * this.shieldK + this.shieldFlash * 0.05;
         this.shield.scale.set(s, 1, s);

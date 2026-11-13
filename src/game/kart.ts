@@ -173,8 +173,11 @@ export class Kart {
   lockT = 0;
   /** 雷射蓄力中的秒數（0 = 沒在蓄力） */
   charge = 0;
-  /** 後方護盾剩餘秒數 */
+  /** 後方護盾剩餘秒數、剩餘耐久，以及剛碎掉的時間（畫面與連線用） */
   shieldT = 0;
+  shieldHp = 0;
+  shieldMax = 1;
+  shieldBreakT = 0;
   /** 剛被機關打到後的保護時間（避免同一個機關連續判定） */
   hazardCd = 0;
 

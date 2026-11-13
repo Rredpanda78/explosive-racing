@@ -9,7 +9,8 @@ import type { Race, RaceEvent } from '../game/race';
 import type { Track } from '../game/track';
 import { clamp, lerpAngle } from '../game/util';
 import { CARS } from '../game/cars';
-import { PRIMARY } from '../game/weapons';
+import { PRIMARY, shieldHalfArc } from '../game/weapons';
+import { Shards } from './shards';
 import { HazardView } from './hazards';
 import { BlastFx, Debris, Scorch, SkidMarks, Trails } from './effects';
 import { clusterMineMaterial, hexMineGeometry, steelMaterial } from './weaponModels';
@@ -55,6 +56,8 @@ export class GameView {
   private streaks = new Trails(16, 46, 0.3);
   private scorch = new Scorch(40);
   private debris: Debris | null = null;
+  /** 護盾碎片 */
+  private shards = new Shards();
   private blast = new BlastFx();
   private tracers: THREE.InstancedMesh;
   private missiles: THREE.Group[] = [];
@@ -270,6 +273,7 @@ export class GameView {
     if (this.debris) this.scene.remove(this.debris.group);
     this.debris = new Debris(this.lowDetail ? 16 : 36, this.shadows);
     this.scene.add(this.debris.group);
+    if (!this.shards.mesh.parent) this.scene.add(this.shards.mesh);
   }
 
   setRace(race: Race | null): void {
@@ -293,6 +297,7 @@ export class GameView {
     this.streaks.clear();
     this.scorch.clear();
     this.debris?.clear();
+    this.shards.clear();
     this.blast.clear();
     this.tracers.count = 0;
     for (const m of this.missiles) m.visible = false;
@@ -393,6 +398,16 @@ export class GameView {
         if (R() < 0.3) sm.spawn(e.x, e.y, e.z, e.k.vx * 0.5, 1, e.k.vz * 0.5, 0.5, 0.4, 1.6, 0.25, 0.25, 0.27, 0.4);
         if (e.k === p) this.addShake(0.1);
         break;
+      case 'shatter': {
+        // 護盾碎掉：整片裂成碎片往外噴，閃一下
+        this.kartViews.get(e.k)?.shieldBreak();
+        this.shards.burst(e.k.x, e.k.y, e.k.z, e.k.heading, shieldHalfArc(e.k.secondaryLvl), e.k.vx, e.k.vz, this.lowDetail ? 22 : 40);
+        const bx = e.k.x - Math.sin(e.k.heading) * 2, bz = e.k.z - Math.cos(e.k.heading) * 2;
+        f.spawn(bx, e.k.y + 1, bz, e.k.vx * 0.5, 0, e.k.vz * 0.5, 0.18, 5.5, 0.5, 0.85, 1, 1, 0.9);
+        this.sparks(bx, e.k.y + 1, bz, 12, 16, e.k.y, e.k.vx * 0.5, e.k.vz * 0.5);
+        if (e.k === p) this.addShake(0.25);
+        break;
+      }
       case 'block':
         // 護盾擋下：藍白色火花，護盾亮一下
         this.kartViews.get(e.k)?.shieldHit();
@@ -703,6 +718,7 @@ export class GameView {
     this.scorch.update(dt);
     this.blast.update(dt);
     this.debris?.update(dt);
+    this.shards.update(dt);
     sm.update(dt);
     f.update(dt);
     if (this.theme.night) {

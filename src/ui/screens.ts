@@ -641,7 +641,9 @@ export class Screens {
       <div class="screen">
         <div class="results">
           <h2>${elim && s.rank === 1 ? '冠軍！' : `第 ${s.rank} 名`}</h2>
+          <div class="res-body">
           <table>${rows}</table>
+          <div class="res-side">
           <div class="missions-box"><b>本場任務</b>${missions}</div>
           <div class="earn">
             名次 $${s.payout}　＋　擊毀 ${p.kills} × $${KILL_REWARD}${s.streakCash ? '　＋　連續擊毀 $' + s.streakCash : ''}　＋　任務 $${s.missionCash}<br />
@@ -650,7 +652,9 @@ export class Screens {
           <div class="row">
             ${online
               ? '<button class="btn primary" data-act="toroom">回到房間</button><button class="btn" data-act="leaveroom">離開房間</button>'
-              : '<button class="btn primary" data-act="start">再來一場</button><button class="btn" data-act="garage">車庫</button><button class="btn" data-act="menu">主選單</button>'}
+              : '<button class="btn primary" data-act="start">再來一場</button><button class="btn" data-act="garage">車庫</button><button class="btn" data-act="menu">離開</button>'}
+          </div>
+          </div>
           </div>
         </div>
       </div>`;

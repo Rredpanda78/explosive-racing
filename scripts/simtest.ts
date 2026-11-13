@@ -215,6 +215,7 @@ runAll('elim', 777);
   const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
   const shot = (from: number) => {
     k.shieldT = 3;
+    k.shieldHp = k.shieldMax = 70;
     k.hp = k.maxHp;
     race.events.length = 0;
     // 從前方（from = 1）或後方（-1）飛來的一發子彈
@@ -231,5 +232,15 @@ runAll('elim', 777);
   console.log(`shield: from behind bullet -${back.bullet.toFixed(0)} blast -${back.blast.toFixed(0)} (blocks ${back.blocks}); from front bullet -${front.bullet.toFixed(0)} blast -${front.blast.toFixed(0)}`);
   if (back.bullet > 0 || back.blast > 0 || back.blocks < 2) throw new Error('shield did not block attacks from behind');
   if (front.bullet <= 0 || front.blast <= 0) throw new Error('shield blocked attacks from the front');
+  // 耐久快用完：這一下還是擋住，但護盾碎掉；下一下就打到車了
+  k.shieldT = 3;
+  k.shieldHp = 15;
+  k.hp = k.maxHp;
+  race.events.length = 0;
+  race.explodeAt(k.x - fx * 2.5, k.y + 0.5, k.z - fz * 2.5, k.y, 6, 30, enemy);
+  const shattered = race.events.some((e) => e.t === 'shatter') && k.shieldT === 0 && k.hp === k.maxHp;
+  race.explodeAt(k.x - fx * 2.5, k.y + 0.5, k.z - fz * 2.5, k.y, 6, 30, enemy);
+  console.log(`shield break: shattered ${shattered}, next blast -${(k.maxHp - k.hp).toFixed(0)}`);
+  if (!shattered || k.hp >= k.maxHp) throw new Error('shield did not shatter correctly');
 }
 console.log('SIM OK');

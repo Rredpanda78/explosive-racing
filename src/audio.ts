@@ -367,6 +367,15 @@ export class GameAudio {
         this.beep(330, 0.25, 0.2);
         setTimeout(() => this.beep(247, 0.4, 0.2), 180);
         break;
+      case 'shatter': {
+        // 護盾碎掉：玻璃碎裂（高頻雜訊＋往下掉的幾聲叮）
+        const v = e.k === p ? 1 : near(e.k.x, e.k.z, 90) * 0.7;
+        if (v < 0.02) break;
+        this.burst(6500, 1.2, 0.35, 0.4 * v, 'highpass', 3000);
+        this.thump(0.3 * v);
+        [2600, 2100, 1700, 1300].forEach((f, i) => setTimeout(() => this.beep(f, 0.06, 0.08 * v), i * 45));
+        break;
+      }
       case 'block': {
         // 護盾擋下：清脆的「叮」
         const now = performance.now();
