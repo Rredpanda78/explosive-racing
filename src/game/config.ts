@@ -76,9 +76,13 @@ export const CFG = {
   miniSpeedMul: 1.1,
   miniAccel: 30,
 
-  // 軟邊界：路緣外的砂石緩衝區（沒有 N2O、小噴、加速帶時的極速倍率，與超速時沙地額外吃掉的速度 m/s²）
-  runoffSpeed: 0.65,
-  runoffDrag: 12,
+  // 軟邊界：路緣外的緩衝區，依地面種類（沒有 N2O、小噴、加速帶時的極速倍率，與超速時地面額外吃掉的速度 m/s²）
+  // 砂石最吃速度；草地次之；城市的鋪面（水泥／柏油）比較寬容
+  runoffSurfaces: {
+    sand: { speed: 0.65, drag: 12 },
+    grass: { speed: 0.7, drag: 6 },
+    paved: { speed: 0.8, drag: 0 },
+  },
 
   // 加速帶與坡度
   padTime: 1.3,
