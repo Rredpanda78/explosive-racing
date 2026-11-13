@@ -65,7 +65,7 @@ export class WeaponFx {
       const lx = fz * e.side, lz = -fx * e.side;
       const out = 2.5 + R() * 2;
       this.casings.spawn(e.x - fx * 1.05, e.y + 0.05, e.z - fz * 1.05, k.vx * 0.85 + lx * out - fx * R(), 2.6 + R() * 2, k.vz * 0.85 + lz * out - fz * R(), 0.9 + R() * 0.4, k.y - k.air + 0.03, 1);
-    } else if (e.t === 'rail') {
+    } else if (e.t === 'rail' || e.t === 'zap' || e.t === 'pulse') {
       const g = this.g(e.k);
       g.flashT = 0.2;
       g.x = e.x; g.y = e.y; g.z = e.z;
@@ -142,12 +142,15 @@ export class WeaponFx {
       const g = this.glow.get(k);
       if (g && g.flashT > 0) {
         g.flashT = Math.max(0, g.flashT - dt);
-        const laser = kind === 'laser';
-        const u = g.flashT / (laser ? 0.2 : 0.06);
+        const laser = kind === 'laser', big = laser || kind === 'arc' || kind === 'sonic';
+        const u = Math.min(1, g.flashT / (big ? 0.2 : 0.06));
         if (laser) cand.push({ k, i: 10 * u, r: 1, g: 0.45, b: 0.6, x: g.x + fx * 2, y: g.y + 0.3, z: g.z + fz * 2, s: 0 });
+        else if (kind === 'arc') cand.push({ k, i: 6 * u * (0.6 + R() * 0.6), r: 0.55, g: 0.75, b: 1, x: g.x + fx * 2, y: g.y + 0.3, z: g.z + fz * 2, s: 0 });
+        else if (kind === 'sonic') cand.push({ k, i: 2.5 * u, r: 0.85, g: 0.5, b: 1, x: g.x + fx * 2, y: g.y + 0.3, z: g.z + fz * 2, s: 0 });
         else cand.push({ k, i: 3.5 * u, r: 1, g: 0.72, b: 0.38, x: g.x, y: g.y + 0.2, z: g.z, s: 0 });
       }
       if (kind === 'flame' && k.firing > 0) cand.push({ k, i: 3.5 * (0.65 + R() * 0.6), r: 1, g: 0.5, b: 0.16, x: k.x + fx * 3, y: k.y + 1.1, z: k.z + fz * 3, s: 0 });
+      if (kind === 'freeze' && k.firing > 0) cand.push({ k, i: 2.6 * (0.85 + R() * 0.3), r: 0.45, g: 0.8, b: 1, x: k.x + fx * 3, y: k.y + 1.1, z: k.z + fz * 3, s: 0 });
       if (kind === 'laser' && k.charge > 0) {
         const c = Math.min(1, k.charge / 0.3);
         cand.push({ k, i: 0.5 + 2.6 * c * (0.85 + R() * 0.3), r: 1, g: 0.3, b: 0.5, x: k.x + fx * 1.8, y: k.y + 1.1, z: k.z + fz * 1.8, s: 0 });

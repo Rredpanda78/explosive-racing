@@ -9,7 +9,7 @@ import { defaultProfile } from '../src/game/save';
 import { makeTerrain } from '../src/game/terrain';
 import { Track, TRACKS } from '../src/game/track';
 import { wrapAngle } from '../src/game/util';
-import { PRIMARY_IDS, SECONDARY_IDS } from '../src/game/weapons';
+import { PRIMARY_IDS, SECONDARY_IDS, type PrimaryId } from '../src/game/weapons';
 
 for (const def of TRACKS) {
 const track = new Track(def);
@@ -484,6 +484,135 @@ for (const def of TRACKS) {
     console.log(`AI mean finish (3 seeds): soft ${soft.toFixed(1)} s vs hard walls ${wall.toFixed(1)} s (${((soft / wall - 1) * 100).toFixed(1)}%), time spent in run-off ${(offFrac * 100).toFixed(1)}%`);
     if (Math.abs(soft / wall - 1) > 0.1) throw new Error('AI lap times changed by more than 10% with soft boundaries');
   }
+}
+
+// ---- 6. 功能型主武器：電弧連鎖、冷凍光束、音波炮、魚叉鉤 ----
+{
+  // 平坦、超寬的賽道（不會撞牆、沒有坡），所有車直線開
+  const flat = new Track({
+    ...TRACKS[0], halfWidth: 2000, ramps: [], barrels: [], pads: [], shortcuts: [], hazards: [], runoff: undefined, runoffZones: undefined,
+    points: TRACKS[0].points.map(([x, z]): [number, number, number] => [x, z, 0]),
+  });
+  const dt = 1 / 60;
+  type K = import('../src/game/kart').Kart;
+  /** 開火的玩家在原點，目標放在前方 ahead 公尺、左偏 lat 公尺：目標只會直線全油門開（不開火），其他車退出比賽 */
+  const arena = (primary: PrimaryId, lvl: number, spots: [number, number][]) => {
+    const race = new Race(flat, defaultProfile(), 'race', 9);
+    while (race.state === 'countdown') race.step(dt, emptyInput());
+    const k = race.player;
+    const s = flat.samples[0];
+    const h = Math.atan2(s.tx, s.tz), fx = Math.sin(h), fz = Math.cos(h), lx = fz, lz = -fx;
+    const place = (o: K, ahead: number, lat: number) => {
+      o.x = s.x + fx * ahead + lx * lat; o.z = s.z + fz * ahead + lz * lat; o.y = s.y; o.air = 0; o.vy = 0;
+      o.heading = h; o.idx = 0; o.maxSpeedMul = 1; o.accelMul = 1; o.invulnT = 0; o.padT = o.miniT = o.boostT = 0;
+      o.speed = o.topSpeed; o.vx = fx * o.speed; o.vz = fz * o.speed;
+    };
+    place(k, 0, 0);
+    k.primary = primary;
+    k.primaryLvl = lvl;
+    const targets: K[] = [];
+    for (const o of race.karts) {
+      if (o === k) continue;
+      if (targets.length >= spots.length) { o.out = true; continue; }
+      place(o, ...spots[targets.length]);
+      const ai = race.ais.get(o)!;
+      ai.think = () => ({ ...emptyInput(), accel: 1 });
+      ai.rubberBand = () => {};
+      targets.push(o);
+    }
+    /** 目標在固定座標系（起點、車頭方向）裡的橫向位置 */
+    const latOf = (o: K) => (o.x - s.x) * lx + (o.z - s.z) * lz;
+    return { race, k, targets, fx, fz, latOf };
+  };
+
+  // 電弧槍：A > B > C 一路跳（每跳 ×0.6），12 m 外的不跳；Lv.5 多跳一台、跳得更遠
+  const arc = (lvl: number, spots: [number, number][]) => {
+    const { race, targets } = arena('arc', lvl, spots);
+    const hp0 = targets.map((o) => o.hp);
+    race.events.length = 0;
+    race.step(dt, { ...emptyInput(), accel: 1, firePrimary: true });
+    const zap = race.events.find((e) => e.t === 'zap');
+    return { chain: zap?.t === 'zap' ? zap.chain.map((o) => targets.indexOf(o)).join('>') : 'none', lost: targets.map((o, i) => hp0[i] - o.hp) };
+  };
+  const a1 = arc(1, [[15, 0], [25, 3], [34, -3], [50, 0]]);
+  console.log(`arc: chain ${a1.chain}, damage ${a1.lost.map((x) => x.toFixed(1)).join(' / ')}`);
+  if (a1.chain !== '0>1>2') throw new Error('arc should jump A > B > C (the 4th car is too far)');
+  if (!(a1.lost[0] > 0 && Math.abs(a1.lost[1] / a1.lost[0] - 0.6) < 0.02 && Math.abs(a1.lost[2] / a1.lost[0] - 0.36) < 0.02 && a1.lost[3] === 0)) throw new Error('arc chain damage should be ×1, ×0.6, ×0.36 and nothing beyond');
+  const a2 = arc(1, [[15, 0], [27, 6]]);
+  console.log(`arc: second car 13.4 m away -> chain ${a2.chain}`);
+  if (a2.chain !== '0') throw new Error('arc jumped farther than 12 m');
+  const a5 = arc(5, [[15, 0], [27, 6], [38, 2], [48, -2]]);
+  console.log(`arc Lv.5: chain ${a5.chain}`);
+  if (a5.chain !== '0>1>2>3') throw new Error('Lv.5 arc should reach 4 cars and jump 16 m');
+
+  // 冷凍光束：照住約 2 秒凍滿，放開後約 2 秒退冰；結冰時轉不過彎、比較滑、極速降一點
+  {
+    const { race, targets: [t] } = arena('freeze', 1, [[15, 0]]);
+    const inp = { ...emptyInput(), accel: 1, firePrimary: true };
+    let full = -1, thaw = -1;
+    for (let i = 0; i < 150; i++) { race.step(dt, inp); if (full < 0 && t.chill >= 0.99) full = (i + 1) * dt; }
+    inp.firePrimary = false;
+    for (let i = 0; i < 240 && thaw < 0; i++) { race.step(dt, inp); if (t.chill <= 0) thaw = (i + 1) * dt; }
+    console.log(`freeze: fully chilled after ${full.toFixed(2)} s, thawed ${thaw.toFixed(2)} s after release`);
+    if (full < 0 || full > 2.2) throw new Error('freeze beam should fully chill a car in about 2 s');
+    if (thaw < 1.5 || thaw > 2.6) throw new Error('chill should wear off about 2 s after release');
+  }
+  const turn = (chill: number) => {
+    const { race, k } = arena('mg', 1, []);
+    const inp = { ...emptyInput(), accel: 1, steer: 1 };
+    const a0 = Math.atan2(k.vx, k.vz);
+    let slip = 0;
+    for (let i = 0; i < 48; i++) {
+      k.chill = chill;
+      k.chillT = 0;
+      race.step(dt, inp);
+      slip = Math.max(slip, Math.abs(k.slip));
+    }
+    inp.steer = 0;
+    for (let i = 0; i < 180; i++) { k.chill = chill; k.chillT = 0; race.step(dt, inp); }
+    return { dir: wrapAngle(Math.atan2(k.vx, k.vz) - a0) * 57.3, slip: slip * 57.3, v: k.speed / k.topSpeed };
+  };
+  const warm = turn(0), cold = turn(1);
+  console.log(`chill: 0.8 s full lock turns the car ${warm.dir.toFixed(0)}° (max slip ${warm.slip.toFixed(1)}°) vs frozen ${cold.dir.toFixed(0)}° (max slip ${cold.slip.toFixed(1)}°); top speed ${(cold.v * 100).toFixed(0)}%`);
+  if (!(cold.slip > warm.slip * 1.5 && cold.dir < warm.dir * 0.85)) throw new Error('chill should reduce grip (more slide, less turn)');
+  if (cold.v > 0.93 || cold.v < 0.85) throw new Error('chill should lower top speed by about 10%');
+
+  // 音波炮：前方偏左的車被往左推開（跟沒開火比較）
+  const sonic = (fire: boolean) => {
+    const { race, targets: [t], latOf } = arena('sonic', 1, [[9, 1.5]]);
+    const inp = { ...emptyInput(), accel: 1, firePrimary: fire };
+    let pulses = 0;
+    for (let i = 0; i < 66; i++) {
+      race.events.length = 0;
+      race.step(dt, inp);
+      pulses += race.events.filter((e) => e.t === 'pulse').length;
+    }
+    return { lat: latOf(t), pulses, hp: t.maxHp - t.hp };
+  };
+  const s0 = sonic(false), s1 = sonic(true);
+  console.log(`sonic: ${s1.pulses} pulses in 1.1 s pushed the car ${(s1.lat - s0.lat).toFixed(1)} m sideways (damage ${s1.hp.toFixed(1)})`);
+  if (s1.pulses < 2 || s1.lat - s0.lat < 2.5) throw new Error('sonic cannon should push a car sideways');
+
+  // 魚叉鉤：叉住 45 m 外的前車、把自己拉近，時間到（或追上）放開；放開後不再被拉、對方也不再被拖慢
+  const harpoon = (fire: boolean) => {
+    const { race, k, targets: [t], fx, fz } = arena('harpoon', 1, [[45, 0]]);
+    const inp = { ...emptyInput(), accel: 1, firePrimary: fire };
+    const ev: string[] = [];
+    let towed = false, pulled = 0;
+    for (let i = 0; i < 170; i++) {
+      race.events.length = 0;
+      race.step(dt, inp);
+      for (const e of race.events) if (e.t === 'tether') { ev.push(e.on ? 'on' : e.why ?? ''); if (!e.on) inp.firePrimary = false; }
+      if (t.towT > 0) towed = true;
+      if (k.pullSpeed > 0) pulled += dt;
+    }
+    return { gap: (t.x - k.x) * fx + (t.z - k.z) * fz, ev, towed, pulled, pull: k.pullSpeed, tow: t.towT };
+  };
+  const h0 = harpoon(false), h1 = harpoon(true);
+  console.log(`harpoon: gap after 2.8 s ${h1.gap.toFixed(1)} m (without ${h0.gap.toFixed(1)} m), tether ${h1.ev.join(' > ')}, pulled ${h1.pulled.toFixed(2)} s, target slowed ${h1.towed}`);
+  if (h1.ev[0] !== 'on' || h1.ev.length !== 2) throw new Error('harpoon should latch once and then release');
+  if (h0.gap - h1.gap < 10) throw new Error('harpoon should pull the shooter closer');
+  if (!h1.towed || h1.pull !== 0 || h1.tow !== 0) throw new Error('harpoon pull / tow did not end with the tether');
 }
 console.log('SIM OK');
 

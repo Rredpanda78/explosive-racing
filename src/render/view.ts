@@ -16,6 +16,7 @@ import { DamageFx } from './damageFx';
 import { FeelFx, TIER_COLORS } from './feel';
 import { SpeedPass } from './speedPass';
 import { WeaponFx } from './weaponFx';
+import { PrimaryFx } from './primaryFx';
 import { clusterMineMaterial, hexMineGeometry, steelMaterial } from './weaponModels';
 import { KartView } from './kartModel';
 import { Particles } from './particles';
@@ -126,6 +127,8 @@ export class GameView {
   private feel: FeelFx | null = null;
   private dmgFx: DamageFx | null = null;
   private wpnFx: WeaponFx | null = null;
+  /** 功能型主武器（電弧、冷凍、音波、魚叉）的閃電、震波圈、繩子與結霜 */
+  private primFx: PrimaryFx | null = null;
   /** 高畫質電腦版（武器點光源只在這裡開） */
   private hq = false;
   private hazeK = 0;
@@ -305,7 +308,8 @@ export class GameView {
     this.feel = new FeelFx(this.fire, this.smoke, this.lowDetail);
     this.dmgFx = new DamageFx(this.fire, this.smoke, () => this.debris, this.lowDetail, this.shadows);
     this.wpnFx = new WeaponFx(this.fire, this.smoke, this.lowDetail, this.hq);
-    this.scene.add(this.dmgFx.group, this.wpnFx.group);
+    this.primFx = new PrimaryFx(this.fire, this.smoke, this.lowDetail);
+    this.scene.add(this.dmgFx.group, this.wpnFx.group, this.primFx.group);
   }
 
   /** 模型載入完成後呼叫，建立賽道場景與零件池 */
@@ -401,6 +405,7 @@ export class GameView {
     this.punchT0 = -1;
     this.dmgFx?.clear();
     this.wpnFx?.clear();
+    this.primFx?.clear();
     this.speedPass?.set(0, 0, 0.5, 0.5, 0.1, 1, 0);
     if (!race) return;
     for (const k of race.karts) {
@@ -500,7 +505,18 @@ export class GameView {
     const R = Math.random;
     const p = race.player;
     this.wpnFx?.onEvent(e, this.camera.position, p.id);
+    this.primFx?.onEvent(e, race, this.kartViews);
     switch (e.t) {
+      case 'zap':
+        if (e.k === p) this.addShake(0.05);
+        break;
+      case 'pulse':
+        if (e.k === p) this.addShake(0.06);
+        break;
+      case 'tether':
+        if (e.on && (e.k === p || e.v === p)) this.addShake(0.18);
+        else if (!e.on && e.why === 'snap' && e.k === p) this.addShake(0.12);
+        break;
       case 'shot':
         this.kartViews.get(e.k)?.muzzleFlash(e.side);
         f.spawn(e.x, e.y, e.z, e.k.vx, 0, e.k.vz, 0.06, 2.2, 0.8, 1, 0.8, 0.35, 0.9);
@@ -524,6 +540,11 @@ export class GameView {
         if (kv && this.dmgFx) this.dmgFx.hit(e.k, kv, e.by, e.w, e.x, e.y, e.z);
         if (e.w === 'flame') {
           if (e.k === p) this.addShake(0.03);
+          break;
+        }
+        // 功能型主武器的命中效果在 PrimaryFx 裡
+        if (e.w === 'arc' || e.w === 'freeze' || e.w === 'sonic' || e.w === 'harpoon') {
+          if (e.k === p) this.addShake(e.w === 'freeze' ? 0.015 : e.w === 'sonic' ? 0.28 : 0.14);
           break;
         }
         if (e.w === 'laser') {
@@ -814,6 +835,7 @@ export class GameView {
     }
     this.dmgFx?.update(dt, race.karts, this.kartViews, cam);
     this.wpnFx?.update(dt, race.karts, cam, p);
+    this.primFx?.update(dt, race, cam);
 
     // 爆炸桶：引爆後消失，重生前不顯示；即將連鎖引爆時發白光
     for (let i = 0; i < this.barrels.length; i++) {

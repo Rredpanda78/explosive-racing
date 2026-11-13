@@ -4,7 +4,7 @@ import type { Kart, KartInput } from './kart';
 import type { Race } from './race';
 import type { Branch } from './track';
 import { clamp, wrapAngle } from './util';
-import { PRIMARY } from './weapons';
+import { arcJump, PRIMARY } from './weapons';
 
 /** 電腦車手：沿賽道前視點行駛，直線用 N2O，前方有目標就開火，會閃地雷與滾石、偶爾走捷徑。 */
 export class AIController {
@@ -188,14 +188,36 @@ export class AIController {
 
     // 主武器：沒有輔助瞄準，前方很窄的角度內有車才開火（火焰要夠近）
     const P = PRIMARY[k.primary];
-    // 雷射一發就能打爆人，要瞄得很準才開
-    const target = P.kind === 'flame' ? race.pickTarget(k, 0.24, P.range - 2) : P.kind === 'laser' ? race.pickTarget(k, 0.035, 120) : race.pickTarget(k, 0.07, 95);
+    let target: Kart | null;
+    switch (P.kind) {
+      case 'flame': target = race.pickTarget(k, 0.24, P.range - 2); break;
+      // 雷射一發就能打爆人，要瞄得很準才開
+      case 'laser': target = race.pickTarget(k, 0.035, 120); break;
+      // 電弧槍：前面有一群車（目標旁邊還有車可以跳）就開；只有一台的話要夠近才值得
+      case 'arc': {
+        const t = race.pickTarget(k, 0.09, P.range - 2);
+        target = t && (race.crowd(t, arcJump(k.primaryLvl), k) > 0 || Math.hypot(t.x - k.x, t.z - k.z) < 20) ? t : null;
+        break;
+      }
+      // 冷凍光束、音波炮：近距離、正前方的車
+      case 'freeze': target = race.pickTarget(k, 0.05, P.range - 3); break;
+      case 'sonic': target = race.pickTarget(k, 0.3, P.range - 3); break;
+      // 魚叉鉤：在直線上、前方遠處有車（落後一段）才射，用來追上去
+      case 'harpoon': {
+        const t = race.pickTarget(k, 0.045, P.range - 4, 22);
+        target = t && kmax < 0.012 && k.heat < 0.6 && sp > 12 ? t : null;
+        break;
+      }
+      default: target = race.pickTarget(k, 0.07, 95);
+    }
     this.burstT -= dt;
     if (target && this.burstT < -this.pause) {
       this.burstT = this.D.burst[0] + this.rng() * (this.D.burst[1] - this.D.burst[0]) + P.spinUp;
       this.pause = this.D.pause[0] + this.rng() * (this.D.pause[1] - this.D.pause[0]);
     }
     inp.firePrimary = !!target && this.burstT > 0;
+    // 魚叉叉住了：一直按著讓繩子把自己拉過去（追上、斷掉時自然放開）
+    if (P.kind === 'harpoon' && k.tether) inp.firePrimary = true;
 
     // 副武器
     inp.fireSecondary = false;

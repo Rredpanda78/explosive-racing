@@ -14,8 +14,10 @@ const TYPE_STATE = 1;
 const clampI = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)));
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
+/** 旗標：1 甩尾、2 被擊毀、4 按著主武器、8 往左甩、16 坡頂小飛躍、32 護盾展開、64 護盾剛碎、128 魚叉鉤叉住人 */
 export function flagsOf(k: Kart): number {
-  return (k.drifting ? 1 : 0) | (k.dead ? 2 : 0) | (k.netFire ? 4 : 0) | (k.driftDir > 0 ? 8 : 0) | (k.hop ? 16 : 0) | (k.shieldT > 0 ? 32 : 0) | (k.shieldBreakT > 0 ? 64 : 0);
+  return (k.drifting ? 1 : 0) | (k.dead ? 2 : 0) | (k.netFire ? 4 : 0) | (k.driftDir > 0 ? 8 : 0) | (k.hop ? 16 : 0) | (k.shieldT > 0 ? 32 : 0) | (k.shieldBreakT > 0 ? 64 : 0)
+    | (k.tether ? 128 : 0);
 }
 
 export function encodeStates(karts: Kart[], hits: [number, number, number][]): Uint8Array<ArrayBuffer> {

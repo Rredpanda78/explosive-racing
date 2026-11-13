@@ -400,6 +400,12 @@ export class OnlineSession {
         if (this.owns(from, k)) race.remoteSecondary(k, d.p as SecParams);
         break;
       }
+      case 'teth': {
+        // 魚叉鉤叉住了誰（車主判定）：畫面上的繩子照這個畫
+        const k = K[d.k as number], v = K[d.v as number];
+        if (this.owns(from, k) && v) race.remoteTether(k, v);
+        break;
+      }
       case 'kill': {
         const v = K[d.v as number];
         const key = from + ':' + d.id;
@@ -463,6 +469,7 @@ export class OnlineSession {
     race.net = {
       host: this.isHost,
       onSecondary: (k, p) => this.send({ e: 'sec', k: k.netId, p }),
+      onTether: (k, v) => this.send({ e: 'teth', k: k.netId, v: v.netId }),
       onDamage: (v, by, amount) => {
         if (!by) return;
         const key = v.netId + ':' + by.netId;
@@ -523,6 +530,7 @@ export class OnlineSession {
       k.drifting = (fl & 1) !== 0;
       k.driftDir = fl & 8 ? 1 : -1;
       k.netFire = (fl & 4) !== 0;
+      k.netTether = (fl & 128) !== 0;
       k.hop = (fl & 16) !== 0;
       // 車主那邊護盾碎了：這裡也播碎掉的動畫
       if (fl & 64 && k.shieldT > 0) race.shatter(k);

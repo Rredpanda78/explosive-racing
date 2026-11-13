@@ -236,6 +236,7 @@ export class GameAudio {
     if (!p || !active || p.dead) {
       eng.update(0, 0, false, false, false, 0);
       wpn.flame(false, 0);
+      wpn.freeze(false, 0);
       wpn.laserCharge(0, 0);
       this.skidGain.gain.setTargetAtTime(0, t, 0.05);
       this.boostGain.gain.setTargetAtTime(0, t, 0.05);
@@ -246,6 +247,9 @@ export class GameAudio {
     if (kerb > 0) this.rumbleLfo.frequency.setTargetAtTime(clamp(Math.abs(p.speed) / 2.5, 4, 22), t, 0.05);
     const kind = PRIMARY[p.primary].kind;
     wpn.flame(p.firing > 0 && kind === 'flame', 1);
+    wpn.freeze(p.firing > 0 && kind === 'freeze', 1);
+    // 魚叉拉著繩子：收線的棘輪聲
+    wpn.reel(!!p.tether, 1);
     // 雷射蓄力：音高往上爬的充能聲
     wpn.laserCharge(kind === 'laser' ? Math.min(1, p.charge / LASER_CHARGE) : 0, 1);
     // 被導彈鎖定：急促的警告嗶聲（內部限制每 0.2 秒一聲）
@@ -326,9 +330,33 @@ export class GameAudio {
         if (v >= 0.02) wpn.rail(v);
         break;
       }
+      case 'zap': {
+        // 電弧放電：電到自己也是全音量
+        const v = e.k === p || e.chain.includes(p) ? 1 : near(e.x, e.z, 90) * 0.55;
+        if (v >= 0.02) wpn.zap(v, e.chain.length);
+        break;
+      }
+      case 'pulse': {
+        const v = e.k === p ? 1 : near(e.x, e.z, 80) * 0.6;
+        if (v >= 0.02) wpn.pulse(v);
+        break;
+      }
+      case 'hook': {
+        const v = e.k === p ? 1 : near(e.x, e.z, 80) * 0.5;
+        if (v >= 0.02) wpn.hook(v);
+        break;
+      }
+      case 'tether': {
+        const v = e.k === p || e.v === p ? 1 : near(e.v.x, e.v.z, 80) * 0.5;
+        if (v < 0.02) break;
+        if (e.on) wpn.latch(v);
+        else wpn.snap(v, e.why === 'snap');
+        break;
+      }
       case 'hit': {
-        // 火焰是連續判定，命中聲要稀疏一點
-        if (e.w === 'flame' && Math.random() > 0.25) break;
+        // 火焰、冷凍光束是連續判定，命中聲要稀疏一點；電弧的聲音在放電那一下
+        if ((e.w === 'flame' || e.w === 'freeze') && Math.random() > 0.25) break;
+        if (e.w === 'arc' && e.k !== p) break;
         if (e.k === p) wpn.hit(1, true);
         else if (e.by === p) wpn.hit(1, false);
         break;
