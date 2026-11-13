@@ -4,16 +4,16 @@ import { KILL_REWARD, PAYOUT, STREAK_BONUS } from './game/config';
 import { emptyInput } from './game/kart';
 import type { NetRacer, OnlineSetup } from './game/net';
 import { Race, type RaceMode } from './game/race';
-import { OnlineSession, type StartMsg } from './net/online';
+import type { OnlineSession, StartMsg } from './net/online';
 import { cleanCode, ERR_TEXT, fetchRooms, newRoomCode } from './net/room';
 import { loadProfile, saveProfile } from './game/save';
 import { AccountClient, SIGNUP_GIFT } from './net/account';
-import { openAccountPanel, openConflictDialog } from './ui/accountPanel';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
 import { setupMobileViewport } from './mobile';
-import { CAR_MODELS, DEBRIS_MODELS, KART_MODELS, LANDMARK_MODELS, loadModels, PROP_MODELS } from './render/assets';
-import { FOREST_MODELS } from './render/forest';
+import { CAR_IDS } from './game/cars';
+import { loadModels, takeMissing } from './render/assets';
+import { carsLoaded, loadCars, prefetchTracks, trackModels } from './render/preload';
 import { GameView } from './render/view';
 import { Haptics } from './haptics';
 import { applyLayout, LAYOUT_IDS, loadSettings, saveSettings, type Settings } from './settings';
@@ -117,8 +117,24 @@ function setTouchUI(on: boolean): void {
   touchRoot.classList.toggle('hidden', !on || !race || resultsShown);
 }
 
+/** 等場景與車款模型都載完才開賽（車子在選單出現後就在背景載入，通常按下開始時早就載好了） */
+let waitingAssets = false;
 function startRace(m?: RaceMode, seed?: number, setup?: OnlineSetup): void {
   if (!ready) return;
+  if (sceneTrack !== track || !carsLoaded(CAR_IDS)) {
+    if (waitingAssets) return;
+    waitingAssets = true;
+    if (!setup && screens.current === 'menu') {
+      screens.loadProgress(0);
+      screens.menu(true);
+    }
+    const t = track;
+    void Promise.all([sceneTrack === t || buildScene(t), loadCars(CAR_IDS, (f) => screens.loadProgress(f))]).then(() => {
+      waitingAssets = false;
+      startRace(m, seed, setup);
+    });
+    return;
+  }
   if (m) mode = m;
   audio.init();
   audio.setMusic('race');
@@ -151,16 +167,44 @@ function startRace(m?: RaceMode, seed?: number, setup?: OnlineSetup): void {
   setTouchUI(input.touchMode);
 }
 
-/** 在主選單切換地圖：重建場景，背景會開始預覽新地圖 */
+/** 建場景的順序號：連續換地圖時，只有最後一次載完的才建場景 */
+let sceneSeq = 0;
+/** 目前畫面上已經建好的地圖場景 */
+let sceneTrack: Track | null = null;
+/**
+ * 先載入這張地圖要用的模型再建場景。建的時候發現還缺模型（例如新賽道用了 preload.ts 沒登記的地標）
+ * 就補載再重建一次，所以新地圖不會少東西。回傳 false = 被之後的換地圖取代了。
+ */
+async function buildScene(t: Track, onProgress?: (f: number) => void): Promise<boolean> {
+  const seq = ++sceneSeq;
+  await loadModels(trackModels(t.def), onProgress);
+  if (seq !== sceneSeq) return false;
+  takeMissing();
+  view.setTrack(t);
+  sceneTrack = t;
+  const miss = takeMissing();
+  if (miss.length) {
+    await loadModels(miss);
+    if (seq !== sceneSeq) return false;
+    view.setTrack(t);
+  }
+  return true;
+}
+
+/** 在主選單切換地圖：重建場景，背景會開始預覽新地圖（模型還沒載入時先顯示載入條） */
 function selectTrack(i: number): void {
   if (race || !ready || i === trackIndex || !TRACKS[i]) return;
   trackIndex = i;
   track = new Track(TRACKS[i]);
   profile.track = TRACKS[i].id;
   saveProfile(profile);
-  view.setTrack(track);
   hud.setTrack(track);
-  screens.menu();
+  screens.loadProgress(0);
+  screens.menu(true);
+  // 模型都已載入時只經過 microtask 就建好（畫面不會閃一下載入條）
+  void buildScene(track, (f) => screens.loadProgress(f)).then((ok) => {
+    if (ok && screens.current === 'menu') screens.menu();
+  });
 }
 
 function toMenu(): void {
@@ -185,6 +229,10 @@ function setPaused(p: boolean): void {
     input.clear();
   }
 }
+
+/** 線上對戰與帳號面板的程式碼用到才下載（不擋選單出現；Vite 會切成獨立、檔名含雜湊的檔案） */
+const loadOnline = () => import('./net/online');
+const loadAccountPanel = () => import('./ui/accountPanel');
 
 const screens = new Screens(profile, trackList, () => trackIndex, {
   start: startRace,
@@ -211,7 +259,7 @@ const screens = new Screens(profile, trackList, () => trackIndex, {
     if (!race) audio.setMusic(open ? 'race' : 'menu');
   },
   online: () => openOnline(),
-  account: () => openAccountPanel(acct, () => { if (screens.current === 'menu' || screens.current === 'none') screens.menu(!ready); }),
+  account: () => void loadAccountPanel().then((m) => m.openAccountPanel(acct, () => { if (screens.current === 'menu' || screens.current === 'none') screens.menu(!ready); })),
   createRoom: (name) => {
     setPlayerName(name);
     enterRoom(newRoomCode(), true);
@@ -243,7 +291,7 @@ screens.settings = settings;
 const acct = new AccountClient();
 // 比賽中、線上房間裡不要換掉進度（比賽結束會用記憶體裡的舊進度蓋回去）
 acct.canApply = () => !race && !online && !bgRace && screens.current === 'menu';
-acct.onConflict = (local, cloud) => openConflictDialog(local, cloud);
+acct.onConflict = (local, cloud) => loadAccountPanel().then((m) => m.openConflictDialog(local, cloud));
 acct.onRegistered = () => {
   // 新帳號禮：加進這台的進度（接著會同步上雲端）
   profile.cash += SIGNUP_GIFT;
@@ -269,6 +317,8 @@ acct.start();
 function openOnline(msg = '', code = ''): void {
   screens.onlineMenu(playerName() || '車手' + Math.floor(10 + Math.random() * 90), msg, code);
   pollRooms();
+  // 連線的程式先在背景下載好，按下開房／加入時就不用等
+  void loadOnline();
 }
 
 /** 公開房間列表：開著線上對戰畫面時每 4 秒更新一次 */
@@ -283,9 +333,17 @@ function pollRooms(): void {
   });
 }
 
+/** 進房間的順序號：連點兩次只開最後一個 */
+let roomSeq = 0;
 function enterRoom(code: string, create: boolean): void {
+  const seq = ++roomSeq;
+  void loadOnline().then(({ OnlineSession }) => {
+    if (seq === roomSeq) openRoom(new OnlineSession(myRacer, { track: trackIndex, mode: 'race', aiFill: true, difficulty: profile.difficulty, public: true }), code, create);
+  });
+}
+
+function openRoom(s: OnlineSession, code: string, create: boolean): void {
   online?.leave();
-  const s = new OnlineSession(myRacer, { track: trackIndex, mode: 'race', aiFill: true, difficulty: profile.difficulty, public: true });
   online = s;
   s.onChange = () => {
     if (online !== s) return;
@@ -329,9 +387,9 @@ function startOnlineRace(s: OnlineSession, msg: StartMsg): void {
   if (ti !== trackIndex) {
     trackIndex = ti;
     track = new Track(TRACKS[ti]);
-    view.setTrack(track);
     hud.setTrack(track);
   }
+  // 場景或車款模型還沒載入時，startRace 會等載完再開始
   startRace(msg.cfg.mode, msg.seed, s.setup(msg));
 }
 
@@ -589,14 +647,23 @@ requestAnimationFrame(frame);
 // 邀請連結 ?room=CODE：載入完成後直接打開加入房間的畫面
 const inviteCode = cleanCode(new URLSearchParams(location.search).get('room') ?? '');
 
-// 先載入模型再建立場景；個別模型載入失敗時會自動改用內建幾何
-void loadModels([...CAR_MODELS, ...LANDMARK_MODELS, ...KART_MODELS, ...DEBRIS_MODELS, ...PROP_MODELS, ...FOREST_MODELS], (f) => screens.loadProgress(f)).then(() => {
-  view.setTrack(track);
+// 先載入這張地圖的模型再建立場景（個別模型載入失敗時會自動改用內建幾何）；
+// 選單出現後才在背景載入車子（自己的車先），最後把其他地圖的模型抓進瀏覽器快取
+void buildScene(track, (f) => screens.loadProgress(f)).then(() => {
   ready = true;
+  performance.mark('menu-ready');
   if (screens.current === 'menu') {
     if (inviteCode.length >= 4) openOnline('', inviteCode);
     else screens.menu();
   }
+  void loadCars([profile.kart])
+    .then(() => loadCars(CAR_IDS))
+    .then(() => {
+      // 車庫、線上房間的車款圖要等模型載入才拍得出來
+      if (screens.current === 'garage') screens.garage();
+      else if (screens.current === 'room' && online) screens.room(online);
+      return prefetchTracks(TRACKS);
+    });
 });
 
 // 方便除錯與之後的自動化測試

@@ -6,6 +6,7 @@ import { makeTerrain } from '../game/terrain';
 import { PAD_HALF_WIDTH, PAD_LENGTH, type Branch, type Sample, type SceneRange, type Track } from '../game/track';
 import { mulberry32 } from '../game/util';
 import { makeInstanced, makeLandmark, makeProp } from './assets';
+import { batchWorld } from './batch';
 import { applyTerrainDetail, grassTufts, roadDetailMaterial } from './detail';
 import { buildForest, hasForest } from './forest';
 import { buildRunoff, runoffPad } from './runoff';
@@ -1379,7 +1380,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     root.add(g);
   }
 
-  return {
+  const world: World = {
     group: root,
     terrainH,
     update(dt, time, camera) {
@@ -1394,4 +1395,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       }
     },
   };
+  // 靜態合併：不會動的網格依材質合成少數幾個（大幅減少 draw call）；update 裡會動的東西自動排除（見 batch.ts）
+  batchWorld(world);
+  return world;
 }

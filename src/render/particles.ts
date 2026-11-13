@@ -59,6 +59,7 @@ export class Particles {
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aColor', new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
+    this.geo.setDrawRange(0, 0);
     this.mat = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -94,6 +95,8 @@ export class Particles {
 
   update(dt: number): void {
     const { pos, vel, life, maxLife, size, col } = this;
+    // 只畫、只上傳還活著的那一段（之前每幀都上傳整個池子：兩個池子約 90 KB）
+    let lo = -1, hi = -1;
     for (let i = 0; i < this.max; i++) {
       if (life[i] <= 0) continue;
       life[i] -= dt;
@@ -102,6 +105,8 @@ export class Particles {
         col[i * 4 + 3] = 0;
         continue;
       }
+      if (lo < 0) lo = i;
+      hi = i;
       const d = Math.max(0, 1 - this.drag[i] * dt);
       vel[i * 3] *= d; vel[i * 3 + 2] *= d;
       vel[i * 3 + 1] = vel[i * 3 + 1] * d - this.grav[i] * dt;
@@ -114,14 +119,29 @@ export class Particles {
       size[i] = this.s0[i] + (this.s1[i] - this.s0[i]) * t;
       col[i * 4 + 3] = this.a0[i] * (1 - t * t);
     }
-    this.geo.attributes.position.needsUpdate = true;
-    this.geo.attributes.aColor.needsUpdate = true;
-    this.geo.attributes.aSize.needsUpdate = true;
+    const g = this.geo;
+    if (lo < 0) {
+      // 沒有粒子：連 draw call 都省掉
+      g.setDrawRange(0, 0);
+      return;
+    }
+    const n = hi - lo + 1;
+    g.setDrawRange(lo, n);
+    this.upload(g.attributes.position as THREE.BufferAttribute, lo, n, 3);
+    this.upload(g.attributes.aColor as THREE.BufferAttribute, lo, n, 4);
+    this.upload(g.attributes.aSize as THREE.BufferAttribute, lo, n, 1);
+  }
+
+  private upload(a: THREE.BufferAttribute, lo: number, n: number, size: number): void {
+    a.clearUpdateRanges();
+    a.addUpdateRange(lo * size, n * size);
+    a.needsUpdate = true;
   }
 
   clear(): void {
     this.life.fill(0);
     this.size.fill(0);
     this.col.fill(0);
+    this.geo.setDrawRange(0, 0);
   }
 }

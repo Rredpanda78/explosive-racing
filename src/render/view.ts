@@ -23,6 +23,7 @@ import { skyEnvironment } from './sky';
 import { THEMES, type Theme } from './themes';
 import { Weather, type WeatherKind } from './weather';
 import { buildWorld, type World } from './world';
+import { batchKart, disposeBatched } from './batch';
 import type { Quality } from '../settings';
 
 /** 每張地圖的天氣 */
@@ -372,6 +373,7 @@ export class GameView {
     for (const kv of this.kartViews.values()) {
       this.scene.remove(kv.group);
       kv.dispose();
+      disposeBatched(kv.group);
     }
     this.kartViews.clear();
     for (const b of this.barrels) this.scene.remove(b);
@@ -407,6 +409,8 @@ export class GameView {
       // 線上比賽：其他玩家（不含電腦車手）頭上顯示名字
       const label = race.online && !k.isPlayer && !k.bot ? k.name : undefined;
       const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, secondaryLvl: k.secondaryLvl, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery], label }, this.shadows, { rich: this.rich, lights: this.quality !== 'low', night: this.theme.night });
+      // 車身上不會動的零件（武器外殼等）合成幾個網格：每台車從四、五十個 draw call 降到十幾個
+      batchKart(kv);
       this.kartViews.set(k, kv);
       this.scene.add(kv.group);
       kv.update(k, 0);

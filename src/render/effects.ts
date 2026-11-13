@@ -52,10 +52,14 @@ export class SkidMarks {
     const d2 = dx * dx + dz * dz;
     if (d2 < 0.3) return;
     if (d2 < 30) {
-      const o = this.cursor * 12;
-      this.pos.set([p.ax, p.ay, p.az, p.bx, p.by, p.bz, ax, y, az, bx, y, bz], o);
+      const o = this.cursor * 12, P = this.pos;
+      P[o] = p.ax; P[o + 1] = p.ay; P[o + 2] = p.az; P[o + 3] = p.bx; P[o + 4] = p.by; P[o + 5] = p.bz;
+      P[o + 6] = ax; P[o + 7] = y; P[o + 8] = az; P[o + 9] = bx; P[o + 10] = y; P[o + 11] = bz;
       this.cursor = (this.cursor + 1) % this.max;
-      this.geo.attributes.position.needsUpdate = true;
+      // 只上傳新加的這一段（整個緩衝區有 77 KB）
+      const a = this.geo.attributes.position as THREE.BufferAttribute;
+      a.addUpdateRange(o, 12);
+      a.needsUpdate = true;
     }
     p.ax = ax; p.ay = y; p.az = az; p.bx = bx; p.by = y; p.bz = bz;
   }
@@ -64,7 +68,9 @@ export class SkidMarks {
     this.pos.fill(0);
     this.cursor = 0;
     this.last.clear();
-    this.geo.attributes.position.needsUpdate = true;
+    const a = this.geo.attributes.position as THREE.BufferAttribute;
+    a.clearUpdateRanges();
+    a.needsUpdate = true;
   }
 }
 
@@ -299,7 +305,8 @@ export class Trails {
   }
 
   update(): void {
-    const P = this.pts, H = this.hist;
+    const P = this.pts, H = this.hist, pos = this.pos, col = this.col;
+    let any = false;
     for (let r = 0; r < this.n; r++) {
       const h = this.head[r];
       for (let i = 0; i < P; i++) {
@@ -307,13 +314,21 @@ export class Trails {
         const j = (r * P + ((h - i + P) % P)) * 10;
         const fade = 1 - i / (P - 1);
         const k = H[j + 3] * fade;
+        if (k > 0) any = true;
         const w = this.width * (0.2 + 0.8 * fade);
         const ox = H[j + 7] * w, oy = H[j + 8] * w, oz = H[j + 9] * w;
-        const v = (r * P + i) * 2;
-        this.pos.set([H[j] + ox, H[j + 1] + oy, H[j + 2] + oz, H[j] - ox, H[j + 1] - oy, H[j + 2] - oz], v * 3);
-        this.col.set([H[j + 4] * k, H[j + 5] * k, H[j + 6] * k, H[j + 4] * k * 0.5, H[j + 5] * k * 0.5, H[j + 6] * k * 0.5], v * 3);
+        // 直接寫入（不要每個點建一個暫時陣列：每幀兩千多個）
+        const o = (r * P + i) * 6;
+        pos[o] = H[j] + ox; pos[o + 1] = H[j + 1] + oy; pos[o + 2] = H[j + 2] + oz;
+        pos[o + 3] = H[j] - ox; pos[o + 4] = H[j + 1] - oy; pos[o + 5] = H[j + 2] - oz;
+        const cr = H[j + 4] * k, cg = H[j + 5] * k, cb = H[j + 6] * k;
+        col[o] = cr; col[o + 1] = cg; col[o + 2] = cb;
+        col[o + 3] = cr * 0.5; col[o + 4] = cg * 0.5; col[o + 5] = cb * 0.5;
       }
     }
+    // 全部都是 0（沒人在噴、沒人在甩）時不畫也不上傳
+    this.mesh.visible = any;
+    if (!any) return;
     (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     (this.geo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
   }
