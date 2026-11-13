@@ -54,9 +54,13 @@ for (const s of [A, B]) {
 }
 A.start();
 const dt = 1 / 60;
+// drop：比賽中 B 斷線 8 秒再連回（伺服器保留座位），期間兩邊的訊息都丟掉
+const DROP = process.argv.includes('drop');
+let dropAt = -1, dropping = false;
 const deliver = () => {
   while (queue.length && queue[0].at <= simNow) {
     const q = queue.shift()!;
+    if (dropping) continue;
     const bm = q.m as { bin?: ArrayBuffer; from?: number };
     if (bm.bin) (q.to.client as unknown as { onBinary: (f: number, b: ArrayBuffer) => void }).onBinary(bm.from!, bm.bin);
     else H(q.to, q.m);
@@ -66,6 +70,17 @@ let maxErr = 0, errSum = 0, errN = 0;
 const evCount: Record<string, number> = {};
 for (let step = 0; step < 60 * 260; step++) {
   simNow += 1000 * dt;
+  const r0 = races.get(A);
+  if (DROP && r0 && r0.time > 40 && dropAt < 0) {
+    dropAt = step;
+    dropping = true;
+    H(A, { t: 'away', pid: 2 });
+  }
+  if (DROP && dropAt >= 0 && step === dropAt + 60 * 8) {
+    dropping = false;
+    H(A, { t: 'back', pid: 2, info: info('B', 'kart-oodi', 'mg', 'missile')() });
+    H(B, { t: 'welcome', pid: 2, host: 1, peers: [{ pid: 1, info: info('A', 'kart-oobi', 'laser', 'grenade')() }], rejoin: true, started: true });
+  }
   deliver();
   for (const s of [A, B]) {
     const r = races.get(s);
@@ -103,6 +118,8 @@ console.log('B sees ' + row(rb));
 console.log('A results: ' + ra.results().map((k) => k.name).join(' > '));
 console.log('B results: ' + rb.results().map((k) => k.name).join(' > '));
 console.log(Object.entries(evCount).filter(([k]) => /launch|kill|respawn|finish|elim|dmg|blast/.test(k)).sort().map(([k, v]) => `${k}=${v}`).join(' '));
+const bots = (r: InstanceType<typeof Race>) => r.karts.filter((k) => k.bot).map((k) => k.owner).join('');
+console.log(`AI owners  A sees ${bots(ra)}  B sees ${bots(rb)}${bots(ra) === bots(rb) ? '  (agree)' : '  (DISAGREE)'}`);
 let mism = 0;
 for (let i = 0; i < ra.karts.length; i++) if (ra.karts[i].kills !== rb.karts[i].kills || ra.karts[i].deaths !== rb.karts[i].deaths) mism++;
 console.log(mism ? `kill/death mismatch on ${mism} karts` : 'kills/deaths consistent');

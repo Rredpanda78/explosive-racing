@@ -366,14 +366,15 @@ export class Screens {
     const l = s.link(pid);
     if (l.away) return '<i class="away">斷線中…</i>';
     const ms = l.rtt ? ` ${Math.round(l.rtt)} ms` : '';
-    return l.direct ? `<i class="direct">直連</i>${ms}` : `<i class="relay">中轉</i>${ms}`;
+    const name = { direct: '直連', turn: 'TURN 中轉', peer: '隊友轉送', server: '伺服器中轉' }[l.path];
+    return `<i class="${l.path === 'direct' ? 'direct' : l.path === 'server' ? 'relay' : 'turn'}">${name}</i>${ms}`;
   }
 
   private routeText(s: OnlineSession): string {
     const n = s.list.filter((p) => p.pid !== s.me && !s.away.has(p.pid));
-    const d = n.filter((p) => s.link(p.pid).direct).length;
+    const d = n.filter((p) => s.link(p.pid).path !== 'server').length;
     const via = s.colo ? `伺服器入口 ${esc(s.colo)}` : '伺服器';
-    return n.length ? `${via}・直連 ${d}/${n.length} 人（其他人經伺服器中轉）` : `${via}・等其他人加入`;
+    return n.length ? `${via}・不經伺服器 ${d}/${n.length} 人` : `${via}・等其他人加入`;
   }
 
   /** 只更新連線狀況的小字（每 2 秒量一次延遲，不重畫整頁） */

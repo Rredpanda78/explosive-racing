@@ -283,8 +283,10 @@ function backToRoom(): void {
   if (race) {
     // 房主：其他人還在跑就讓比賽在背景繼續（電腦車手、淘汰判定都在房主這裡）
     const r = race;
-    const busy = r.mode === 'elim' ? r.aliveCount > 1 : r.karts.some((k) => !k.finished && !k.out);
-    bgRace = s.isHost && busy ? r : null;
+    // 自己還負責跑沒跑完的電腦車手，或（淘汰賽）房主要繼續判定淘汰
+    const busy = r.mode === 'elim' ? r.aliveCount > 1 && (s.isHost || r.karts.some((k) => k.bot && !k.remote && !k.out))
+      : r.karts.some((k) => k.bot && !k.remote && !k.finished && !k.out);
+    bgRace = busy ? r : null;
     if (bgRace) s.backToLobby(true);
     race = null;
     paused = false;

@@ -505,3 +505,4 @@ body.touch #missions { top: calc(33 * var(--u)); }
 .lk i.relay { background: rgba(243,234,213,.2); }
 .lk i.away { background: var(--coral); color: var(--cream); }
 .net-route { font-size: clamp(11px, 1.3vw, 13px); font-weight: 700; opacity: .75; }
+.lk i.turn { background: #3b6fd6; color: #fff; }

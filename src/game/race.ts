@@ -197,8 +197,13 @@ export class Race {
         if (isP) player = k;
       } else {
         k.aiAssist = true;
-        // 連線時電腦車手由房主的電腦控制
-        k.remote = !!setup && !setup.host;
+        k.bot = true;
+        // 連線時電腦車手分給幾位連線最好的玩家跑（aiOwners 輪流分）
+        if (setup) {
+          const owners = setup.aiOwners.length ? setup.aiOwners : [setup.racers[0]?.pid ?? setup.me];
+          k.owner = owners[(aiNo - 1) % owners.length];
+          k.remote = k.owner !== setup.me;
+        }
         k.car = CAR_IDS[Math.floor(rng() * CAR_IDS.length)];
         k.primary = PRIMARY_IDS[Math.floor(rng() * PRIMARY_IDS.length)];
         k.secondary = SECONDARY_IDS[Math.floor(rng() * SECONDARY_IDS.length)];
@@ -446,8 +451,16 @@ export class Race {
     if (by.isPlayer) this.events.push({ t: 'dmg', k: v, by, amount, fatal: false });
   }
 
-  /** 別人的車被擊毀（由車主的電腦判定） */
-  remoteKill(v: Kart, by: Kart | null): void {
+  /**
+   * 別人的車被擊毀（由車主的電腦判定）。
+   * countOnly：斷線期間補送來的舊事件（例如電腦車手中途換人跑）——只算擊毀數，不去動現在還在跑的車
+   */
+  remoteKill(v: Kart, by: Kart | null, countOnly = false): void {
+    if (countOnly) {
+      v.deaths++;
+      if (by && by !== v) by.kills++;
+      return;
+    }
     if (v.out) return;
     if (!v.dead) {
       v.dead = true;
@@ -492,20 +505,17 @@ export class Race {
     if (this.mode === 'elim' && this.aliveCount === 1 && !this.player.out) this.finish(this.player);
   }
 
-  /** 不再是房主（例如斷線回來後房主已經換人）：電腦車手交給新房主 */
-  releaseAI(): void {
-    if (!this.online) return;
-    for (const k of this.karts) if (k.owner === 0 && !k.isPlayer) k.remote = true;
-  }
-
-  /** 房主換人：新房主接手電腦車手 */
-  takeOverAI(): void {
-    for (const k of this.karts) {
-      if (k.owner !== 0 || !k.remote) continue;
-      k.remote = false;
+  /** 連線：換人跑這台電腦車手（me = 自己的玩家編號）。接手時從目前顯示的位置繼續開 */
+  setBotOwner(k: Kart, owner: number, me: number): void {
+    if (!k.bot || k.owner === owner) return;
+    const wasRemote = k.remote;
+    k.owner = owner;
+    k.remote = owner !== me;
+    if (wasRemote && !k.remote) {
       k.spinVel = 0;
       k.air = 0;
       k.vy = 0;
+      k.yawRate = 0;
     }
   }
 

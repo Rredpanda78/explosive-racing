@@ -27,6 +27,8 @@ export interface OnlineSetup {
   host: boolean;
   /** 空位補電腦車手（補滿 8 台） */
   aiFill: boolean;
+  /** 電腦車手分給哪幾位玩家的電腦跑（連線最好的最多 3 位，第 i 台電腦車手給 aiOwners[i % n]） */
+  aiOwners: number[];
   difficulty: DifficultyId;
 }
 

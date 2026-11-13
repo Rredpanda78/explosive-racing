@@ -3,7 +3,7 @@ import type { Kart } from '../game/kart';
 import type { NetRacer, OnlineSetup, SecParams } from '../game/net';
 import type { Race, RaceMode } from '../game/race';
 import { clamp, lerp, lerpAngle } from '../game/util';
-import { Mesh, type RtcSignal } from './mesh';
+import { Mesh, type Path, type RtcSignal } from './mesh';
 import { decodeStates, encodeStates, type Pack } from './pack';
 import { RoomClient, type ServerMsg } from './room';
 
@@ -20,6 +20,8 @@ export interface StartMsg {
   cfg: RoomConfig;
   seed: number;
   racers: NetRacer[];
+  /** 負責跑電腦車手的玩家（連線最好的最多 3 位） */
+  ai?: number[];
 }
 
 /** 狀態同步：每秒 20 次；遠端的車晚 110 毫秒顯示（在兩筆資料之間內插），再沿弧線外推回「現在」 */
@@ -31,7 +33,7 @@ const PING_MS = 2000;
 interface Snap { t: number; a: Pack }
 
 /** 跟一位玩家之間的連線狀況（介面顯示用） */
-export interface LinkInfo { direct: boolean; rtt: number; away: boolean }
+export interface LinkInfo { path: Path; direct: boolean; rtt: number; away: boolean }
 
 /**
  * 一次連線：房間名單、房主設定，比賽中同步每台車的狀態與事件。
@@ -65,14 +67,22 @@ export class OnlineSession {
   private lastSend = 0;
   private rtt = new Map<number, number>();
   private pingTimer = 0;
+  /** 擊毀、完賽事件的紀錄：有人斷線回來時補送給他（id 用來去掉重複） */
+  private evSeq = 0;
+  private evLog: Record<string, unknown>[] = [];
+  private seen = new Set<string>();
+  /** 這場負責跑電腦車手的玩家（也是優先的轉送人） */
+  aiOwners: number[] = [];
 
   constructor(info: () => Omit<NetRacer, 'pid'>, cfg: RoomConfig) {
     this.info = info;
     this.cfg = cfg;
     this.mesh = new Mesh(this.client, () => this.me, (from, d) => this.relayed(from, d as { e: string }), (from, b) => this.states(from, b));
     this.mesh.onStatus = () => this.onLinks();
+    this.mesh.rttOf = (pid) => this.rtt.get(pid) ?? 300;
+    this.mesh.preferred = (pid) => this.aiOwners.includes(pid);
     this.client.onMsg = (m) => this.handle(m);
-    this.client.onBinary = (from, b) => this.states(from, b);
+    this.client.onBinary = (from, b) => this.mesh.bin(from, b);
     this.client.onReconnecting = () => {
       this.mesh.dropAll();
       this.onChange();
@@ -105,13 +115,52 @@ export class OnlineSession {
   }
 
   link(pid: number): LinkInfo {
-    return { direct: this.mesh.direct(pid), rtt: this.rtt.get(pid) ?? 0, away: this.away.has(pid) };
+    return { path: this.mesh.route(pid).path, direct: this.mesh.direct(pid), rtt: this.rtt.get(pid) ?? 0, away: this.away.has(pid) };
   }
 
-  /** 跟這台車的車主之間的延遲（電腦車手看房主） */
+  /** 跟這台車的車主之間的延遲（電腦車手看負責跑它的人） */
   private ownerRtt(k: Kart): number {
     const pid = k.owner || this.hostPid;
     return this.rtt.get(pid) ?? this.client.rtt;
+  }
+
+  /**
+   * 選負責跑電腦車手的人：連得上的人越多越好，延遲越低越好，最多 3 位。
+   * 他們同時也是隊友轉送的優先人選（「主力」玩家）
+   */
+  private pickAiOwners(players: number[]): number[] {
+    const score = (pid: number) => {
+      const links = pid === this.me ? this.mesh.myLinks().length : this.mesh.linksOf(pid);
+      const rtt = pid === this.me ? 0 : this.rtt.get(pid) ?? 300;
+      return links * 1000 - rtt;
+    };
+    return [...players].sort((a, b) => score(b) - score(a) || a - b).slice(0, 3);
+  }
+
+  private online(pid: number): boolean {
+    return pid === this.me || (this.peers.has(pid) && !this.away.has(pid));
+  }
+
+  /** 房主：負責跑電腦車手的人斷線或離開了，把他的電腦車手分給還在線的人 */
+  private rebalanceBots(): void {
+    const r = this.race;
+    if (!r || !this.isHost) return;
+    const owners = this.aiOwners.filter((p) => this.online(p));
+    if (!owners.length) owners.push(this.me);
+    let i = 0, changed = false;
+    for (const k of r.karts) {
+      if (!k.bot || k.out || this.online(k.owner)) continue;
+      r.setBotOwner(k, owners[i++ % owners.length], this.me);
+      changed = true;
+    }
+    if (changed) this.sendBots();
+  }
+
+  /** 房主：告訴大家（或某人）每台電腦車手現在由誰跑 */
+  private sendBots(to?: number[]): void {
+    const r = this.race;
+    if (!r) return;
+    this.send({ e: 'ai', m: r.karts.filter((k) => k.bot).map((k) => [k.netId, k.owner]) }, to);
   }
 
   open(code: string, create: boolean): void {
@@ -152,13 +201,15 @@ export class OnlineSession {
   /** 房主按開始 */
   start(): void {
     if (!this.isHost) return;
-    const msg: StartMsg = { cfg: { ...this.cfg }, seed: Math.floor(Math.random() * 2 ** 31), racers: this.list.filter((p) => !this.away.has(p.pid)) };
+    const racers = this.list.filter((p) => !this.away.has(p.pid));
+    const msg: StartMsg = { cfg: { ...this.cfg }, seed: Math.floor(Math.random() * 2 ** 31), racers, ai: this.pickAiOwners(racers.map((p) => p.pid)) };
     this.client.send({ t: 'start', d: msg });
     this.onStart(msg);
   }
 
   setup(msg: StartMsg): OnlineSetup {
-    return { racers: msg.racers, me: this.me, host: this.isHost, aiFill: msg.cfg.aiFill, difficulty: msg.cfg.difficulty };
+    this.aiOwners = msg.ai?.length ? msg.ai : [this.hostPid];
+    return { racers: msg.racers, me: this.me, host: this.isHost, aiFill: msg.cfg.aiFill, aiOwners: this.aiOwners, difficulty: msg.cfg.difficulty };
   }
 
   /** 比賽完回到房間；房主回去時伺服器會重新開放加入 */
@@ -177,7 +228,10 @@ export class OnlineSession {
     if (this.pingTimer) return;
     this.pingTimer = window.setInterval(() => {
       const now = performance.now();
-      for (const pid of this.others()) this.send({ e: 'pi', t: now }, [pid]);
+      const others = this.others();
+      for (const pid of others) this.send({ e: 'pi', t: now }, [pid]);
+      // 告訴大家我跟誰連得上（大家據此決定請誰轉送）
+      if (others.length) this.send({ e: 'lk', l: this.mesh.myLinks() });
     }, PING_MS);
   }
 
@@ -186,13 +240,12 @@ export class OnlineSession {
     this.pingTimer = 0;
   }
 
-  /** 房主換人：新房主接手電腦車手，舊房主（回來了）放手 */
+  /** 房主換人：新房主接手淘汰判定，並把不在線的人的電腦車手分出去 */
   private hostChanged(): void {
     const r = this.race;
     if (!r?.net) return;
     r.net.host = this.isHost;
-    if (this.isHost) r.takeOverAI();
-    else r.releaseAI();
+    this.rebalanceBots();
   }
 
   private handle(m: ServerMsg): void {
@@ -204,6 +257,7 @@ export class OnlineSession {
           this.onClosed('closed');
           return;
         }
+        if (m.rejoin && this.race) for (const k of this.race.karts) if (k.bot && k.owner === m.pid) this.race.setBotOwner(k, m.host, m.pid);
         this.me = m.pid;
         this.hostPid = m.host;
         this.colo = m.colo ?? '';
@@ -218,6 +272,8 @@ export class OnlineSession {
           this.mesh.ensure(p.pid);
         }
         if (this.status !== 'racing') this.status = 'lobby';
+        // 自己斷線回來：把斷線期間自己發生的擊毀、完賽補送給大家（對方用 id 去掉重複）
+        if (m.rejoin && this.race) for (const d of this.evLog) this.send(d);
         this.hostChanged();
         this.startPing();
         this.onChange();
@@ -232,14 +288,18 @@ export class OnlineSession {
           // 重連回來的人：舊的直連已經不能用，重新建立
           if (m.t === 'back') this.mesh.drop(m.pid);
           this.mesh.ensure(m.pid);
-          // 新來的人要知道房主目前的設定
+          // 新來的人要知道房主目前的設定；比賽中回來的人要知道電腦車手現在誰跑
           if (this.isHost) this.send({ e: 'cfg', cfg: this.cfg }, [m.pid]);
+          if (this.isHost && m.t === 'back' && this.race) this.sendBots([m.pid]);
+          // 斷線期間他沒收到的擊毀、完賽：補送（對方用 id 去掉重複）
+          if (m.t === 'back' && this.race) for (const d of this.evLog) this.send(d, [m.pid]);
         }
         this.onChange();
         break;
       case 'away':
         this.away.add(m.pid);
         this.mesh.drop(m.pid);
+        this.rebalanceBots();
         this.onChange();
         break;
       case 'leave':
@@ -247,7 +307,8 @@ export class OnlineSession {
         this.away.delete(m.pid);
         this.rtt.delete(m.pid);
         this.mesh.drop(m.pid);
-        if (this.race) for (const k of this.race.karts) if (k.owner === m.pid && k.remote) this.race.dropKart(k);
+        if (this.race) for (const k of this.race.karts) if (k.owner === m.pid && k.remote && !k.bot) this.race.dropKart(k);
+        this.rebalanceBots();
         this.onChange();
         break;
       case 'host':
@@ -264,7 +325,7 @@ export class OnlineSession {
       case 'r': {
         const d = m.d as { e?: string };
         if (d && d.e === 'rtc') void this.mesh.signal(m.from, d as RtcSignal);
-        else this.relayed(m.from, d as { e: string });
+        else this.mesh.json(m.from, d);
         break;
       }
     }
@@ -272,7 +333,7 @@ export class OnlineSession {
 
   /** 這台車的資料只接受車主（電腦車手只接受房主）傳來的 */
   private owns(from: number, k: Kart | undefined): k is Kart {
-    return !!k && k.remote && (k.owner !== 0 ? k.owner === from : from === this.hostPid);
+    return !!k && k.remote && k.owner === from;
   }
 
   private relayed(from: number, d: { e: string } & Record<string, unknown>): void {
@@ -294,6 +355,17 @@ export class OnlineSession {
           this.onChange();
         }
         return;
+      case 'lk':
+        this.mesh.setTable(from, (d.l as number[]) ?? []);
+        this.onLinks();
+        return;
+      case 'ai': {
+        // 房主決定的電腦車手分配
+        const r = this.race;
+        if (!r || from !== this.hostPid) return;
+        for (const [id, owner] of d.m as number[][]) if (r.karts[id]) r.setBotOwner(r.karts[id], owner, this.me);
+        return;
+      }
     }
     const race = this.race;
     if (!race) return;
@@ -306,7 +378,14 @@ export class OnlineSession {
       }
       case 'kill': {
         const v = K[d.v as number];
-        if (this.owns(from, v)) race.remoteKill(v, (d.by as number) >= 0 ? K[d.by as number] ?? null : null);
+        const key = from + ':' + d.id;
+        if (!v || this.seen.has(key)) break;
+        // 電腦車手斷線期間兩邊都在跑：舊車主補送來的事件也收，但只算數字、不去動現在的車
+        const vb = v as Kart;
+        const current = this.owns(from, v);
+        if (!current && !vb.bot) break;
+        this.seen.add(key);
+        race.remoteKill(vb, (d.by as number) >= 0 ? K[d.by as number] ?? null : null, !current);
         break;
       }
       case 'fin': {
@@ -341,9 +420,19 @@ export class OnlineSession {
     for (const [v, by, amt] of p.hits) if (K[v] && K[by]) race.remoteDamage(K[v], K[by], amt);
   }
 
+  /** 送出並記下來（斷線的人回來時補送） */
+  private logged(d: Record<string, unknown>): void {
+    d.id = ++this.evSeq;
+    this.evLog.push(d);
+    this.send(d);
+  }
+
   /** 比賽開始：接上 Race 的連線掛勾 */
   attach(race: Race): void {
     this.race = race;
+    this.evSeq = 0;
+    this.evLog = [];
+    this.seen.clear();
     this.buf.clear();
     this.hits.clear();
     this.status = 'racing';
@@ -355,9 +444,9 @@ export class OnlineSession {
         const key = v.netId + ':' + by.netId;
         this.hits.set(key, (this.hits.get(key) ?? 0) + amount);
       },
-      onKill: (v, by) => this.send({ e: 'kill', v: v.netId, by: by ? by.netId : -1 }),
-      onFinish: (k) => this.send({ e: 'fin', k: k.netId, time: k.finishTime, laps: k.lapTimes }),
-      onElim: (k) => this.send({ e: 'elim', k: k.netId }),
+      onKill: (v, by) => this.logged({ e: 'kill', v: v.netId, by: by ? by.netId : -1 }),
+      onFinish: (k) => this.logged({ e: 'fin', k: k.netId, time: k.finishTime, laps: k.lapTimes }),
+      onElim: (k) => this.logged({ e: 'elim', k: k.netId }),
     };
   }
 

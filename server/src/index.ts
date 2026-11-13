@@ -15,6 +15,55 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   /** 本機開發（wrangler dev --var DEV_ORIGINS:1）另外允許 localhost */
   DEV_ORIGINS?: string;
+  /**
+   * 直連的中轉（TURN，Cloudflare Realtime，跟羽球對決同一種做法）：直連連不上時改經 turn.cloudflare.com，
+   * 入口在台北（晚上我們網域的入口會被繞到美國，TURN 不會）。用 npx wrangler secret put 設定；沒設 = 只用 STUN
+   */
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
+}
+
+// ---------------- TURN 帳密（GET /turn） ----------------
+const TURN_TTL_S = 6 * 3600;
+const TURN_REFRESH_S = 3600;
+interface IceServer { urls: string[]; username?: string; credential?: string }
+let turnCache: { at: number; servers: IceServer[] } | null = null;
+
+/** Cloudflare 回的 iceServers → 乾淨的陣列（瀏覽器擋 53 埠，拿掉） */
+function cleanIce(raw: unknown): IceServer[] {
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? [raw] : [];
+  const out: IceServer[] = [];
+  for (const s of list) {
+    const o = s as { urls?: unknown; username?: unknown; credential?: unknown };
+    const urls = (Array.isArray(o?.urls) ? o.urls : [o?.urls]).filter((u): u is string => typeof u === 'string' && /^(stun|turns?):/.test(u) && !/:53(\?|$)/.test(u));
+    if (!urls.length) continue;
+    const e: IceServer = { urls };
+    if (typeof o.username === 'string') e.username = o.username;
+    if (typeof o.credential === 'string') e.credential = o.credential;
+    out.push(e);
+  }
+  return out;
+}
+
+/** 短期的 TURN 帳密（大家共用一組，快到期才換新的） */
+async function turnServers(env: Env): Promise<IceServer[]> {
+  const id = env.TURN_KEY_ID, token = env.TURN_KEY_API_TOKEN;
+  if (!id || !token) return [];
+  const now = Date.now() / 1000;
+  if (turnCache && now - turnCache.at < TURN_TTL_S - TURN_REFRESH_S) return turnCache.servers;
+  try {
+    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: TURN_TTL_S }),
+    });
+    if (!r.ok) return turnCache?.servers ?? [];
+    const servers = cleanIce(((await r.json()) as { iceServers?: unknown })?.iceServers);
+    if (servers.length) turnCache = { at: now, servers };
+    return servers;
+  } catch {
+    return turnCache?.servers ?? [];
+  }
 }
 
 const MAX_PLAYERS = 8;
@@ -36,6 +85,14 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === '/health') return new Response('ok');
+    if (url.pathname === '/turn') {
+      // 只給我們的網頁
+      const origin = req.headers.get('Origin');
+      if (!originAllowed(origin, env)) return new Response('forbidden', { status: 403 });
+      return new Response(JSON.stringify({ iceServers: await turnServers(env) }), {
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': origin!, 'Cache-Control': 'no-store', Vary: 'Origin' },
+      });
+    }
     const m = url.pathname.match(/^\/room\/([A-Z0-9]{4,6})$/);
     if (!m) return new Response('not found', { status: 404 });
     if (!originAllowed(req.headers.get('Origin'), env)) return new Response('forbidden', { status: 403 });
