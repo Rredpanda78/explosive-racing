@@ -337,6 +337,22 @@ export class Race {
         }
         continue;
       }
+      // 從沒有護欄的捷徑摔下去：往下掉一下，回到主線（停下來，要重新加速）
+      if (k.fallT > 0) {
+        k.fallT -= dt;
+        k.vy -= 30 * dt;
+        k.air = 1;
+        k.y += k.vy * dt;
+        k.x += k.vx * dt * 0.5;
+        k.z += k.vz * dt * 0.5;
+        if (k.fallT <= 0) {
+          k.fallT = 0;
+          this.resetToTrack(k);
+          k.invulnT = Math.max(k.invulnT, 1.2);
+          ev.push({ t: 'respawn', k });
+        }
+        continue;
+      }
       if (!k.finished) k.invulnT = Math.max(0, k.invulnT - dt);
       k.sinceDamage += dt;
       if (k.sinceDamage > CFG.regenDelay && k.hp < k.maxHp) k.hp = Math.min(k.maxHp, k.hp + CFG.regenRate * dt);

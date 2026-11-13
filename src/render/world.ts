@@ -346,12 +346,97 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
       }
     });
     const scMat = new THREE.MeshLambertMaterial({ map: scTex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    // 鋪好的窄路（沒有碎石的捷徑）：深色柏油，兩側紅白路緣（沒護欄的路要看得出邊在哪）
+    const pavedTex = canvasTex(256, 256, (c) => {
+      c.fillStyle = night ? '#2a2f3d' : '#4a4d55';
+      c.fillRect(0, 0, 256, 256);
+      const r = mulberry32(9);
+      for (let i = 0; i < 2500; i++) {
+        c.fillStyle = r() < 0.5 ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.07)';
+        c.fillRect(r() * 256, r() * 256, 1 + r() * 2, 1 + r() * 2);
+      }
+      c.fillStyle = 'rgba(255,255,255,0.75)';
+      for (let y = 0; y < 256; y += 64) c.fillRect(124, y + 8, 8, 32);
+      for (const x of [0, 240]) for (let y = 0; y < 256; y += 32) {
+        c.fillStyle = '#e8402f';
+        c.fillRect(x, y, 16, 16);
+        c.fillStyle = '#f4f4f4';
+        c.fillRect(x, y + 16, 16, 16);
+      }
+    });
+    const pavedMat = new THREE.MeshLambertMaterial({ map: pavedTex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    // 懸崖的岩壁
+    const cliffMat = new THREE.MeshLambertMaterial({ color: theme.vegetation === 'desert' ? 0x8a4b2c : night ? 0x2b2f3a : 0x5c5348, side: THREE.DoubleSide });
+    // 障礙物：依主題換成石頭、樹或施工桶
+    const rockMat = new THREE.MeshLambertMaterial({ color: theme.vegetation === 'desert' ? 0xa0583a : 0x7d7468, flatShading: true });
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2b });
+    const leafMat = new THREE.MeshLambertMaterial({ color: 0x3f8a3a, flatShading: true });
+    const barrelTex = canvasTex(64, 64, (c) => {
+      for (let y = 0; y < 64; y += 16) {
+        c.fillStyle = '#ff6a1a';
+        c.fillRect(0, y, 64, 9);
+        c.fillStyle = '#f6f6f6';
+        c.fillRect(0, y + 9, 64, 7);
+      }
+    });
+    const barrelMat = night
+      ? new THREE.MeshBasicMaterial({ map: barrelTex, color: glow(0xffffff, 1.3) })
+      : new THREE.MeshLambertMaterial({ map: barrelTex });
+    const makePost = (r: number): THREE.Object3D => {
+      const g = new THREE.Group();
+      if (theme.vegetation === 'desert') {
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(r * 1.05, 0), rockMat);
+        rock.scale.set(1, 1.15, 1);
+        rock.position.y = r * 0.8;
+        rock.rotation.set(rng() * 3, rng() * 3, rng() * 3);
+        rock.castShadow = shadows;
+        g.add(rock);
+      } else if (night) {
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.8, r * 0.9, 1.25, 14), barrelMat);
+        bar.position.y = 0.62;
+        g.add(bar);
+        const top = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.82, r * 0.82, 0.08, 14), new THREE.MeshBasicMaterial({ color: glow(0xffd23f, 1.8) }));
+        top.position.y = 1.27;
+        g.add(top);
+      } else {
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.38, r * 0.5, 3.2, 8), trunkMat);
+        trunk.position.y = 1.6;
+        trunk.castShadow = shadows;
+        g.add(trunk);
+        for (const [y, sc] of [[3.4, 1.9], [4.6, 1.45], [5.6, 0.95]] as [number, number][]) {
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(r * sc, 1.9, 8), leafMat);
+          cone.position.y = y;
+          cone.castShadow = shadows;
+          g.add(cone);
+        }
+      }
+      return g;
+    };
     const mainLat = (x: number, z: number) => { track.locate(x, z, -1); return Math.abs(track.lat); };
     for (const b of BR) {
       const hb = b.halfWidth;
+      const fall = b.def.edge === 'fall';
       const outFlag = b.samples.map((s) => mainLat(s.x, s.z) > hw - hb + 0.3);
-      addMesh(strip(b, { latA: hb, yA: 0.03, latB: -hb, yB: 0.03, scale: 9, when: (_s, i) => outFlag[i] }), scMat);
-      for (const sg of [1, -1]) {
+      // 碎石、泥地用泥土路面；其他是鋪好的窄柏油路
+      addMesh(strip(b, { latA: hb, yA: 0.03, latB: -hb, yB: 0.03, scale: 9, when: (_s, i) => outFlag[i] }), b.def.rough ? scMat : pavedMat);
+      // 障礙物
+      for (const p of b.posts) {
+        const o = makePost(p.r);
+        o.position.set(p.x, p.y, p.z);
+        root.add(o);
+      }
+      if (fall) {
+        // 沒有護欄：兩側是往下掉的岩壁（地形在這裡也往下挖）
+        for (const sg of [1, -1]) {
+          const when = (_s: Sample, i: number) => outFlag[i];
+          addMesh(strip(b, sg > 0 ? { latA: hb + 0.05, yA: 0.02, latB: hb + 1.2, yB: -12, scale: 6, when } : { latA: -(hb + 1.2), yA: -12, latB: -(hb + 0.05), yB: 0.02, scale: 6, when }), cliffMat);
+          if (night) {
+            const edgeGlow = new THREE.MeshBasicMaterial({ color: glow(0xff4f5e, 1.8) });
+            addMesh(strip(b, sg > 0 ? { latA: hb, yA: 0.06, latB: hb - 0.25, yB: 0.06, scale: 10, when } : { latA: -(hb - 0.25), yA: 0.06, latB: -hb, yB: 0.06, scale: 10, when }), edgeGlow, false);
+          }
+        }
+      }
+      if (!fall) for (const sg of [1, -1]) {
         const wallFlag = b.samples.map((s) => mainLat(s.x + s.nx * sg * (hb + 0.6), s.z + s.nz * sg * (hb + 0.6)) > hw + 0.4);
         const when = (_s: Sample, i: number) => wallFlag[i];
         const inner = sg * (hb + 0.35), outer = sg * (hb + 0.95);
@@ -364,9 +449,11 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
           addMesh(strip(b, sg > 0 ? { latA: hb - 0.1, yA: 0.07, latB: hb - 0.45, yB: 0.07, scale: 10, when } : { latA: -(hb - 0.45), yA: 0.07, latB: -(hb - 0.1), yB: 0.07, scale: 10, when }), neon, false);
         }
       }
-      const shMat = new THREE.MeshLambertMaterial({ map: grassTex, color: theme.shoulder });
-      addMesh(strip(b, { latA: hb + 9, yA: -3.2, latB: hb + 0.95, yB: -0.02, scale: 7 }), shMat);
-      addMesh(strip(b, { latA: -(hb + 0.95), yA: -0.02, latB: -(hb + 9), yB: -3.2, scale: 7 }), shMat);
+      if (!fall) {
+        const shMat = new THREE.MeshLambertMaterial({ map: grassTex, color: theme.shoulder });
+        addMesh(strip(b, { latA: hb + 9, yA: -3.2, latB: hb + 0.95, yB: -0.02, scale: 7 }), shMat);
+        addMesh(strip(b, { latA: -(hb + 0.95), yA: -0.02, latB: -(hb + 9), yB: -3.2, scale: 7 }), shMat);
+      }
       // 入口的指示牌：在主線上快到分岔點時就看得到
       const arrowSide = Math.sign(b.def.lat) || 1;
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 2.1), new THREE.MeshBasicMaterial({ map: canvasTex(128, 64, (c) => {
@@ -375,7 +462,9 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
         c.fillStyle = '#ffd23f';
         c.font = 'bold 26px "Segoe UI", Arial, sans-serif';
         c.textAlign = 'center';
-        c.fillText(arrowSide > 0 ? '◀ 捷徑' : '捷徑 ▶', 64, 42);
+        const label = b.def.name ?? '捷徑';
+        c.font = `bold ${label.length > 3 ? 20 : 26}px "Segoe UI", Arial, sans-serif`;
+        c.fillText(arrowSide > 0 ? '◀ ' + label : label + ' ▶', 64, 42);
       }, false), color: glow(0xffffff, night ? 1.6 : 1.15), side: THREE.DoubleSide }));
       const sp = track.pointAt(b.def.from - 25);
       const ox = sp.nx * arrowSide * (hw + 2.4), oz = sp.nz * arrowSide * (hw + 2.4);

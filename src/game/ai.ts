@@ -82,7 +82,8 @@ export class AIController {
       const ahead = this.ahead(k.idx, b.fromIdx, n);
       if (ahead > 0 && ahead < 110 / tr.spacing && this.planned !== b) {
         this.planned = b;
-        this.plan = this.rng() < this.D.shortcut ? b : null;
+        // 碎石、泥地的捷徑要帶著 N2O 才划算
+        this.plan = this.rng() < this.D.shortcut && (!b.def.rough || k.n2o > 0 || k.boostT > 0) ? b : null;
       }
       // 已經過了接回點，或錯過入口太遠：放棄這次的計畫
       if (this.planned === b && !k.branch && (this.ahead(k.idx, b.fromIdx + b.span, n) < 0 || this.ahead(k.idx, b.fromIdx, n) < -40 / tr.spacing)) {
@@ -109,7 +110,21 @@ export class AIController {
         bi = Math.round((look - toFrom) / br.spacing);
       }
       if (bi < 0) tgt = mainLook(br.def.lat);
-      else if (bi < br.n) tgt = br.samples[bi];
+      else if (bi < br.n) {
+        // 捷徑上的障礙物：前面 30 公尺內有的話，直接瞄準它旁邊的空隙（從離路中央較遠的另一側過）
+        const here = k.branch ? k.bIdx * br.spacing : 0;
+        let aim: { x: number; z: number } | null = null;
+        for (const p of br.posts) {
+          const ahead = p.d - here;
+          if (ahead < 1 || ahead > 30) continue;
+          const ps = br.samples[Math.min(br.n - 1, Math.round(p.d / br.spacing))];
+          const side = -Math.sign(p.lat || 1);
+          const pass = clamp(p.lat + side * (p.r + 2.1), -(br.halfWidth - 1.0), br.halfWidth - 1.0);
+          aim = { x: ps.x + ps.nx * pass, z: ps.z + ps.nz * pass };
+          break;
+        }
+        tgt = aim ?? br.samples[bi];
+      }
       else {
         const s = tr.samples[(br.fromIdx + br.span + Math.round((bi - br.n) * br.spacing / tr.spacing)) % n];
         tgt = { x: s.x + s.nx * br.def.lat, z: s.z + s.nz * br.def.lat };
@@ -156,6 +171,8 @@ export class AIController {
 
     // N2O：直線才用
     inp.boost = false;
+    // 開進碎石、泥地的捷徑就開 N2O
+    if (k.branch?.def.rough && k.n2o > 0 && k.boostT <= 0) inp.boost = true;
     if (k.n2o > 0 && k.boostT <= 0 && kmax < 0.012 && sp > 15) {
       this.boostDelay -= dt;
       if (this.boostDelay <= 0) {

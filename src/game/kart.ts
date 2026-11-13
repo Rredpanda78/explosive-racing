@@ -1,6 +1,6 @@
 import type { CarId } from './cars';
 import { CFG } from './config';
-import type { Branch, Sample, Track } from './track';
+import type { Branch, Post, Sample, Track } from './track';
 import { clamp, lerp, wrapAngle } from './util';
 import type { PrimaryId, SecondaryId } from './weapons';
 
@@ -19,7 +19,7 @@ export const emptyInput = (): KartInput => ({
   steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false,
 });
 
-export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'driftFail' | 'pad' | 'jump' | 'land' | 'chain' | 'combo' | 'driftCancel' | 'hardDrift' | 'hop';
+export type KartEvent = 'boost' | 'mini' | 'n2o' | 'wall' | 'driftStart' | 'driftFail' | 'pad' | 'jump' | 'land' | 'chain' | 'combo' | 'driftCancel' | 'hardDrift' | 'hop' | 'fall' | 'post';
 
 export class Kart {
   id: number;
@@ -64,6 +64,8 @@ export class Kart {
   jumped = false;
   /** 衝過坡頂輕輕飛起（操控照常，只有高度在飛） */
   hop = false;
+  /** 從沒有護欄的捷徑摔下去：剩餘的掉落秒數（結束後回到主線） */
+  fallT = 0;
   private hopT = 0;
   /** 被撞之後的打轉角速度，會逐漸衰減 */
   spinVel = 0;
@@ -436,6 +438,9 @@ export class Kart {
     else if (padOn) vmax *= C.padSpeedMul;
     else if (this.miniT > 0) vmax *= C.miniSpeedMul;
     if (this.drafting && !flying) vmax *= 1 + (C.draftSpeedMul - 1) * this.draftMul;
+    // 捷徑的碎石、泥地：沒有 N2O、小噴、加速帶時跑不快
+    const rough = this.branch?.def.rough;
+    if (rough && !boosting && !padOn && this.miniT <= 0 && !flying) vmax *= rough;
     const forced = boosting || padOn || this.miniT > 0;
     const throttle = inp.accel < -0.1 ? inp.accel : forced ? 1 : inp.accel;
     const sm0 = this.surface(track);
@@ -622,7 +627,11 @@ export class Kart {
       this.branchFrac = prog - Math.floor(prog);
       this.lat = blat;
       const limB = br.halfWidth - C.kartRadius * 0.8;
-      if (Math.abs(blat) > limB) this.pushWall(br.samples[bi], blat, limB, dt, emit);
+      if (br.def.edge === 'fall') {
+        // 沒有護欄：車身大半開出路面就摔下去
+        if (Math.abs(blat) > br.halfWidth + 0.6 && this.air <= 0) this.startFall(emit);
+      } else if (Math.abs(blat) > limB) this.pushWall(br.samples[bi], blat, limB, dt, emit);
+      for (const p of br.posts) this.hitPost(p, emit);
       return;
     }
     this.idx = track.locate(this.x, this.z, this.idx);
@@ -643,6 +652,50 @@ export class Kart {
       }
     }
     this.pushWall(track.samples[this.idx], this.lat, lim, dt, emit);
+  }
+
+  private startFall(emit: (e: KartEvent) => void): void {
+    this.fallT = 1.1;
+    this.vy = 1.5;
+    this.drifting = false;
+    this.hop = false;
+    emit('fall');
+  }
+
+  /** 撞到捷徑上的障礙物：推出來、反彈、掉速；甩尾中撞到跟撞牆一樣這次的集氣作廢 */
+  private hitPost(p: Post, emit: (e: KartEvent) => void): void {
+    if (this.air > 1) return;
+    const dx = this.x - p.x, dz = this.z - p.z;
+    const min = p.r + CFG.kartRadius * 0.9;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= min * min || d2 < 1e-6) return;
+    const d = Math.sqrt(d2), nx = dx / d, nz = dz / d;
+    this.x = p.x + nx * min;
+    this.z = p.z + nz * min;
+    const vn = -(this.vx * nx + this.vz * nz);
+    if (vn <= 0) return;
+    this.vx += nx * vn * 1.3;
+    this.vz += nz * vn * 1.3;
+    const k = Math.min(1, vn / 14);
+    this.vx *= 1 - CFG.wallLoss * k;
+    this.vz *= 1 - CFG.wallLoss * k;
+    this.spinVel += (this.vx * nz - this.vz * nx > 0 ? 1 : -1) * k * 2.5;
+    if (vn > 4) {
+      this.voidDrift(emit);
+      emit('post');
+    }
+  }
+
+  /** 甩尾中撞到東西：把這次甩尾集到的氣扣回去（包含已經換成整瓶的部分） */
+  private voidDrift(emit: (e: KartEvent) => void): void {
+    if (this.drifting && this.driftGain > 0.001) {
+      const total = Math.max(0, this.n2o + this.gauge - this.driftGain);
+      this.n2o = Math.min(CFG.maxN2O, Math.floor(total + 1e-6));
+      this.gauge = Math.min(1, Math.max(0, total - this.n2o));
+      emit('driftFail');
+    }
+    this.driftGain = 0;
+    this.drifting = false;
   }
 
   private pushWall(sm: Sample, lat: number, lim: number, dt: number, emit: (e: KartEvent) => void): void {
@@ -669,15 +722,7 @@ export class Kart {
     this.vz *= 1 - loss;
     this.heading = wrapAngle(this.heading + wrapAngle(tanA - this.heading) * k * 0.4);
     if (vn > 4) {
-      if (this.drifting && this.driftGain > 0.001) {
-        // 把這次甩尾集到的氣扣回去（包含已經換成整瓶的部分）
-        const total = Math.max(0, this.n2o + this.gauge - this.driftGain);
-        this.n2o = Math.min(C.maxN2O, Math.floor(total + 1e-6));
-        this.gauge = Math.min(1, Math.max(0, total - this.n2o));
-        emit('driftFail');
-      }
-      this.driftGain = 0;
-      this.drifting = false;
+      this.voidDrift(emit);
       emit('wall');
     }
   }

@@ -72,7 +72,18 @@ export interface ShortcutDef {
   lat: number;
   via?: [number, number][];
   halfWidth: number;
+  /** 入口指示牌上的名字 */
+  name?: string;
+  /** 碎石、泥地：沒有加速效果（N2O、小噴、加速帶）時極速只剩這個倍率——要帶著 N2O 進去才划算 */
+  rough?: number;
+  /** fall = 沒有護欄，開出路面就摔下去（回到主線、停下來，損失好幾秒） */
+  edge?: 'wall' | 'fall';
+  /** 路上的障礙物（石頭、樹、施工桶）：u = 沿捷徑的位置比例 0~1，lat = 橫向位置，r = 半徑 */
+  posts?: { u: number; lat: number; r?: number }[];
 }
+
+/** 捷徑上的障礙物（世界座標） */
+export interface Post { x: number; z: number; y: number; r: number; d: number; lat: number }
 
 /**
  * 機關：
@@ -140,7 +151,8 @@ export const TRACKS: TrackDef[] = [
     ],
     // 山脊上兩座擺錘，過了之後左側是抄近路的林道
     hazards: [{ kind: 'hammer', dist: 1905, period: 3.4 }, { kind: 'hammer', dist: 1955, period: 3.4, phase: 0.3 }],
-    shortcuts: [{ from: 2010, to: 2310, lat: 6.2, halfWidth: 5.5 }],
+    // 懸崖小徑：窄、沒有護欄，開出去就摔下去
+    shortcuts: [{ from: 2010, to: 2310, lat: 6.2, halfWidth: 3.4, name: '懸崖小徑', edge: 'fall' }],
   },
   {
     id: 'red-canyon',
@@ -165,7 +177,8 @@ export const TRACKS: TrackDef[] = [
     barrels: [{ dist: 120, lat: 9.2 }, { dist: 200, lat: -9.2 }, { dist: 300, lat: 9.2 }, { dist: 380, lat: -9.2 }, { dist: 470, lat: 9.2 }, { dist: 560, lat: -9.2 }, { dist: 650, lat: 9.2 }, { dist: 740, lat: -9.2 }, { dist: 830, lat: 9.2 }, { dist: 1040, lat: -9.2 }, { dist: 1150, lat: 9.2 }, { dist: 1240, lat: -9.2 }, { dist: 1380, lat: 9.2 }, { dist: 1470, lat: -9.2 }, { dist: 1580, lat: 9.2 }, { dist: 1800, lat: -9.2 }, { dist: 1900, lat: 9.2 }, { dist: 2000, lat: -9.2 }],
     // 長下坡有落石滾下來；谷底髮夾彎出來後左側有一條穿過馬蹄彎的小路
     hazards: [{ kind: 'boulder', dist: 990, len: 270, period: 2.3 }],
-    shortcuts: [{ from: 1400, to: 1690, lat: 6.2, halfWidth: 5.5 }],
+    // 碎石河床：沒開 N2O 會變慢，中間還有大石頭要閃
+    shortcuts: [{ from: 1400, to: 1690, lat: 6.2, halfWidth: 5, name: '碎石河床', rough: 0.7, posts: [{ u: 0.3, lat: 1.8, r: 1.4 }, { u: 0.46, lat: -2, r: 1.3 }, { u: 0.62, lat: 1.7, r: 1.5 }, { u: 0.78, lat: -1.8, r: 1.2 }] }],
   },
   {
     id: 'neon-bay',
@@ -210,7 +223,8 @@ export const TRACKS: TrackDef[] = [
     barrels: [{ dist: 150, lat: 9.2 }, { dist: 230, lat: -9.2 }, { dist: 400, lat: 9.2 }, { dist: 520, lat: -9.2 }, { dist: 600, lat: 9.2 }, { dist: 700, lat: -9.2 }, { dist: 760, lat: 9.2 }, { dist: 970, lat: -9.2 }, { dist: 1040, lat: 9.2 }, { dist: 1160, lat: -9.2 }, { dist: 1270, lat: 9.2 }, { dist: 1360, lat: -9.2 }, { dist: 1450, lat: 9.2 }, { dist: 1520, lat: -9.2 }, { dist: 1650, lat: 9.2 }, { dist: 1800, lat: -9.2 }, { dist: 1950, lat: 9.2 }, { dist: 2030, lat: -9.2 }],
     // 第二座跳台後的平交道會有電車通過；髮夾彎出來後右側有一條穿過街區的小巷
     hazards: [{ kind: 'tram', dist: 1000, period: 9, phase: 0.35 }],
-    shortcuts: [{ from: 1170, to: 1480, lat: -6.2, halfWidth: 5.5 }],
+    // 施工便道：窄路上交錯擺著施工桶，要一路閃過去
+    shortcuts: [{ from: 1170, to: 1480, lat: -6.2, halfWidth: 3.9, name: '施工便道', posts: [{ u: 0.26, lat: 1.6, r: 0.9 }, { u: 0.38, lat: -1.6, r: 0.9 }, { u: 0.5, lat: 1.6, r: 0.9 }, { u: 0.62, lat: -1.6, r: 0.9 }, { u: 0.74, lat: 1.6, r: 0.9 }] }],
   },
   {
     id: 'neon-heights',
@@ -245,7 +259,8 @@ export const TRACKS: TrackDef[] = [
     ramps: [1179],
     barrels: [{dist: 150, lat: 9.2}, {dist: 272, lat: -9.2}, {dist: 382, lat: 9.2}, {dist: 516, lat: -9.2}, {dist: 638, lat: 9.2}, {dist: 760, lat: -9.2}, {dist: 906, lat: 9.2}, {dist: 1004, lat: -9.2}, {dist: 1126, lat: 9.2}, {dist: 1248, lat: -9.2}, {dist: 1370, lat: 9.2}, {dist: 1492, lat: -9.2}, {dist: 1614, lat: 9.2}, {dist: 1858, lat: -9.2}, {dist: 1980, lat: -9.2}, {dist: 2078, lat: -9.2}, {dist: 2224, lat: 9.2}, {dist: 2346, lat: -9.2}],
     hazards: [{kind: 'tram', dist: 2124, period: 9, phase: 0.6}],
-    shortcuts: [{from: 1836, to: 2072, lat: 6.2, halfWidth: 5.5}],
+    // 高架邊緣：沒有護欄的窄高架，摔下去會掉到地面
+    shortcuts: [{ from: 1836, to: 2072, lat: 6.2, halfWidth: 3.4, name: '高架邊緣', edge: 'fall' }],
   },
   {
     id: 'forest-jump',
@@ -281,7 +296,8 @@ export const TRACKS: TrackDef[] = [
     ramps: [],
     barrels: [{dist: 240, lat: 9.2}, {dist: 320, lat: -9.2}, {dist: 395, lat: -9.2}, {dist: 500, lat: 9.2}, {dist: 640, lat: 9.2}, {dist: 775, lat: -9.2}, {dist: 890, lat: 9.2}, {dist: 1000, lat: -9.2}, {dist: 1070, lat: 9.2}, {dist: 1195, lat: -9.2}, {dist: 1285, lat: 9.2}, {dist: 1415, lat: -9.2}, {dist: 1555, lat: 9.2}, {dist: 1745, lat: -9.2}, {dist: 1925, lat: 9.2}, {dist: 2150, lat: -9.2}, {dist: 2250, lat: 9.2}, {dist: 2360, lat: -9.2}],
     hazards: [{kind: 'hammer', dist: 2040, period: 3.4}, {kind: 'hammer', dist: 2090, period: 3.4, phase: 0.3}],
-    shortcuts: [{from: 1840, to: 2010, lat: -6.2, via: [[-31.6, -231.7]], halfWidth: 5.5}],
+    // 林間泥路：泥地會減速，路中間還有樹
+    shortcuts: [{ from: 1840, to: 2010, lat: -6.2, via: [[-31.6, -231.7]], halfWidth: 4.4, name: '林間泥路', rough: 0.68, posts: [{ u: 0.32, lat: 1.6, r: 1.1 }, { u: 0.5, lat: -1.7, r: 1.2 }, { u: 0.68, lat: 1.5, r: 1.1 }] }],
   },
   {
     id: 'canyon-rush',
@@ -339,7 +355,8 @@ export const TRACKS: TrackDef[] = [
     ramps: [],
     barrels: [{dist: 579, lat: 9.2}, {dist: 586, lat: -9.2}, {dist: 620, lat: -9.2}, {dist: 696, lat: 9.2}, {dist: 730, lat: 9.2}, {dist: 741, lat: -9.2}, {dist: 764, lat: 9.2}, {dist: 775, lat: -9.2}, {dist: 1275, lat: 9.2}, {dist: 1602, lat: -9.2}, {dist: 1609, lat: 9.2}, {dist: 1636, lat: -9.2}, {dist: 1643, lat: 9.2}, {dist: 2202, lat: 9.2}, {dist: 2209, lat: -9.2}, {dist: 2682, lat: -9.2}, {dist: 2689, lat: 9.2}],
     hazards: [{kind: 'boulder', dist: 1691, len: 215, period: 2.4}],
-    shortcuts: [{from: 2258, to: 2434, lat: 6.2, halfWidth: 5.5}],
+    // 窄縫峽谷：非常窄的沙地小縫，擦到牆就掉速
+    shortcuts: [{ from: 2258, to: 2434, lat: 6.2, halfWidth: 2.9, name: '窄縫峽谷', rough: 0.85 }],
   },
 ];
 
@@ -617,6 +634,8 @@ export class Branch {
   /** 最近一次 locate() 的橫向偏移與沿切線偏移 */
   lat = 0;
   along = 0;
+  /** 路上的障礙物 */
+  posts: Post[] = [];
   private lastIdx = 0;
   private box = { minX: 0, maxX: 0, minZ: 0, maxZ: 0 };
 
@@ -685,6 +704,10 @@ export class Branch {
       let da = ang[Math.min(this.n - 1, i + 1)] - ang[Math.max(0, i - 1)];
       da = Math.atan2(Math.sin(da), Math.cos(da));
       this.samples[i].curv = da / (b.dist - a.dist || 1);
+    }
+    for (const p of def.posts ?? []) {
+      const s = this.samples[Math.round(Math.min(1, Math.max(0, p.u)) * (this.n - 1))];
+      this.posts.push({ x: s.x + s.nx * p.lat, z: s.z + s.nz * p.lat, y: s.y, r: p.r ?? 1.1, d: s.dist, lat: p.lat });
     }
     const m = def.halfWidth + 12;
     this.box = {

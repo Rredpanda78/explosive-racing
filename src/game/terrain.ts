@@ -33,7 +33,20 @@ export function makeTerrain(track: Track): Terrain {
   const coarse: Sample[] = [];
   for (let i = 0; i < S.length; i += 3) coarse.push(S[i]);
   // 捷徑也是路面：地形同樣要壓在它下方
-  for (const b of track.branches) for (let i = 0; i < b.n; i += 3) coarse.push(b.samples[i]);
+  for (const b of track.branches) for (let i = 0; i < b.n; i += 3) coarse.push(Object.assign(Object.create(b.samples[i]), { _b: true }));
+
+  // 沒有護欄（摔得下去）的捷徑：離主線夠遠的路段，兩側地面往下挖，看得出是懸崖
+  const cliffs: { x: number; z: number; r: number }[] = [];
+  for (const b of track.branches) {
+    if (b.def.edge !== 'fall') continue;
+    for (let i = 0; i < b.n; i += 2) {
+      const s = b.samples[i];
+      let dm = Infinity;
+      for (const c of coarse) if (!(c as unknown as { _b?: boolean })._b) dm = Math.min(dm, Math.hypot(c.x - s.x, c.z - s.z));
+      if (dm > track.halfWidth + 20) cliffs.push({ x: s.x, z: s.z, r: b.halfWidth });
+    }
+  }
+  const CLIFF_DEPTH = 11;
 
   const height = (x: number, z: number): number => {
     let num = 0, den = 0, dmin = Infinity;
@@ -45,7 +58,16 @@ export function makeTerrain(track: Track): Terrain {
       num += w * s.y;
       den += w;
     }
-    const h = num / den - ROAD_ABOVE_TERRAIN;
+    let h = num / den - ROAD_ABOVE_TERRAIN;
+    if (cliffs.length) {
+      let cd = Infinity, cr = 0;
+      for (const c of cliffs) {
+        const d = Math.hypot(x - c.x, z - c.z);
+        if (d < cd) { cd = d; cr = c.r; }
+      }
+      const u = Math.min(1, Math.max(0, (cd - cr - 1) / 16));
+      h -= CLIFF_DEPTH * (1 - u * u * (3 - 2 * u));
+    }
     const t = Math.min(1, Math.max(0, (Math.sqrt(dmin) - 150) / 110));
     return h + (baseY - h) * t * t * (3 - 2 * t);
   };
