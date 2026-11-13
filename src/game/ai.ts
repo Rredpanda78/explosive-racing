@@ -187,6 +187,8 @@ export class AIController {
         case 'mine': want = !!race.pickTarget(k, 0.3, 45, 4, true); break;
         case 'cluster': want = !!race.pickTarget(k, 0.45, 35, 4, true); break;
         case 'missile': want = race.karts.some((o) => o !== k && !o.dead && !o.out && Math.hypot(o.x - k.x, o.z - k.z) < 200); break;
+        // 護盾：被導彈鎖定，或後面 35 公尺內有人跟著
+        case 'shield': want = k.lockT > 0 || !!race.pickTarget(k, 0.6, 35, 3, true); break;
       }
       if (want) {
         this.secDelay -= dt;

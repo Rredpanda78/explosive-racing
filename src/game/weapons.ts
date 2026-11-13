@@ -1,5 +1,5 @@
 export type PrimaryId = 'mg' | 'vulcan' | 'flame' | 'laser';
-export type SecondaryId = 'rocket' | 'grenade' | 'mine' | 'cluster' | 'missile';
+export type SecondaryId = 'rocket' | 'grenade' | 'mine' | 'cluster' | 'missile' | 'shield';
 export type WeaponId = PrimaryId | SecondaryId;
 export type CarUpgradeId = 'engine' | 'n2o' | 'armor';
 
@@ -64,11 +64,16 @@ export const SECONDARY: Record<SecondaryId, SecondaryDef> = {
   grenade: { id: 'grenade', name: '榴彈發射器', desc: '自動預判前方對手的位置拋射，落地或碰到車就大範圍爆炸並震退敵車（不會炸到自己）', dmg: 18, radius: 11, cooldown: 4, count: 1, price: 2500, perk: '子母彈：爆炸後再彈出 3 顆小榴彈' },
   mine: { id: 'mine', name: '地雷', desc: '往車尾放下地雷，啟動後有車經過就爆炸（最多同時 3 顆）', dmg: 58, radius: 6, cooldown: 2.2, count: 1, price: 2200, perk: '重型地雷：爆炸範圍 +40%，可以同時留 5 顆' },
   cluster: { id: 'cluster', name: '集束圓雷', desc: '往後撒出 5 顆圓形小地雷，碰到就炸，沒碰到 6 秒後自己引爆（威力小、不會把車炸飛）', dmg: 14, radius: 3.8, cooldown: 4.3, count: 5, price: 3000, perk: '加量：一次撒出 7 顆' },
+  shield: { id: 'shield', name: '後方護盾', desc: '在車尾展開弧形能量護盾，擋下從後方來的子彈、雷射、火焰、火箭、導彈與爆炸（正面的攻擊、壓到的地雷擋不住）', dmg: 0, radius: 0, cooldown: 11, count: 1, price: 2600, perk: '全包護盾：護住的角度從 150° 加大到 220°（側面也擋得住）' },
   missile: { id: 'missile', name: '追蹤導彈', desc: '隨機鎖定一台對手並追蹤；被鎖定的人會收到警告，急轉可以甩掉', dmg: 23, radius: 5.5, cooldown: 7, count: 1, price: 4000, perk: '雙彈頭：同時射出兩枚（每枚威力 55%），分別鎖定不同對手' },
 };
 
 export const PRIMARY_IDS = Object.keys(PRIMARY) as PrimaryId[];
 export const SECONDARY_IDS = Object.keys(SECONDARY) as SecondaryId[];
+
+/** 後方護盾：持續秒數（隨等級變長）與護住的半角（弧度；Lv.5 加大） */
+export const shieldTime = (lvl: number) => 4 + 0.5 * (lvl - 1);
+export const shieldHalfArc = (lvl: number) => ((lvl >= PERK_LVL5 ? 220 : 150) / 2) * (Math.PI / 180);
 
 export const MAX_WEAPON_LVL = 5;
 export const MAX_CAR_LVL = 5;

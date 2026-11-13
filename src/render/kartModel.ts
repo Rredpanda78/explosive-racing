@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Kart } from '../game/kart';
-import type { PrimaryId, SecondaryId } from '../game/weapons';
+import { shieldHalfArc, type PrimaryId, type SecondaryId } from '../game/weapons';
 import { cloneModel } from './assets';
 import { liveryMaterial, type Livery } from './livery';
 import { buildPrimary, buildSecondary } from './weaponModels';
@@ -66,6 +66,35 @@ const shellTex = (() => {
   const t = new THREE.CanvasTexture(cv);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(3, 1);
+  return t;
+})();
+// 後方護盾的六角格紋
+const shieldTex = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = 128;
+  cv.height = 64;
+  const c = cv.getContext('2d')!;
+  c.fillStyle = 'rgba(255,255,255,0.08)';
+  c.fillRect(0, 0, 128, 64);
+  c.strokeStyle = 'rgba(255,255,255,0.9)';
+  c.lineWidth = 1.6;
+  const r = 9;
+  for (let row = -1; row < 6; row++) {
+    for (let col = -1; col < 10; col++) {
+      const x = col * r * 1.73 + (row % 2 ? r * 0.87 : 0), y = row * r * 1.5;
+      c.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 6 + (i * Math.PI) / 3;
+        const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+        if (i) c.lineTo(px, py); else c.moveTo(px, py);
+      }
+      c.closePath();
+      c.stroke();
+    }
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(3, 1.5);
   return t;
 })();
 const SHELL = new THREE.MeshBasicMaterial({
@@ -219,6 +248,8 @@ export interface KartLook {
   fallback?: string;
   /** Tripo 車體的花色 */
   livery?: Livery;
+  /** 副武器等級（護盾 Lv.5 的角度比較大） */
+  secondaryLvl?: number;
 }
 
 /** 一台車的畫面：車體模型 + 武器 + 火焰 + 血條。車頭朝 +Z。 */
@@ -241,6 +272,9 @@ export class KartView {
   private nozzles: Nozzle[] = [];
   private shell: THREE.Mesh;
   private deploy = 0;
+  private shield: THREE.Mesh | null = null;
+  private shieldFlash = 0;
+  private shieldK = 0;
   /** 甩尾的破風噴花（左右各一）與排氣管的螺旋火環 */
   private sprays: THREE.Mesh[] = [];
   private swirls: THREE.Sprite[] = [];
@@ -288,6 +322,7 @@ export class KartView {
     }
     this.baseColor.copy(this.paint.color);
     this.addWeapons(look.primary, look.secondary);
+    if (look.secondary === 'shield') this.addShield(look.secondaryLvl ?? 1);
     this.shell = new THREE.Mesh(shellGeo, SHELL);
     this.addBoostKit(KIT_STYLE[look.model] ?? { style: 'basic', flame: 0x59ccff });
     this.addDriftFx();
@@ -477,7 +512,7 @@ export class KartView {
     // 副武器：火箭、榴彈、導彈在引擎蓋上；地雷與圓雷的投放器在車尾
     const sec = buildSecondary(secondary);
     sec.scale.setScalar(1.25);
-    if (secondary === 'mine' || secondary === 'cluster') sec.position.set(0, this.m.rearY, this.m.rearZ);
+    if (secondary === 'mine' || secondary === 'cluster' || secondary === 'shield') sec.position.set(0, this.m.rearY, this.m.rearZ);
     else sec.position.set(0, this.m.hoodY - 0.06, this.m.hoodZ - 0.12);
     b.add(sec);
   }
@@ -658,6 +693,25 @@ export class KartView {
     b.add(this.shell);
   }
 
+  /** 後方護盾：車尾一段弧形的能量牆（六角格紋），被打中時閃一下 */
+  private addShield(lvl: number): void {
+    const half = shieldHalfArc(lvl);
+    const geo = new THREE.CylinderGeometry(2.15, 2.0, 1.9, 30, 1, true, Math.PI - half, half * 2);
+    const mat = new THREE.MeshBasicMaterial({ map: shieldTex, color: new THREE.Color(0.45, 1.3, 2.2), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    this.ownMats.push(mat);
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = 0.95;
+    m.visible = false;
+    m.renderOrder = 6;
+    this.body.add(m);
+    this.shield = m;
+  }
+
+  /** 護盾擋下攻擊：閃一下 */
+  shieldHit(): void {
+    this.shieldFlash = 1;
+  }
+
   /** 開火時讓對應那一側的槍口閃一下 */
   muzzleFlash(side: number): void {
     this.muzzleT[side > 0 ? 0 : 1] = 0.05;
@@ -770,6 +824,23 @@ export class KartView {
           ? (0.5 + 3.2 * Math.min(1, k.firing / 0.25)) * (0.9 + Math.random() * 0.2)
           : (0.12 + 0.3 * Math.min(1, k.charge / 0.3)) * (0.6 + Math.random() * 0.6);
         bm.scale.set(w, w, len);
+      }
+    }
+
+    // 後方護盾：展開時從透明淡入，被打中時亮一下
+    if (this.shield) {
+      this.shieldK += ((k.shieldT > 0 && !k.dead ? 1 : 0) - this.shieldK) * Math.min(1, dt * 10);
+      this.shieldFlash = Math.max(0, this.shieldFlash - dt * 4);
+      const vis = this.shieldK > 0.02;
+      this.shield.visible = vis;
+      if (vis) {
+        const mat = this.shield.material as THREE.MeshBasicMaterial;
+        // 快結束時閃爍提醒
+        const ending = k.shieldT < 0.8 && Math.floor(this.t * 12) % 2 === 0 ? 0.35 : 1;
+        mat.opacity = (0.32 + 0.06 * Math.sin(this.t * 9) + this.shieldFlash * 0.6) * this.shieldK * ending;
+        if (mat.map) mat.map.offset.x = (this.t * 0.15) % 1;
+        const s = 0.9 + 0.1 * this.shieldK + this.shieldFlash * 0.05;
+        this.shield.scale.set(s, 1, s);
       }
     }
 

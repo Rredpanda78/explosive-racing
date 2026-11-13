@@ -173,6 +173,8 @@ export class Kart {
   lockT = 0;
   /** 雷射蓄力中的秒數（0 = 沒在蓄力） */
   charge = 0;
+  /** 後方護盾剩餘秒數 */
+  shieldT = 0;
   /** 剛被機關打到後的保護時間（避免同一個機關連續判定） */
   hazardCd = 0;
 
@@ -485,6 +487,8 @@ export class Kart {
     // ---- 集氣 ----
     const driftFill = this.drifting && s > 10
       ? C.gaugeRate * Math.abs(Math.sin(this.slip)) * (s / vmaxBase) * (this.shortDrift ? C.shortDriftGauge : 1) * (this.chainDrift && !this.shortDrift ? C.chainGauge : 1)
+        // 開著 N2O 甩尾：集氣加成
+        * (this.boostT > 0 ? C.boostDriftGauge : 1)
       : 0;
     let fill = driftFill;
     if (this.aiAssist && s > 18) fill += this.aiGauge * Math.abs(inp.steer);

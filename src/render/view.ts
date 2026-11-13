@@ -291,7 +291,7 @@ export class GameView {
     this.boostK = 0;
     if (!race) return;
     for (const k of race.karts) {
-      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery] }, this.shadows);
+      const kv = new KartView({ color: k.color, primary: k.primary, secondary: k.secondary, secondaryLvl: k.secondaryLvl, isPlayer: k.isPlayer, model: CARS[k.car].model, fallback: k.car, livery: CARS[k.car].liveries[k.livery] }, this.shadows);
       this.kartViews.set(k, kv);
       this.scene.add(kv.group);
       kv.update(k, 0);
@@ -382,6 +382,12 @@ export class GameView {
         if (R() < 0.12) this.debris?.burst(e.x, e.y, e.z, e.k.y, 1, 6);
         if (R() < 0.3) sm.spawn(e.x, e.y, e.z, e.k.vx * 0.5, 1, e.k.vz * 0.5, 0.5, 0.4, 1.6, 0.25, 0.25, 0.27, 0.4);
         if (e.k === p) this.addShake(0.1);
+        break;
+      case 'block':
+        // 護盾擋下：藍白色火花，護盾亮一下
+        this.kartViews.get(e.k)?.shieldHit();
+        f.spawn(e.x, e.y, e.z, e.k.vx * 0.6, 0, e.k.vz * 0.6, 0.08, 2.2, 0.45, 0.8, 1, 1, 0.9);
+        if (R() < 0.6) this.sparks(e.x, e.y, e.z, 3, 10, e.k.y, e.k.vx * 0.6, e.k.vz * 0.6);
         break;
       case 'impact':
         if (R() < 0.5) this.sparks(e.x, e.y, e.z, 2, 8, e.y - 1);

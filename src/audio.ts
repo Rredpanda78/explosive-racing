@@ -22,6 +22,7 @@ export class GameAudio {
   private skidGain!: GainNode;
   private boostGain!: GainNode;
   private lastShot = 0;
+  private lastBlock = 0;
   muted = false;
 
   private mode: MusicMode = 'off';
@@ -366,8 +367,25 @@ export class GameAudio {
         this.beep(330, 0.25, 0.2);
         setTimeout(() => this.beep(247, 0.4, 0.2), 180);
         break;
+      case 'block': {
+        // 護盾擋下：清脆的「叮」
+        const now = performance.now();
+        if (now - this.lastBlock < 60) break;
+        this.lastBlock = now;
+        const v = e.k === p ? 1 : near(e.x, e.z, 70) * 0.6;
+        this.beep(2400 + Math.random() * 400, 0.07, 0.1 * v);
+        this.burst(5200, 5, 0.05, 0.12 * v);
+        break;
+      }
       case 'launch': {
         const v = e.k === p ? 1 : near(e.k.x, e.k.z, 80) * 0.55;
+        if (e.kind === 'shield') {
+          // 護盾展開：往上掃的嗡聲
+          this.beep(660, 0.08, 0.12 * v);
+          setTimeout(() => this.beep(990, 0.12, 0.1 * v), 70);
+          this.burst(1800, 2, 0.3, 0.18 * v);
+          break;
+        }
         if (e.kind === 'mine' || e.kind === 'cluster') {
           this.burst(1500, 3, 0.08, v * 0.3);
           this.beep(e.kind === 'mine' ? 330 : 520, 0.06, v * 0.12);

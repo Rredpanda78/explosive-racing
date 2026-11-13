@@ -7,7 +7,7 @@ import { pickMissions, type Mission } from './missions';
 import type { Profile } from './save';
 import type { HazardDef, Track } from './track';
 import { clamp, mulberry32, wrapAngle } from './util';
-import { BURN_DPS, BURN_TIME, LASER_CHARGE, laserCooldown, laserKeep, laserWidth, lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
+import { BURN_DPS, BURN_TIME, LASER_CHARGE, laserCooldown, laserKeep, laserWidth, lvl3Mul, PERK_LVL5, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, shieldHalfArc, shieldTime, weaponLvlMul, type PrimaryDef, type SecondaryId } from './weapons';
 import { DIFFICULTY } from './difficulty';
 
 export type RaceMode = 'race' | 'elim';
@@ -60,6 +60,8 @@ export type RaceEvent =
   | { t: 'blast'; x: number; y: number; z: number; r: number; gy: number; kart: boolean }
   | { t: 'kill'; killer: Kart | null; victim: Kart; streak: number }
   | { t: 'launch'; k: Kart; kind: SecondaryId }
+  /** 後方護盾擋下一次攻擊 */
+  | { t: 'block'; k: Kart; x: number; y: number; z: number }
   /** 雷射射出：hits = 打中幾台車 */
   | { t: 'rail'; k: Kart; x: number; y: number; z: number; len: number; hits: number }
   | { t: 'lock'; k: Kart; by: Kart }
@@ -311,6 +313,7 @@ export class Race {
       k.firing = Math.max(0, k.firing - dt);
       k.lockT = Math.max(0, k.lockT - dt);
       k.hazardCd = Math.max(0, k.hazardCd - dt);
+      k.shieldT = Math.max(0, k.shieldT - dt);
       if (k.dead) {
         k.respawnT -= dt;
         if (k.respawnT <= 0) {
@@ -424,6 +427,7 @@ export class Race {
   /** 遠端車：主武器照「有沒有按著」在這裡模擬（只有打到自己控制的車才算傷害） */
   private stepRemote(k: Kart, dt: number, racing: boolean): void {
     k.firing = Math.max(0, k.firing - dt);
+    k.shieldT = Math.max(0, k.shieldT - dt);
     k.lockT = Math.max(0, k.lockT - dt);
     k.sinceDamage += dt;
     if (!racing || k.dead || k.finished) {
@@ -578,6 +582,7 @@ export class Race {
 
   private destroy(v: Kart, attacker: Kart | null): void {
     v.hp = 0;
+    v.shieldT = 0;
     v.dead = true;
     v.deaths++;
     v.streak = 0;
@@ -609,6 +614,26 @@ export class Race {
     this.net?.onKill(v, attacker);
   }
 
+  /**
+   * 後方護盾：從 (sx, sz) 這個方向來的攻擊有沒有被 v 的護盾擋住。
+   * 護盾是車尾的一段弧，攻擊來源在車尾方向的扇形（Lv.1 150°、Lv.5 220°）內就擋下
+   */
+  shieldBlocks(v: Kart, sx: number, sz: number): boolean {
+    if (v.shieldT <= 0 || v.dead || v.out) return false;
+    const dx = sx - v.x, dz = sz - v.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.05) return false;
+    const cos = -(dx * Math.sin(v.heading) + dz * Math.cos(v.heading)) / d;
+    return cos > Math.cos(shieldHalfArc(v.secondaryLvl));
+  }
+
+  /** 擋下的位置：從車中心往攻擊來源方向，護盾半徑上的一點 */
+  private blockAt(v: Kart, sx: number, sz: number): void {
+    const dx = sx - v.x, dz = sz - v.z;
+    const d = Math.max(0.01, Math.hypot(dx, dz));
+    this.events.push({ t: 'block', k: v, x: v.x + (dx / d) * 2.1, y: v.y + 0.9, z: v.z + (dz / d) * 2.1 });
+  }
+
   /** 把車撞飛：往 (dx,dz) 方向推、離地、翻滾 */
   private knock(k: Kart, dx: number, dz: number, push: number, lift: number): void {
     if (k.dead || k.invulnT > 0 || k.remote) return;
@@ -635,6 +660,11 @@ export class Race {
       const dx = k.x - x, dz = k.z - z;
       const d = Math.hypot(dx, dz);
       if (d > radius + 1.2) continue;
+      // 爆炸中心在護盾後面：整個擋下
+      if (this.shieldBlocks(k, x, z)) {
+        this.blockAt(k, x, z);
+        continue;
+      }
       const f = clamp(1 - 0.6 * (d / radius), 0.3, 1);
       const immune = k.invulnT > 0;
       this.damage(k, dmg * f, owner);
@@ -862,6 +892,7 @@ export class Race {
       case 'mine': this.dropMine(k); break;
       case 'cluster': this.dropCluster(k, p.seed); break;
       case 'missile': this.fireHoming(k, p.targets ?? []); break;
+      case 'shield': k.shieldT = shieldTime(k.secondaryLvl); break;
     }
     this.events.push({ t: 'launch', k, kind: k.secondary });
   }
@@ -954,6 +985,10 @@ export class Race {
       if (o === k || o.dead || o.out || o.invulnT > 0) continue;
       const d = inCone(o.x, o.z, o.y, 1.1);
       if (d < 0) continue;
+      if (this.shieldBlocks(o, k.x, k.z)) {
+        if (this.rng() < 0.15) this.blockAt(o, k.x, k.z);
+        continue;
+      }
       this.damage(o, dmg * (1 - 0.4 * (d / range)), k);
       o.burnT = top ? 4 : BURN_TIME;
       o.burnBy = k;
@@ -989,7 +1024,8 @@ export class Race {
     const { ox, oy, oz, fx, fz, tp, len } = this.laserReach(k);
     const w = laserWidth(k.primaryLvl);
     const keep = laserKeep(k.primaryLvl);
-    const hits: { t: number; hit: (p: number) => boolean }[] = [];
+    /** 回傳 1 = 打中車（消耗威力）、0 = 打中物件、-1 = 被護盾擋下（光束停在這裡） */
+    const hits: { t: number; hit: (p: number) => number }[] = [];
     const ray = (x: number, z: number, r: number): number => {
       const dx = x - ox, dz = z - oz;
       const t = dx * fx + dz * fz;
@@ -1001,36 +1037,42 @@ export class Race {
       const t = ray(o.x, o.z, w);
       if (t < 0 || Math.abs(o.y + 0.9 - (oy + tp * t)) > 2.2) continue;
       hits.push({ t, hit: (p) => {
+        if (this.shieldBlocks(o, ox, oz)) {
+          this.blockAt(o, ox, oz);
+          return -1;
+        }
         this.damage(o, Math.min(o.hp + 0.5, o.maxHp * 1.02 * p), k);
         this.events.push({ t: 'hit', k: o, by: k, x: o.x, y: o.y + 0.9, z: o.z, w: 'laser' });
-        return true;
+        return 1;
       } });
     }
     for (const b of this.barrels) {
       if (b.respawnT > 0 || b.fuse > 0) continue;
       const t = ray(b.x, b.z, 0.9);
-      if (t >= 0) hits.push({ t, hit: () => { this.detonate(b, k); return false; } });
+      if (t >= 0) hits.push({ t, hit: () => { this.detonate(b, k); return 0; } });
     }
     for (const m of this.mines) {
       if (m.dead || m.fuse > 0) continue;
       const t = ray(m.x, m.z, 0.7);
-      if (t >= 0) hits.push({ t, hit: () => { m.by = k; this.explodeMine(m); return false; } });
+      if (t >= 0) hits.push({ t, hit: () => { m.by = k; this.explodeMine(m); return 0; } });
     }
     for (const b of this.boulders) {
       if (b.dead || b.enterT > 0.45) continue;
       const t = ray(b.x, b.z, b.r);
-      if (t >= 0) hits.push({ t, hit: (p) => { this.hurtBoulder(b, 120 * p, k); return false; } });
+      if (t >= 0) hits.push({ t, hit: (p) => { this.hurtBoulder(b, 120 * p, k); return 0; } });
     }
     hits.sort((p, q) => p.t - q.t);
     // 電腦的傷害倍率（簡單／普通難度 < 1）也套用在雷射上，玩家永遠是一發打爆
-    let power = Math.min(1, k.dmgMul), n = 0;
+    let power = Math.min(1, k.dmgMul), n = 0, end = len;
     for (const h of hits) {
       if (power < 0.05) break;
-      if (h.hit(power)) { power *= keep; n++; }
+      const r = h.hit(power);
+      if (r < 0) { end = h.t; break; }
+      if (r > 0) { power *= keep; n++; }
     }
-    k.beamLen = len + 1.3;
+    k.beamLen = end + 1.3;
     k.beamHit = n > 0;
-    this.events.push({ t: 'rail', k, x: ox, y: oy, z: oz, len, hits: n });
+    this.events.push({ t: 'rail', k, x: ox, y: oy, z: oz, len: end, hits: n });
   }
 
   /** 火箭：朝正前方直線飛行 */
@@ -1262,6 +1304,13 @@ export class Race {
         if (cx * cx + cz * cz < 2.1 && t < ht && Math.abs(b.y - (k.y + 0.9)) < 2.2) { ht = t; hit = k; }
       }
       if (!hit && this.hitObject(b.x + sx, b.z + sz, 0.45, b.owner, b.dmg)) {
+        B[i] = B[B.length - 1];
+        B.pop();
+        continue;
+      }
+      if (hit && this.shieldBlocks(hit, b.x - b.vx, b.z - b.vz)) {
+        // 從後面打來的子彈打在護盾上
+        this.blockAt(hit, b.x - b.vx, b.z - b.vz);
         B[i] = B[B.length - 1];
         B.pop();
         continue;

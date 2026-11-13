@@ -31,8 +31,8 @@ const KEY = 'explosive-racing-save-v1';
 export function defaultProfile(): Profile {
   return {
     cash: 0,
-    owned: { mg: true, vulcan: false, flame: false, laser: false, rocket: true, grenade: false, mine: false, cluster: false, missile: false },
-    lvl: { mg: 1, vulcan: 1, flame: 1, laser: 1, rocket: 1, grenade: 1, mine: 1, cluster: 1, missile: 1 },
+    owned: { mg: true, vulcan: false, flame: false, laser: false, rocket: true, grenade: false, mine: false, cluster: false, missile: false, shield: false },
+    lvl: { mg: 1, vulcan: 1, flame: 1, laser: 1, rocket: 1, grenade: 1, mine: 1, cluster: 1, missile: 1, shield: 1 },
     primary: 'mg',
     secondary: 'rocket',
     car: { engine: 0, n2o: 0, armor: 0 },

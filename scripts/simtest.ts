@@ -203,4 +203,33 @@ runAll('elim', 777);
   // 使用者要求：比一般甩尾多轉一些就好（約 15~20%）
   if (hard.deg < plain.deg * 1.1 || hard.deg > plain.deg * 1.3) throw new Error('hard drift should turn 10-30% more than a normal drift');
 }
+// ---- 4. 後方護盾：後面來的爆炸、子彈擋得住，前面的擋不住 ----
+{
+  const race = new Race(new Track(TRACKS[0]), defaultProfile(), 'race', 3);
+  for (const o of race.karts) if (!o.isPlayer) o.x += 5000;
+  const k = race.player;
+  while (race.state === 'countdown') race.step(1 / 60, emptyInput());
+  const enemy = race.karts[0];
+  k.secondary = 'shield';
+  k.invulnT = 0;
+  const fx = Math.sin(k.heading), fz = Math.cos(k.heading);
+  const shot = (from: number) => {
+    k.shieldT = 3;
+    k.hp = k.maxHp;
+    race.events.length = 0;
+    // 從前方（from = 1）或後方（-1）飛來的一發子彈
+    race.bullets.push({ x: k.x + fx * 8 * from, y: k.y + 0.95, z: k.z + fz * 8 * from, vx: -fx * 120 * from, vy: 0, vz: -fz * 120 * from, life: 1, dmg: 10, owner: enemy, pierce: 0, skip: null, idx: k.idx });
+    for (let i = 0; i < 12; i++) race.step(1 / 60, emptyInput());
+    const bullet = k.maxHp - k.hp;
+    k.hp = k.maxHp;
+    race.explodeAt(k.x + fx * 2.5 * from, k.y + 0.5, k.z + fz * 2.5 * from, k.y, 6, 30, enemy);
+    const blast = k.maxHp - k.hp;
+    const blocks = race.events.filter((e) => e.t === 'block').length;
+    return { bullet, blast, blocks };
+  };
+  const back = shot(-1), front = shot(1);
+  console.log(`shield: from behind bullet -${back.bullet.toFixed(0)} blast -${back.blast.toFixed(0)} (blocks ${back.blocks}); from front bullet -${front.bullet.toFixed(0)} blast -${front.blast.toFixed(0)}`);
+  if (back.bullet > 0 || back.blast > 0 || back.blocks < 2) throw new Error('shield did not block attacks from behind');
+  if (front.bullet <= 0 || front.blast <= 0) throw new Error('shield blocked attacks from the front');
+}
 console.log('SIM OK');

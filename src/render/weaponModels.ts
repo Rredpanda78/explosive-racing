@@ -232,6 +232,14 @@ export function buildSecondary(id: SecondaryId): THREE.Group {
     g.add(nose);
     g.add(box(0.012, 0.05, 0.4, M.white, 0.156, 0.3, 0.02));
     g.add(mesh(new THREE.CylinderGeometry(0.08, 0.02, 0.05, 10).rotateX(-0.6), M.steel, -0.1, 0.46, -0.22));
+  } else if (id === 'shield') {
+    // 護盾發射器：車尾的扁平底座、半圓形的發射板與發光條
+    g.add(box(0.56, 0.08, 0.3, M.steelDark, 0, 0.04, 0));
+    const plate = mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 16, 1, false, Math.PI / 2, Math.PI).rotateX(Math.PI / 2), M.steel, 0, 0.1, -0.12);
+    g.add(plate);
+    g.add(mesh(new THREE.TorusGeometry(0.28, 0.025, 6, 16, Math.PI), M.mineLight, 0, 0.1, -0.16));
+    g.add(box(0.06, 0.18, 0.06, M.gun, -0.2, 0.17, 0.06));
+    g.add(box(0.06, 0.18, 0.06, M.gun, 0.2, 0.17, 0.06));
   } else if (id === 'mine') {
     // 地雷投放箱：黃黑警示帶，上面擺著一顆六角地雷
     g.add(box(0.62, 0.3, 0.4, M.gun, 0, 0.15, 0));

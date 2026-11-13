@@ -11,7 +11,7 @@ import { formatTime } from '../game/util';
 import type { OnlineSession } from '../net/online';
 import {
   BURN_DPS, PERK_LVL3, PERK_LVL5, CAR_UPGRADES, MAX_CAR_LVL, MAX_WEAPON_LVL, PRIMARY, PRIMARY_IDS, SECONDARY, SECONDARY_IDS, carUpgradeCost, isPrimary,
-  laserCooldown, laserKeep, weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
+  laserCooldown, laserKeep, shieldHalfArc, shieldTime, weaponLvlMul, weaponUpgradeCost, type CarUpgradeId, type SecondaryId, type WeaponId,
 } from '../game/weapons';
 
 export interface TrackInfo {
@@ -461,7 +461,10 @@ export class Screens {
           : `每秒傷害 ${dps}　射程 ${P.range} m`;
     } else {
       const S = SECONDARY[id as SecondaryId];
-      info = `傷害 ${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}　冷卻 ${S.cooldown} 秒`;
+      const lv1 = Math.max(1, lvl);
+      info = id === 'shield'
+        ? `護住車尾 ${Math.round((shieldHalfArc(lv1) * 2 * 180) / Math.PI)}°　持續 ${shieldTime(lv1)} 秒　冷卻 ${S.cooldown} 秒`
+        : `傷害 ${(S.dmg * mul).toFixed(0)}${S.count > 1 ? ' × ' + S.count : ''}　冷卻 ${S.cooldown} 秒`;
     }
     const lv = owned ? lvl : 0;
     const perks = `<div class="perks">

@@ -30,6 +30,7 @@ const SECONDARY_ICON: Record<SecondaryId, string> = {
   grenade: svg('<circle cx="22" cy="28" r="12"/><path d="M28 17l4-6h6M38 11l3-3M38 11l4 1"/>'),
   mine: svg('<path d="M24 8l14 8v16l-14 8-14-8V16z"/><circle cx="24" cy="24" r="5" fill="currentColor" stroke="none"/>'),
   cluster: svg('<circle cx="15" cy="30" r="7"/><circle cx="33" cy="30" r="7"/><circle cx="24" cy="15" r="7"/><path d="M8 30h14M26 30h14M17 15h14" stroke-width="2"/>'),
+  shield: svg('<path d="M7 33a17 17 0 0 1 34 0" stroke-width="4.4"/><path d="M13 33a11 11 0 0 1 22 0" stroke-width="2" opacity=".6"/><rect x="18" y="31" width="12" height="9" rx="2"/>'),
   missile: svg('<circle cx="34" cy="16" r="9" stroke-width="2.4"/><path d="M34 6v4M34 22v4M24 16h4M40 16h4"/><path d="M6 40l18-18M10 32l-4 2 2 6 6 2 2-4" />'),
 };
 

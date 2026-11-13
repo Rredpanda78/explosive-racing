@@ -500,6 +500,7 @@ export class OnlineSession {
       k.driftDir = fl & 8 ? 1 : -1;
       k.netFire = (fl & 4) !== 0;
       k.hop = (fl & 16) !== 0;
+      k.shieldT = fl & 32 ? Math.max(k.shieldT, 0.25) : 0;
       k.boostT = c[11];
       k.miniT = c[12];
       k.padT = c[13];

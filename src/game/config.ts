@@ -94,6 +94,9 @@ export const CFG = {
   draftSpeedMul: 1.07,
   draftAccel: 6,
 
+  /** 開著 N2O 甩尾的集氣倍率（使用者指定 +20%） */
+  boostDriftGauge: 1.2,
+
   /** 爆炸桶：使用者要求先全部拿掉（程式保留，改成 true 就會回來） */
   barrels: false,
 
