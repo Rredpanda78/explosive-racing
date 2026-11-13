@@ -9,6 +9,7 @@ import { cleanCode, ERR_TEXT, newRoomCode } from './net/room';
 import { loadProfile, saveProfile } from './game/save';
 import { Track, TRACKS } from './game/track';
 import { Input } from './input';
+import { setupMobileViewport } from './mobile';
 import { CAR_MODELS, DEBRIS_MODELS, KART_MODELS, LANDMARK_MODELS, loadModels, PROP_MODELS } from './render/assets';
 import { GameView } from './render/view';
 import { applyLayout, LAYOUT_IDS, loadSettings, saveSettings, type Settings } from './settings';
@@ -402,7 +403,8 @@ document.getElementById('btn-pause')!.addEventListener('click', () => setPaused(
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && race && !paused && !resultsShown) setPaused(true);
 });
-window.addEventListener('resize', () => view.resize());
+// 視窗大小與轉向（含 iPhone Safari 轉向後放大卡住的修正）
+setupMobileViewport(() => view.resize());
 window.addEventListener('pointerdown', (e) => {
   // 瀏覽器要求使用者互動後才能出聲：第一次點擊時啟動音訊與選單音樂
   audio.init();

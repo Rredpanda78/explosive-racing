@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Explosive Racing 圖示：深藍底、珊瑚紅爆炸、正面的卡丁車（原創設計） -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#2a5594"/>
+      <stop offset="0.55" stop-color="#173563"/>
+      <stop offset="1" stop-color="#0b1a33"/>
+    </radialGradient>
+    <radialGradient id="boom" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffb347"/>
+      <stop offset="0.55" stop-color="#f06a4a"/>
+      <stop offset="1" stop-color="#c8443a"/>
+    </radialGradient>
+    <pattern id="stripes" width="44" height="44" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)">
+      <rect width="22" height="44" fill="#f3ead5" opacity="0.05"/>
+    </pattern>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#stripes)"/>
+
+  <!-- 速度線 -->
+  <g stroke="#f3ead5" stroke-linecap="round" opacity="0.9">
+    <path d="M96 640 H250" stroke-width="22"/>
+    <path d="M140 700 H262" stroke-width="16" opacity="0.7"/>
+    <path d="M774 640 H928" stroke-width="22"/>
+    <path d="M762 700 H884" stroke-width="16" opacity="0.7"/>
+  </g>
+
+  <!-- 爆炸：外圈珊瑚紅、內圈奶油色 -->
+  <path fill="url(#boom)" d="M512 92 L568 278 L700 136 L676 330 L860 268 L740 420 L938 452 L752 536 L884 676 L686 640 L700 840 L564 694 L512 884 L460 694 L324 840 L338 640 L140 676 L272 536 L86 452 L284 420 L164 268 L348 330 L324 136 L456 278 Z"/>
+  <path fill="#f3ead5" d="M512 236 L546 352 L630 270 L612 384 L726 352 L648 444 L760 470 L654 520 L726 610 L620 590 L628 704 L548 616 L512 720 L476 616 L396 704 L404 590 L298 610 L370 520 L264 470 L376 444 L298 352 L412 384 L394 270 L478 352 Z"/>
+
+  <!-- 地面影子 -->
+  <ellipse cx="512" cy="752" rx="318" ry="30" fill="#0b1a33" opacity="0.55"/>
+
+  <!-- 卡丁車（正面）：奶油色描邊，縮小成小圖示也看得清楚 -->
+  <g stroke="#f3ead5" stroke-width="12" stroke-linejoin="round" paint-order="stroke">
+    <!-- 尾翼 -->
+    <rect x="300" y="386" width="424" height="34" rx="12" fill="#13284b"/>
+    <rect x="372" y="412" width="22" height="70" fill="#13284b"/>
+    <rect x="630" y="412" width="22" height="70" fill="#13284b"/>
+    <!-- 車手安全帽 -->
+    <circle cx="512" cy="468" r="84" fill="#13284b"/>
+    <rect x="446" y="448" width="132" height="44" rx="20" fill="#e8574a" stroke="none"/>
+    <path d="M466 412 A70 70 0 0 1 556 404" stroke="#f3ead5" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.8"/>
+    <!-- 輪胎 -->
+    <rect x="232" y="566" width="104" height="176" rx="30" fill="#0b1a33"/>
+    <rect x="688" y="566" width="104" height="176" rx="30" fill="#0b1a33"/>
+    <rect x="252" y="596" width="64" height="16" rx="8" fill="#f3ead5" opacity="0.35" stroke="none"/>
+    <rect x="708" y="596" width="64" height="16" rx="8" fill="#f3ead5" opacity="0.35" stroke="none"/>
+    <!-- 車身 -->
+    <path d="M318 676 L344 572 L432 534 L592 534 L680 572 L706 676 L650 716 L374 716 Z" fill="#13284b"/>
+    <!-- 中央賽車條紋 -->
+    <path d="M478 534 L546 534 L560 716 L464 716 Z" fill="#e8574a" stroke="none"/>
+    <!-- 車頭燈 -->
+    <circle cx="400" cy="640" r="22" fill="#ffd23f" stroke="none"/>
+    <circle cx="624" cy="640" r="22" fill="#ffd23f" stroke="none"/>
+    <!-- 前保險桿 -->
+    <rect x="360" y="706" width="304" height="40" rx="16" fill="#0b1a33"/>
+    <rect x="452" y="716" width="120" height="16" rx="8" fill="#f3ead5" opacity="0.85" stroke="none"/>
+  </g>
+</svg>

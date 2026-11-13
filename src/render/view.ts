@@ -100,6 +100,16 @@ export class GameView {
     this.shadows = quality === 'high' || (quality === 'medium' && !mobile);
     const r = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: mobile, powerPreference: 'high-performance' }));
     r.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'low' ? 1 : quality === 'medium' ? 1.5 : 2));
+    // iPhone 記憶體不夠時會把 3D 畫面收回（常在轉向、切換 App 時）：等它還回來，5 秒還沒回來就重新載入，不要卡在最後一格
+    let lostTimer = 0;
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      lostTimer = window.setTimeout(() => location.reload(), 5000);
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      window.clearTimeout(lostTimer);
+      this.resize();
+    });
     // 色調映射：讓太陽、火焰這些很亮的地方平順地壓回螢幕能顯示的範圍，又不會讓顏色變灰
     r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1.08;

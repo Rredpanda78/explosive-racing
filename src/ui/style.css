@@ -8,7 +8,10 @@
   font-family: "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* iPhone 橫屏時不要自動把字放大；整頁固定不捲動（轉向後才不會偏掉） */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 html, body {
+  position: fixed; inset: 0; width: 100%;
   margin: 0; height: 100%; overflow: hidden; background: #14161c; color: #fff;
   user-select: none; -webkit-user-select: none; touch-action: none; overscroll-behavior: none;
 }
