@@ -1,11 +1,10 @@
 import type { KartInput } from './game/kart';
+import { defaultKeys, expand, KEY_ACTIONS, type KeyAction, type KeyMap } from './keymap';
 
 type TouchBtn = 'drift' | 'boost' | 'brake' | 'fire1' | 'fire2' | 'look' | 'driftl' | 'driftr';
 
-const GAME_KEYS = new Set([
-  'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'ShiftLeft', 'ShiftRight',
-  'ControlLeft', 'ControlRight', 'KeyZ', 'KeyX', 'KeyC', 'KeyR',
-]);
+/** 比賽中一律攔截的鍵（避免方向鍵、空白鍵捲動頁面），其餘的依目前鍵位加進來 */
+const ALWAYS_CAPTURE = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'];
 
 /**
  * 傾斜轉向：用重力在螢幕平面上的方向算出手機轉了幾度（像握方向盤）。
@@ -83,18 +82,34 @@ export class Input {
   private lastRead = performance.now();
   private steerTouch = 0;
   private out: KartInput = { steer: 0, accel: 0, drift: false, boost: false, firePrimary: false, fireSecondary: false };
+  /** 每個動作實際對應的 KeyboardEvent.code（Shift 展開成左右兩顆） */
+  private codes = {} as Record<KeyAction, string[]>;
+  private gameKeys = new Set<string>();
 
   constructor() {
+    this.setKeys(defaultKeys());
     window.addEventListener('keydown', (e) => {
-      if (this.capture && GAME_KEYS.has(e.code)) e.preventDefault();
+      if (this.capture && this.gameKeys.has(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
       this.touchMode = false;
-      if (e.code === 'Escape' || e.code === 'KeyP') this.onPause();
-      if (e.code === 'KeyR') this.onReset();
+      // Esc 一律可以暫停（改鍵時 Esc 是取消，所以不開放改掉）
+      if (e.code === 'Escape' || this.codes.pause.includes(e.code)) this.onPause();
+      if (this.codes.reset.includes(e.code)) this.onReset();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.clear());
+  }
+
+  /** 套用設定頁的鍵位 */
+  setKeys(map: KeyMap): void {
+    const all = new Set(ALWAYS_CAPTURE);
+    for (const { id } of KEY_ACTIONS) {
+      const list = map[id].flatMap(expand);
+      this.codes[id] = list;
+      for (const c of list) all.add(c);
+    }
+    this.gameKeys = all;
   }
 
   clear(): void {
@@ -104,13 +119,14 @@ export class Input {
     document.querySelectorAll('#touch .on').forEach((el) => el.classList.remove('on'));
   }
 
-  private down(...codes: string[]): boolean {
-    for (const c of codes) if (this.keys.has(c)) return true;
+  /** 這個動作的任一顆鍵按著 */
+  private down(a: KeyAction): boolean {
+    for (const c of this.codes[a]) if (this.keys.has(c)) return true;
     return false;
   }
 
   get lookBack(): boolean {
-    return this.down('KeyC') || this.touch.look;
+    return this.down('look') || this.touch.look;
   }
 
   read(): KartInput {
@@ -120,8 +136,8 @@ export class Input {
     const dt = Math.min(0.05, (now - this.lastRead) / 1000);
     this.lastRead = now;
     let want = 0;
-    if (this.down('ArrowLeft', 'KeyA')) want += 1;
-    if (this.down('ArrowRight', 'KeyD')) want -= 1;
+    if (this.down('left')) want += 1;
+    if (this.down('right')) want -= 1;
     // 0.12 秒轉到底；換邊或放開時立刻歸零
     if (want === 0 || Math.sign(want) !== Math.sign(this.kbSteer)) this.kbSteer = 0;
     if (want !== 0) this.kbSteer = Math.max(-1, Math.min(1, this.kbSteer + want * (dt / 0.12) + want * 0.18 * (this.kbSteer === 0 ? 1 : 0)));
@@ -131,15 +147,15 @@ export class Input {
     if (t.driftl || t.driftr) steer = t.driftl ? 1 : -1;
     o.steer = steer;
     let accel = 0;
-    if (this.down('ArrowUp', 'KeyW')) accel += 1;
-    if (this.down('ArrowDown', 'KeyS')) accel -= 1;
+    if (this.down('up')) accel += 1;
+    if (this.down('down')) accel -= 1;
     // 觸控模式：自動油門，按住煞車鍵才減速
     if (this.touchMode) accel = t.brake ? -1 : 1;
     o.accel = accel;
-    o.drift = this.down('ShiftLeft', 'ShiftRight') || t.drift || t.driftl || t.driftr;
-    o.boost = this.down('ControlLeft', 'ControlRight', 'Space') || t.boost;
-    o.firePrimary = this.down('KeyZ') || t.fire1;
-    o.fireSecondary = this.down('KeyX') || t.fire2;
+    o.drift = this.down('drift') || t.drift || t.driftl || t.driftr;
+    o.boost = this.down('boost') || t.boost;
+    o.firePrimary = this.down('fire1') || t.fire1;
+    o.fireSecondary = this.down('fire2') || t.fire2;
     return o;
   }
 
