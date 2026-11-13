@@ -72,6 +72,31 @@ export const runoffPad = (w: number) => Math.min(BARRIER_DEPTH, 0.95 + 2 * w);
 function surfaceTex(style: Track['runoffSurface'], desert: boolean): THREE.CanvasTexture {
   return canvasTex(256, 256, (c) => {
     const r = mulberry32(17);
+    if (style === 'forest') {
+      // 森林地面：草地與泥土斑塊，撒滿紅橙黃的落葉
+      c.fillStyle = '#5f7d35';
+      c.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 46; i++) {
+        c.fillStyle = r() < 0.6 ? 'rgba(118,86,50,0.45)' : 'rgba(80,110,40,0.4)';
+        c.beginPath();
+        c.ellipse(r() * 256, r() * 256, 10 + r() * 26, 6 + r() * 16, r() * 3, 0, Math.PI * 2);
+        c.fill();
+      }
+      for (let i = 0; i < 2600; i++) {
+        const v = r();
+        c.fillStyle = v < 0.35 ? 'rgba(40,70,25,0.35)' : v < 0.6 ? 'rgba(160,200,100,0.22)' : v < 0.75 ? 'rgba(200,100,40,0.7)' : v < 0.88 ? 'rgba(220,165,60,0.7)' : 'rgba(140,55,35,0.7)';
+        c.fillRect(r() * 256, r() * 256, v < 0.6 ? 1 + r() * 2 : 2 + r() * 3, v < 0.6 ? 2 + r() * 3 : 2 + r() * 2);
+      }
+      c.strokeStyle = 'rgba(70,50,30,0.18)';
+      c.lineWidth = 7;
+      for (const x0 of [74, 100, 168, 194]) {
+        c.beginPath();
+        c.moveTo(x0, 0);
+        c.bezierCurveTo(x0 + 28, 90, x0 - 24, 170, x0 + 8, 256);
+        c.stroke();
+      }
+      return;
+    }
     if (style === 'grass') {
       c.fillStyle = '#4f9a3c';
       c.fillRect(0, 0, 256, 256);
@@ -224,6 +249,7 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
   const tyresRed: THREE.Matrix4[] = [], tyresWhite: THREE.Matrix4[] = [];
   const rocks: THREE.Matrix4[] = [], rockCol: number[] = [];
   const bales: THREE.Matrix4[] = [], baleCol: number[] = [];
+  const logs: THREE.Matrix4[] = [], logCol: number[] = [];
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
   const rows = lowDetail ? 1 : 2;
   const rockBase = new THREE.Color(desert ? 0xb4683f : 0x8d877c);
@@ -266,6 +292,21 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
           stack++;
         }
         carryT = t - len;
+      } else if (style === 'forest') {
+        carryT = 0;
+        // 疊起來的圓木：下面兩根並排、上面一根，每 3 公尺一組，長度比間距長一點，看起來連成一道矮牆
+        const yaw = Math.atan2(bx - ax, bz - az);
+        let t = carryR;
+        for (; t < len; t += 3) {
+          const u = t / len, px = ax + (bx - ax) * u, pz = az + (bz - az) * u;
+          q.setFromAxisAngle(v.set(0, 1, 0), yaw + (rng() - 0.5) * 0.06);
+          for (const [o, h] of [[0.32, 0.3], [0.9, 0.3], [0.61, 0.82]] as [number, number][]) {
+            m4.compose(v.set(px + ox * o, y0 + h, pz + oz * o), q, sc.set(1, 1, 0.94 + rng() * 0.12));
+            logs.push(m4.clone());
+            logCol.push(c0.setRGB(1, 1, 1).multiplyScalar(0.82 + rng() * 0.3).getHex());
+          }
+        }
+        carryR = t - len;
       } else if (style === 'grass') {
         carryT = 0;
         // 乾草捆：沿著屏障線排一排，每隔一捆上面再疊一捆
@@ -340,6 +381,24 @@ export function buildRunoff(track: Track, theme: Theme, root: THREE.Group, shoul
     inst(tyreGeo, [new THREE.MeshLambertMaterial({ map: tyreTex(top) }), new THREE.MeshLambertMaterial({ color: cap })], list);
   }
   inst(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ flatShading: true }), rocks, rockCol);
+  if (logs.length) {
+    // 圓木：樹皮的縱紋與青苔，兩端是淺色的年輪切面
+    const barkTex = canvasTex(64, 32, (c) => {
+      c.fillStyle = '#6b4a2b';
+      c.fillRect(0, 0, 64, 32);
+      const r = mulberry32(37);
+      for (let i = 0; i < 90; i++) {
+        c.fillStyle = r() < 0.6 ? 'rgba(30,18,8,0.45)' : 'rgba(150,110,70,0.35)';
+        c.fillRect(r() * 64, r() * 32, 1 + r() * 2, 4 + r() * 12);
+      }
+      c.fillStyle = 'rgba(90,130,50,0.5)';
+      c.fillRect(0, 0, 64, 5);
+    });
+    // 圓柱沿 Y 軸，轉成沿 Z 軸（屏障的方向）
+    const logGeo = new THREE.CylinderGeometry(0.29, 0.31, 3.1, 7).rotateX(Math.PI / 2);
+    // 群組：側面（樹皮）、兩端的切面
+    inst(logGeo, [new THREE.MeshLambertMaterial({ map: barkTex }), new THREE.MeshLambertMaterial({ color: 0xd9b07a }), new THREE.MeshLambertMaterial({ color: 0xd9b07a })], logs, logCol);
+  }
   if (bales.length) {
     // 乾草捆：草稈的橫紋與兩道綁繩
     const strawTex = canvasTex(64, 64, (c) => {

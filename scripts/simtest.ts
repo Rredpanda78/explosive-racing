@@ -343,7 +343,7 @@ for (const def of TRACKS) {
 
   // 找一段 200 m（街道賽找不到就 150 m）長、緩衝區至少 9.5 m、沒有急彎、懸崖與跳台（後面 260 m 內）的路段來測
   let at = -1, side = 1, best = 0;
-  for (const len of [200, 150]) {
+  for (const [len, cmax] of [[200, 0.02], [150, 0.02], [100, 0.025]]) {
   if (at >= 0) break;
   const span = Math.round(len / track.spacing);
   for (let i = 0; i < track.n; i += 4) {
@@ -352,7 +352,7 @@ for (const def of TRACKS) {
       let mn = Infinity;
       for (let j = 0; j <= span && mn >= 9.5; j++) {
         const q = track.wrap(i + j);
-        if (track.cliffAt(q, sg) || Math.abs(track.samples[q].curv) > 0.02) mn = 0;
+        if (track.cliffAt(q, sg) || Math.abs(track.samples[q].curv) > cmax) mn = 0;
         else mn = Math.min(mn, track.runoffW(q, sg));
       }
       if (mn >= 9.5 && mn > best) { best = mn; at = i * track.spacing; side = sg; }

@@ -81,6 +81,8 @@ export const CFG = {
   runoffSurfaces: {
     sand: { speed: 0.65, drag: 12 },
     grass: { speed: 0.7, drag: 6 },
+    // 森林地面（草地、泥土與落葉）：跟草地一樣
+    forest: { speed: 0.7, drag: 6 },
     paved: { speed: 0.8, drag: 0 },
   },
 

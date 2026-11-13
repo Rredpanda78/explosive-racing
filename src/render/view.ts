@@ -470,8 +470,9 @@ export class GameView {
     const fx = Math.sin(k.heading), fz = Math.cos(k.heading), lx = fz, lz = -fx;
     // 依地面：砂石揚起黃沙、草地翻起泥土與草屑、鋪面只有一點點灰
     const surf = track.runoffSurface;
-    const [dr, dg, db] = surf === 'grass' ? [0.55, 0.48, 0.34] : surf === 'paved' ? [0.72, 0.72, 0.75] : [0.86, 0.71, 0.5];
-    const [br, bg, bb] = surf === 'grass' ? [0.3, 0.5, 0.18] : surf === 'paved' ? [0.35, 0.35, 0.38] : [0.42, 0.3, 0.2];
+    const [dr, dg, db] = surf === 'grass' ? [0.55, 0.48, 0.34] : surf === 'forest' ? [0.5, 0.41, 0.29] : surf === 'paved' ? [0.72, 0.72, 0.75] : [0.86, 0.71, 0.5];
+    // 甩出來的小東西：砂石、草屑、落葉
+    const [br, bg, bb] = surf === 'grass' ? [0.3, 0.5, 0.18] : surf === 'forest' ? [0.82, 0.42, 0.14] : surf === 'paved' ? [0.35, 0.35, 0.38] : [0.42, 0.3, 0.2];
     const rate = (this.mobile ? 24 : 48) * Math.min(1, Math.abs(k.speed) / 28) * (surf === 'paved' ? 0.35 : 1);
     for (let w = 0; w < 2; w++) {
       if (R() > dt * rate) continue;
