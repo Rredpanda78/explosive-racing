@@ -125,6 +125,8 @@ const TERRAIN_MIX: Record<string, { rock: number; patch: number; patchAmt: numbe
   meadow: { rock: 0x8a8376, patch: 0x8d6b47, patchAmt: 0.75 },
   desert: { rock: 0xa65a38, patch: 0xa8774a, patchAmt: 0.7 },
   city: { rock: 0x4b5263, patch: 0x3b4252, patchAmt: 0.7 },
+  // 海底：陡坡是深灰藍的礁岩，斑塊是比較暗、長了藻的沙
+  ocean: { rock: 0x4d5a5e, patch: 0x8f9a74, patchAmt: 0.6 },
 };
 
 /**

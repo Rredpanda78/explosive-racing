@@ -8,6 +8,7 @@ import { mulberry32 } from '../game/util';
 import { makeInstanced, makeLandmark, makeProp } from './assets';
 import { applyTerrainDetail, grassTufts, roadDetailMaterial } from './detail';
 import { buildForest, hasForest } from './forest';
+import { buildOcean, hasOcean, oceanGlass } from './ocean';
 import { buildRunoff, runoffPad } from './runoff';
 import type { Theme } from './themes';
 
@@ -122,6 +123,8 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   };
   const wrapD = (d: number) => ((d % L) + L) % L;
   const sampleAt = (dist: number): Sample => S[track.wrap(Math.round(wrapD(dist) / track.spacing))];
+  // 海底隧道（ocean.ts）：玻璃隧道裡的路段，玻璃牆就是護欄（不放彩色護欄、路燈、看板）
+  const glassAt = hasOcean(track.def.id) ? oceanGlass(track) : null;
 
   // ---------- 地形 ----------
   const terrain = makeTerrain(track);
@@ -313,7 +316,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     const s = S[i];
     const tramGap = trams.some((h) => Math.abs(relDist(s, h.dist)) < TRAM.width * 2 + 0.6);
     // 軟邊界：有緩衝區的路段不放彩色護欄（外圍屏障在 runoff.ts）
-    for (const sg of [1, -1]) gap[sg].push(tramGap || track.runoffW(i, sg) > 0 || (BR.length > 0 && inBranch(s.x + s.nx * sg * (hw + 0.6), s.z + s.nz * sg * (hw + 0.6), -0.4)));
+    for (const sg of [1, -1]) gap[sg].push(tramGap || track.runoffW(i, sg) > 0 || !!glassAt?.[i] || (BR.length > 0 && inBranch(s.x + s.nx * sg * (hw + 0.6), s.z + s.nz * sg * (hw + 0.6), -0.4)));
   }
   const wallOn = (sg: number) => (_s: Sample, i: number) => !gap[sg][i];
   for (const sg of [1, -1]) {
@@ -709,7 +712,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   }
   // 整條賽道：直線放路燈，彎道外側放旗塔，隔一段放看板
   const lampStep = night ? 30 : 42;
-  for (let d = 200; d < L - 80; d += lampStep) {
+  for (let d = 200; !glassAt && d < L - 80; d += lampStep) {
     const s = sampleAt(d);
     const out = s.curv > 0 ? -1 : 1; // 彎道外側
     const zone = Math.floor(d / 300) % 4;
@@ -1045,8 +1048,12 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const forest = hasForest(track.def.id)
     ? buildForest({ track, terrainH, grid: { x0: gx0, z0: gz0, step: STEP, nx: gnx, nz: gnz }, world: root, bounds: { minX, maxX, minZ, maxZ }, lake, props, shadows, lowDetail })
     : null;
+  // 蔚藍海廊：玻璃隧道、大廳與圓頂、珊瑚、海藻、魚群、沉船與海溝（src/render/ocean.ts）
+  const ocean = glassAt ? buildOcean({ track, terrainH, glass: glassAt, props, shadows, lowDetail, bounds: { minX, maxX, minZ, maxZ } }) : null;
   if (forest) {
     root.add(forest.group);
+  } else if (ocean) {
+    root.add(ocean.group);
   } else if (theme.vegetation === 'forest') {
     const spots = scatter(lowDetail ? 380 : 760, hw + 11, 9999, 0).filter((s) => s.d < 60 || rng() < 0.45);
     const lists: THREE.Matrix4[][] = [[], [], [], []];
@@ -1264,7 +1271,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const mMat = new THREE.MeshLambertMaterial({ color: theme.mountain, flatShading: true });
   const capMat2 = theme.mountainCap !== null ? new THREE.MeshLambertMaterial({ color: theme.mountainCap, flatShading: true }) : null;
   const mesa = theme.vegetation === 'desert';
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < (ocean ? 0 : 26); i++) {
     const a = (i / 26) * Math.PI * 2 + rng() * 0.2;
     const r = 760 + rng() * 260;
     const h = (mesa ? 90 : 150) + rng() * (mesa ? 120 : 190);
@@ -1364,7 +1371,7 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
   const envelope = new THREE.SphereGeometry(9, 12, 10).scale(1, 1.15, 1);
   const basket = new THREE.BoxGeometry(3, 2.4, 3);
   const basketMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3c });
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < (ocean ? 0 : 6); i++) {
     const g = new THREE.Group();
     const col = ACC[i % ACC.length];
     const e = new THREE.Mesh(envelope, night ? new THREE.MeshBasicMaterial({ color: glow(col, 1.5) }) : new THREE.MeshLambertMaterial({ color: col, flatShading: true }));
@@ -1379,12 +1386,16 @@ export function buildWorld(track: Track, theme: Theme, shadows: boolean, lowDeta
     root.add(g);
   }
 
+  // 海底：水面透下來的焦散光打在路面、地面與景物上；天空依鏡頭深度變暗
+  ocean?.finish(root, sky.material as THREE.ShaderMaterial);
+
   return {
     group: root,
     terrainH,
     update(dt, time, camera) {
       for (const u of updaters) u(dt, time);
       forest?.update(dt, time, camera);
+      ocean?.update(dt, time, camera);
       sky.position.copy(camera.position);
       if (stars) stars.position.copy(camera.position);
       if (clouds) clouds.rotation.y += dt * 0.004;
