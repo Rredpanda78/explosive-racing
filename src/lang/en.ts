@@ -42,6 +42,7 @@ export const en: typeof zh = {
   // ---------- main.ts ----------
   needCode: 'Enter the 4-character room code',
   layoutBar: 'Drag buttons to move them · Size',
+  pauseLayout: 'Move & resize buttons',
 
   // ---------- 主選單 ----------
   loadingPct: (n: number) => `Loading… ${n}%`,

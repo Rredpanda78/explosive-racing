@@ -455,8 +455,13 @@ function settingChanged(key: keyof Settings): void {
   applySettings();
 }
 
-/** 按鈕位置編輯：直接拖曳畫面上的按鈕，選中的按鈕可以調大小 */
+/**
+ * 按鈕位置編輯：直接拖曳畫面上的按鈕調位置；選中的按鈕可以用三種方式調大小：
+ * 拖右下角的圓點、兩指捏合縮放、上方的滑桿。從設定頁或比賽暫停畫面進來，按完成回到原本的畫面。
+ */
+const LAYOUT_MIN = 0.6, LAYOUT_MAX = 1.8;
 function editLayout(): void {
+  const fromPause = !!race && paused && !resultsShown;
   hud.setWeaponIcons(profile.primary, profile.secondary);
   screens.hide();
   touchRoot.classList.remove('hidden');
@@ -464,69 +469,134 @@ function editLayout(): void {
   document.body.classList.add('touch');
   const bar = document.createElement('div');
   bar.id = 'layout-bar';
-  bar.innerHTML = `${t.layoutBar} <input type="range" min="0.6" max="1.6" step="0.05" value="1" /> <button class="btn small">${t.reset}</button> <button class="btn small primary">${t.done}</button>`;
+  bar.innerHTML = `${t.layoutBar} <input type="range" min="${LAYOUT_MIN}" max="${LAYOUT_MAX}" step="0.05" value="1" /> <button class="btn small">${t.reset}</button> <button class="btn small primary">${t.done}</button>`;
   document.body.appendChild(bar);
+  // 選中按鈕右下角的縮放圓點
+  const handle = document.createElement('div');
+  handle.id = 'layout-handle';
+  handle.hidden = true;
+  document.body.appendChild(handle);
   const slider = bar.querySelector('input')!;
   const [resetBtn, doneBtn] = Array.from(bar.querySelectorAll('button'));
   let sel: HTMLElement | null = null;
   let drag: { id: string; el: HTMLElement; pid: number } | null = null;
+  /** 縮放中（圓點或兩指）：起始比例與起始距離 */
+  let resize: { s0: number; d0: number; pid: number } | null = null;
+  const pts = new Map<number, { x: number; y: number }>();
+  const clampS = (s: number) => Math.max(LAYOUT_MIN, Math.min(LAYOUT_MAX, s));
   const ensure = (el: HTMLElement): void => {
     if (settings.layout[el.id]) return;
     const r = el.getBoundingClientRect();
     settings.layout[el.id] = { x: ((r.left + r.width / 2) / innerWidth) * 100, y: ((r.top + r.height / 2) / innerHeight) * 100, s: 1 };
   };
+  const placeHandle = (): void => {
+    handle.hidden = !sel;
+    if (!sel) return;
+    // 靠畫面邊角的按鈕（例如右下角的煞車）：圓點收回畫面內，才點得到
+    const r = sel.getBoundingClientRect();
+    handle.style.left = Math.min(innerWidth - 18, r.right) + 'px';
+    handle.style.top = Math.min(innerHeight - 18, r.bottom) + 'px';
+  };
+  const relayout = (): void => {
+    applyLayout(settings);
+    if (sel) slider.value = String(settings.layout[sel.id]?.s ?? 1);
+    placeHandle();
+  };
+  const center = (el: HTMLElement): { x: number; y: number } => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  };
   const select = (el: HTMLElement | null): void => {
     sel?.classList.remove('sel');
     sel = el;
-    if (!el) return;
-    el.classList.add('sel');
-    slider.value = String(settings.layout[el.id]?.s ?? 1);
+    if (el) el.classList.add('sel');
+    relayout();
+  };
+  /** 兩指捏合：第二根手指按下時開始，比例跟著兩指距離變 */
+  const startPinch = (): void => {
+    if (!sel || pts.size < 2) return;
+    const [a, b] = [...pts.values()];
+    drag = null;
+    resize = { s0: settings.layout[sel.id].s, d0: Math.max(20, Math.hypot(a.x - b.x, a.y - b.y)), pid: -1 };
   };
   const down = (e: PointerEvent): void => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>(LAYOUT_IDS.map((i) => '#' + i).join(','));
     e.stopPropagation();
     e.preventDefault();
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2) return startPinch();
+    const el = (e.target as HTMLElement).closest<HTMLElement>(LAYOUT_IDS.map((i) => '#' + i).join(','));
     if (!el) return select(null);
     ensure(el);
     select(el);
     drag = { id: el.id, el, pid: e.pointerId };
   };
+  const handleDown = (e: PointerEvent): void => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!sel) return;
+    const c = center(sel);
+    resize = { s0: settings.layout[sel.id].s, d0: Math.max(12, Math.hypot(e.clientX - c.x, e.clientY - c.y)), pid: e.pointerId };
+    try { handle.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
   const move = (e: PointerEvent): void => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (resize && sel) {
+      e.stopPropagation();
+      let d: number;
+      if (resize.pid === -1) {
+        if (pts.size < 2) return;
+        const [a, b] = [...pts.values()];
+        d = Math.hypot(a.x - b.x, a.y - b.y);
+      } else {
+        if (e.pointerId !== resize.pid) return;
+        const c = center(sel);
+        d = Math.hypot(e.clientX - c.x, e.clientY - c.y);
+      }
+      settings.layout[sel.id].s = clampS(resize.s0 * (d / resize.d0));
+      relayout();
+      return;
+    }
     if (!drag || e.pointerId !== drag.pid) return;
     e.stopPropagation();
     const p = settings.layout[drag.id];
     p.x = Math.max(4, Math.min(96, (e.clientX / innerWidth) * 100));
     p.y = Math.max(6, Math.min(94, (e.clientY / innerHeight) * 100));
-    applyLayout(settings);
+    relayout();
   };
   const up = (e: PointerEvent): void => {
+    pts.delete(e.pointerId);
     if (drag && e.pointerId === drag.pid) drag = null;
+    if (resize && (resize.pid === e.pointerId || (resize.pid === -1 && pts.size < 2))) resize = null;
     e.stopPropagation();
   };
   touchRoot.addEventListener('pointerdown', down, true);
+  handle.addEventListener('pointerdown', handleDown);
   window.addEventListener('pointermove', move, true);
   window.addEventListener('pointerup', up, true);
+  window.addEventListener('pointercancel', up, true);
   slider.addEventListener('input', () => {
     if (!sel) return;
-    settings.layout[sel.id].s = Number(slider.value);
-    applyLayout(settings);
+    settings.layout[sel.id].s = clampS(Number(slider.value));
+    relayout();
   });
   resetBtn.addEventListener('click', () => {
     settings.layout = {};
-    applyLayout(settings);
     select(null);
   });
   doneBtn.addEventListener('click', () => {
     touchRoot.removeEventListener('pointerdown', down, true);
     window.removeEventListener('pointermove', move, true);
     window.removeEventListener('pointerup', up, true);
+    window.removeEventListener('pointercancel', up, true);
     select(null);
     bar.remove();
+    handle.remove();
     touchRoot.classList.remove('editing');
     if (!race || resultsShown) touchRoot.classList.add('hidden');
     if (!race) document.body.classList.toggle('touch', input.touchMode);
     saveSettings(settings);
-    screens.settingsPage();
+    if (fromPause) setPaused(true);
+    else screens.settingsPage();
   });
 }
 

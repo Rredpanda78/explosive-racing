@@ -842,6 +842,7 @@ export class Screens {
         <div class="row" style="flex-direction:column;align-items:center">
           <button class="btn primary" data-act="resume">${t.backToRace}</button>
           <button class="btn" data-act="mute">${muted ? t.soundOff : t.soundOn}</button>
+          <button class="btn touch-only" data-act="layout">${t.pauseLayout}</button>
           <button class="btn" data-act="leaveroom">${t.leaveRoom}</button>
         </div>
       </div>`;
@@ -856,6 +857,7 @@ export class Screens {
           <button class="btn primary" data-act="resume">${t.resume}</button>
           <button class="btn" data-act="restart">${t.restart}</button>
           <button class="btn" data-act="mute">${muted ? t.soundOff : t.soundOn}</button>
+          <button class="btn touch-only" data-act="layout">${t.pauseLayout}</button>
           <button class="btn" data-act="settings">${t.settings}</button>
           <button class="btn" data-act="menu">${t.mainMenu}</button>
         </div>

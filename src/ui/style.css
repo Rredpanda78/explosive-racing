@@ -197,6 +197,10 @@ kbd { background: #343948; border-radius: 4px; padding: .05em .45em; font-family
 #touch.editing .sel { outline-color: #ffd23f !important; }
 #layout-bar { white-space: nowrap; position: fixed; left: 50%; top: calc(3 * var(--u)); transform: translateX(-50%); display: flex; gap: .6em; align-items: center; z-index: 60; background: rgba(15,17,25,.9); padding: .5em .8em; border-radius: .7em; font-size: calc(2.8 * var(--u)); color: #fff; }
 #layout-bar input { width: 9em; accent-color: #ffd23f; }
+/* 選中按鈕右下角的縮放圓點（拖它放大縮小；也可以兩指捏合） */
+#layout-handle { position: fixed; z-index: 61; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; background: var(--coral, #e8574a); border: 3px solid var(--cream, #f3ead5); box-shadow: 0 2px 6px rgba(0,0,0,.45); touch-action: none; cursor: nwse-resize; }
+#layout-handle::after { content: ''; position: absolute; inset: 7px; border-right: 3px solid var(--cream, #f3ead5); border-bottom: 3px solid var(--cream, #f3ead5); border-radius: 2px; }
+#layout-handle[hidden] { display: none; }
 #touch.tilt #t-steer { display: none; }
 /* 左甩／右甩兩顆鍵的配置：取代單一甩尾鍵，煞車移到上面 */
 #touch .dual-only { display: none; }
