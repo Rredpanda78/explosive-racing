@@ -44,6 +44,8 @@ export class Hud {
   private dmgLayer = document.createElement('div');
   /** 設定：顯示傷害數字 */
   dmgNumbers = true;
+  /** 連線狀況提示（重新連線中…），有的話優先顯示 */
+  netNote = '';
   /** 手機按鈕 */
   private tBoost = $('t-boost');
   private tBoostIc = this.tBoost.querySelector<HTMLElement>('.ic')!;
@@ -270,7 +272,8 @@ export class Hud {
     // 提示訊息
     let sub = '';
     let subCls = '';
-    if (p.dead) { sub = p.out ? '' : '車輛重生中…'; subCls = 'warn'; }
+    if (this.netNote) { sub = this.netNote; subCls = 'warn'; }
+    else if (p.dead) { sub = p.out ? '' : '車輛重生中…'; subCls = 'warn'; }
     else if (p.finished) sub = '';
     else if (p.wrongWayT > 1) { sub = '逆向行駛！'; subCls = 'warn'; }
     else if (p.lockT > 0) { sub = '⚠ 導彈來襲：急轉可以甩掉'; subCls = 'warn'; }

@@ -229,13 +229,19 @@ function enterRoom(code: string, create: boolean): void {
   const s = new OnlineSession(myRacer, { track: trackIndex, mode: 'race', aiFill: true, difficulty: profile.difficulty });
   online = s;
   s.onChange = () => {
-    if (online === s && !race && screens.current === 'room') screens.room(s);
+    if (online !== s) return;
+    if (!race && screens.current === 'room') screens.room(s);
+    hud.netNote = s.reconnecting ? '連線中斷，重新連線中…' : '';
+  };
+  s.onLinks = () => {
+    if (online === s && !race) screens.roomLinks(s);
   };
   s.onStart = (msg) => {
     if (online === s) startOnlineRace(s, msg);
   };
   s.onClosed = (code) => {
     if (online !== s) return;
+    hud.netNote = '';
     online = null;
     history.replaceState(null, '', location.pathname);
     if (race) {

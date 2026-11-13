@@ -492,6 +492,12 @@ export class Race {
     if (this.mode === 'elim' && this.aliveCount === 1 && !this.player.out) this.finish(this.player);
   }
 
+  /** 不再是房主（例如斷線回來後房主已經換人）：電腦車手交給新房主 */
+  releaseAI(): void {
+    if (!this.online) return;
+    for (const k of this.karts) if (k.owner === 0 && !k.isPlayer) k.remote = true;
+  }
+
   /** 房主換人：新房主接手電腦車手 */
   takeOverAI(): void {
     for (const k of this.karts) {

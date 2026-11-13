@@ -496,3 +496,12 @@ body.touch #missions { top: calc(33 * var(--u)); }
   .net-panel { padding: .8em 1em; gap: .5em; }
   .pl img, .pl > i { width: 48px; height: 30px; }
 }
+
+/* 連線狀況：直連／中轉／斷線 */
+.pl { position: relative; }
+.pl .lk { margin-left: auto; font-size: clamp(10px, 1.2vw, 12px); font-weight: 800; white-space: nowrap; opacity: .9; }
+.lk i { font-style: normal; padding: .05em .4em; border-radius: 6px; margin-right: .2em; }
+.lk i.direct { background: #2f9e6e; color: #fff; }
+.lk i.relay { background: rgba(243,234,213,.2); }
+.lk i.away { background: var(--coral); color: var(--cream); }
+.net-route { font-size: clamp(11px, 1.3vw, 13px); font-weight: 700; opacity: .75; }

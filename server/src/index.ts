@@ -1,10 +1,12 @@
 /**
  * Explosive Racing 線上房間伺服器（Cloudflare Worker + Durable Object）。
- * 一個房間代碼 = 一個 Room 物件，最多 8 人。伺服器只負責：
+ * 一個房間代碼 = 一個 Room 物件，最多 8 人。伺服器負責：
  * 1. 房間的建立／加入（滿了、不存在、比賽中會回錯誤代碼）
- * 2. 名單（誰在房間、誰是房主＝編號最小的人，房主離開自動換人）
- * 3. 轉發遊戲訊息（伺服器蓋上發送者編號，不能冒充別人）
- * 遊戲本身的模擬在各玩家的瀏覽器裡跑。
+ * 2. 座位：每個人有固定的玩家編號；斷線 25 秒內用同一個 cid 連回來就回到原本的座位（比賽中也可以）
+ * 3. 房主：由伺服器記住，房主斷線或離開才換人（編號最小的人），回來的人不會搶回房主
+ * 4. 轉發遊戲訊息（伺服器蓋上發送者編號，不能冒充別人）：
+ *    JSON（事件、P2P 連線交握）與二進位（每秒 20 次的車輛狀態，第一個位元組是收件人遮罩）
+ * 能直連（WebRTC）的玩家之間不經過伺服器，伺服器只是備援。遊戲本身的模擬在各玩家的瀏覽器裡跑。
  */
 
 export interface Env {
@@ -17,8 +19,10 @@ export interface Env {
 
 const MAX_PLAYERS = 8;
 const MAX_MSG = 8192;
-/** 每個連線每秒最多幾則訊息（狀態同步 20 次／秒 + 事件，留足夠餘裕） */
-const RATE = 90;
+/** 每個連線每秒最多幾則訊息（狀態同步 20 次／秒 + 事件 + 交握，留足夠餘裕） */
+const RATE = 120;
+/** 斷線後保留座位的時間 */
+const AWAY_MS = 25000;
 
 function originAllowed(origin: string | null, env: Env): boolean {
   if (!origin) return false;
@@ -36,11 +40,17 @@ export default {
     if (!m) return new Response('not found', { status: 404 });
     if (!originAllowed(req.headers.get('Origin'), env)) return new Response('forbidden', { status: 403 });
     if (req.headers.get('Upgrade') !== 'websocket') return new Response('expected websocket', { status: 426 });
-    return env.ROOM.get(env.ROOM.idFromName(m[1])).fetch(req);
+    // 玩家連進來的 Cloudflare 機房（例如 TPE、HKG、LAX），讓網頁顯示「伺服器入口」
+    const colo = (req as Request & { cf?: { colo?: string } }).cf?.colo ?? '';
+    const fwd = new URL(req.url);
+    fwd.searchParams.set('colo', colo);
+    return env.ROOM.get(env.ROOM.idFromName(m[1])).fetch(new Request(fwd.toString(), req));
   },
 };
 
-interface Attach { pid: number; info: unknown; joined: boolean }
+interface Attach { pid: number; cid: string; joined: boolean }
+interface Seat { pid: number; info: unknown; away: number }
+type Seats = Record<string, Seat>;
 
 export class Room {
   private state: DurableObjectState;
@@ -55,15 +65,13 @@ export class Room {
     const out: { ws: WebSocket; a: Attach }[] = [];
     for (const ws of this.state.getWebSockets()) {
       const a = ws.deserializeAttachment() as Attach | null;
-      if (a) out.push({ ws, a });
+      if (a && a.joined) out.push({ ws, a });
     }
     return out;
   }
 
-  private host(): number {
-    let h = 0;
-    for (const p of this.peers()) if (p.a.joined && (h === 0 || p.a.pid < h)) h = p.a.pid;
-    return h;
+  private async seats(): Promise<Seats> {
+    return (await this.state.storage.get<Seats>('seats')) ?? {};
   }
 
   private send(ws: WebSocket, msg: unknown): void {
@@ -73,88 +81,171 @@ export class Room {
   private broadcast(msg: unknown, except?: WebSocket): void {
     const s = JSON.stringify(msg);
     for (const p of this.peers()) {
-      if (p.ws === except || !p.a.joined) continue;
+      if (p.ws === except) continue;
       try { p.ws.send(s); } catch { /* 對方已斷線 */ }
     }
+  }
+
+  /** 房主不在了（離開或斷線）：交給目前在線、編號最小的人 */
+  private async fixHost(seats: Seats): Promise<number> {
+    let host = (await this.state.storage.get<number>('host')) ?? 0;
+    const online = Object.values(seats).filter((s) => !s.away).map((s) => s.pid);
+    if (!online.includes(host)) {
+      const next = online.length ? Math.min(...online) : 0;
+      if (next !== host) {
+        host = next;
+        await this.state.storage.put('host', host);
+        if (host) this.broadcast({ t: 'host', pid: host });
+      }
+    }
+    return host;
   }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const create = url.searchParams.get('create') === '1';
+    const cid = (url.searchParams.get('cid') ?? '').slice(0, 40);
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.state.acceptWebSocket(server);
-    const others = this.peers().filter((p) => p.ws !== server && p.a.joined);
-    const started = (await this.state.storage.get<boolean>('started')) === true && others.length > 0;
     const fail = (code: string) => {
-      server.serializeAttachment({ pid: 0, info: null, joined: false } satisfies Attach);
+      server.serializeAttachment({ pid: 0, cid: '', joined: false } satisfies Attach);
       this.send(server, { t: 'err', code });
       server.close(4000, code);
       return new Response(null, { status: 101, webSocket: client });
     };
-    if (create && others.length > 0) return fail('taken');
-    if (!create && others.length === 0) return fail('noroom');
-    if (others.length >= MAX_PLAYERS) return fail('full');
-    if (started) return fail('started');
-    if (others.length === 0) await this.state.storage.put('started', false);
-    const used = new Set(others.map((p) => p.a.pid));
+    if (!cid) return fail('closed');
+    const colo = url.searchParams.get('colo') ?? '';
+    let seats = await this.seats();
+    const mine = seats[cid];
+    if (mine) {
+      // 斷線重連：回到原本的座位（比賽中也可以）。舊的連線如果還掛著就關掉
+      for (const p of this.peers()) {
+        if (p.a.cid !== cid) continue;
+        p.a.joined = false;
+        p.ws.serializeAttachment(p.a);
+        try { p.ws.close(4001, 'replaced'); } catch { /* 已關閉 */ }
+      }
+      server.serializeAttachment({ pid: mine.pid, cid, joined: false } satisfies Attach);
+      // 舊連線還沒被發現斷掉時也算「回來」（其他人收到 back 而不是 join）
+      if (!mine.away) {
+        mine.away = Date.now();
+        await this.state.storage.put('seats', seats);
+      }
+      await this.state.storage.put('colo:' + cid, colo);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const taken = Object.keys(seats).length;
+    if (create && taken > 0) return fail('taken');
+    if (!create && taken === 0) return fail('noroom');
+    if (taken >= MAX_PLAYERS) return fail('full');
+    if (!create && (await this.state.storage.get<boolean>('started')) === true) return fail('started');
+    if (create) {
+      // 新房間：清掉舊資料
+      await this.state.storage.deleteAll();
+      seats = {};
+    }
+    const used = new Set(Object.values(seats).map((s) => s.pid));
     let pid = 1;
     while (used.has(pid)) pid++;
-    server.serializeAttachment({ pid, info: null, joined: false } satisfies Attach);
+    seats[cid] = { pid, info: null, away: 0 };
+    await this.state.storage.put('seats', seats);
+    await this.state.storage.put('colo:' + cid, colo);
+    server.serializeAttachment({ pid, cid, joined: false } satisfies Attach);
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  private limited(pid: number): boolean {
+    const now = Date.now();
+    const r = this.rate.get(pid) ?? { t: now, n: 0 };
+    if (now - r.t > 1000) { r.t = now; r.n = 0; }
+    r.n++;
+    this.rate.set(pid, r);
+    return r.n > RATE;
+  }
+
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
-    if (typeof raw !== 'string' || raw.length > MAX_MSG) return;
     const a = ws.deserializeAttachment() as Attach | null;
     if (!a || a.pid === 0) return;
-    // 簡單的流量限制：超過就丟掉
-    const now = Date.now();
-    const r = this.rate.get(a.pid) ?? { t: now, n: 0 };
-    if (now - r.t > 1000) { r.t = now; r.n = 0; }
-    if (++r.n > RATE) { this.rate.set(a.pid, r); return; }
-    this.rate.set(a.pid, r);
-    let msg: { t?: string; info?: unknown; d?: unknown; to?: number };
+    // 二進位：車輛狀態。第一個位元組 = 收件人遮罩（第 n 位 = 玩家 n+1，0 = 全部），轉發時換成發送者編號
+    if (typeof raw !== 'string') {
+      if (!a.joined || raw.byteLength < 2 || raw.byteLength > MAX_MSG || this.limited(a.pid)) return;
+      const out = new Uint8Array(raw.slice(0));
+      const mask = out[0];
+      out[0] = a.pid;
+      for (const p of this.peers()) {
+        if (p.ws === ws) continue;
+        if (mask !== 0 && !(mask & (1 << (p.a.pid - 1)))) continue;
+        try { p.ws.send(out); } catch { /* 對方已斷線 */ }
+      }
+      return;
+    }
+    if (raw.length > MAX_MSG || this.limited(a.pid)) return;
+    let msg: { t?: string; info?: unknown; d?: unknown; to?: number | number[] };
     try { msg = JSON.parse(raw); } catch { return; }
     if (!msg || typeof msg.t !== 'string') return;
 
     switch (msg.t) {
       case 'hi': {
-        // 進房：記下車手資料，回傳名單，通知其他人
-        a.info = msg.info ?? null;
+        // 進房（或重連）：記下車手資料，回傳名單，通知其他人
+        const seats = await this.seats();
+        const seat = seats[a.cid];
+        if (!seat) return;
+        const wasAway = seat.away > 0;
         const first = !a.joined;
+        seat.info = msg.info ?? null;
+        seat.away = 0;
+        await this.state.storage.put('seats', seats);
         a.joined = true;
         ws.serializeAttachment(a);
         if (first) {
-          const peers = this.peers().filter((p) => p.ws !== ws && p.a.joined).map((p) => ({ pid: p.a.pid, info: p.a.info }));
-          this.send(ws, { t: 'welcome', pid: a.pid, host: this.host(), peers });
-          this.broadcast({ t: 'join', pid: a.pid, info: a.info }, ws);
+          let host = (await this.state.storage.get<number>('host')) ?? 0;
+          if (!host) {
+            host = a.pid;
+            await this.state.storage.put('host', host);
+          }
+          host = await this.fixHost(seats);
+          const peers = Object.entries(seats).filter(([c]) => c !== a.cid).map(([, s]) => ({ pid: s.pid, info: s.info, away: s.away > 0 }));
+          const started = (await this.state.storage.get<boolean>('started')) === true;
+          const colo = (await this.state.storage.get<string>('colo:' + a.cid)) ?? '';
+          this.send(ws, { t: 'welcome', pid: a.pid, host, peers, started, rejoin: wasAway, colo });
+          this.broadcast(wasAway ? { t: 'back', pid: a.pid, info: seat.info } : { t: 'join', pid: a.pid, info: seat.info }, ws);
         } else {
-          this.broadcast({ t: 'info', pid: a.pid, info: a.info }, ws);
+          this.broadcast({ t: 'info', pid: a.pid, info: seat.info }, ws);
         }
         break;
       }
       case 'r': {
         // 遊戲訊息：轉發給其他人（或指定的人），蓋上發送者
         if (!a.joined) return;
+        const to = msg.to;
         const out = JSON.stringify({ t: 'r', from: a.pid, d: msg.d });
         for (const p of this.peers()) {
-          if (p.ws === ws || !p.a.joined) continue;
-          if (typeof msg.to === 'number' && p.a.pid !== msg.to) continue;
+          if (p.ws === ws) continue;
+          if (typeof to === 'number' && p.a.pid !== to) continue;
+          if (Array.isArray(to) && !to.includes(p.a.pid)) continue;
           try { p.ws.send(out); } catch { /* 對方已斷線 */ }
         }
         break;
       }
-      case 'start':
-        // 只有房主能開始；開始後新的人進不來
-        if (a.pid !== this.host()) return;
+      case 'start': {
+        // 只有房主能開始；開始後新的人進不來（斷線的人可以回來）
+        if (a.pid !== (await this.state.storage.get<number>('host'))) return;
         await this.state.storage.put('started', true);
         this.broadcast({ t: 'start', d: msg.d }, ws);
         break;
+      }
       case 'lobby':
-        if (a.pid !== this.host()) return;
+        if (a.pid !== (await this.state.storage.get<number>('host'))) return;
         await this.state.storage.put('started', false);
         this.broadcast({ t: 'lobby' }, ws);
+        break;
+      case 'bye':
+        // 按「離開房間」：馬上讓出座位
+        await this.remove(a.cid);
+        a.joined = false;
+        ws.serializeAttachment(a);
+        try { ws.close(1000, 'bye'); } catch { /* 已關閉 */ }
         break;
       case 'ping':
         this.send(ws, { t: 'pong', d: msg.d });
@@ -162,25 +253,58 @@ export class Room {
     }
   }
 
-  private async left(ws: WebSocket): Promise<void> {
+  /** 讓出座位並通知大家 */
+  private async remove(cid: string): Promise<void> {
+    const seats = await this.seats();
+    const seat = seats[cid];
+    if (!seat) return;
+    delete seats[cid];
+    await this.state.storage.put('seats', seats);
+    await this.state.storage.delete('colo:' + cid);
+    this.broadcast({ t: 'leave', pid: seat.pid });
+    if (Object.keys(seats).length === 0) {
+      await this.state.storage.deleteAll();
+      return;
+    }
+    await this.fixHost(seats);
+  }
+
+  /** 斷線：座位先保留，AWAY_MS 後還沒回來才讓出 */
+  private async dropped(ws: WebSocket): Promise<void> {
     const a = ws.deserializeAttachment() as Attach | null;
     if (!a || !a.joined) return;
-    const before = this.host();
     a.joined = false;
     ws.serializeAttachment(a);
     this.rate.delete(a.pid);
-    this.broadcast({ t: 'leave', pid: a.pid }, ws);
-    const h = this.host();
-    if (h !== before && h !== 0) this.broadcast({ t: 'host', pid: h }, ws);
-    if (h === 0) await this.state.storage.put('started', false);
+    const seats = await this.seats();
+    const seat = seats[a.cid];
+    if (!seat) return;
+    seat.away = Date.now();
+    await this.state.storage.put('seats', seats);
+    this.broadcast({ t: 'away', pid: a.pid });
+    await this.fixHost(seats);
+    const cur = await this.state.storage.getAlarm();
+    if (cur === null) await this.state.storage.setAlarm(Date.now() + AWAY_MS + 200);
+  }
+
+  async alarm(): Promise<void> {
+    const seats = await this.seats();
+    const now = Date.now();
+    let next = 0;
+    for (const [cid, s] of Object.entries(seats)) {
+      if (!s.away) continue;
+      if (now - s.away >= AWAY_MS) await this.remove(cid);
+      else next = next ? Math.min(next, s.away + AWAY_MS) : s.away + AWAY_MS;
+    }
+    if (next) await this.state.storage.setAlarm(next + 200);
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    await this.left(ws);
+    await this.dropped(ws);
     try { ws.close(1000, 'bye'); } catch { /* 已關閉 */ }
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    await this.left(ws);
+    await this.dropped(ws);
   }
 }

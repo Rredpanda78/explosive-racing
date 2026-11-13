@@ -361,6 +361,31 @@ export class Screens {
     codeEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.handle('joinroom'); });
   }
 
+  /** 跟某位玩家的連線：直連或伺服器中轉、延遲 */
+  private linkText(s: OnlineSession, pid: number): string {
+    const l = s.link(pid);
+    if (l.away) return '<i class="away">斷線中…</i>';
+    const ms = l.rtt ? ` ${Math.round(l.rtt)} ms` : '';
+    return l.direct ? `<i class="direct">直連</i>${ms}` : `<i class="relay">中轉</i>${ms}`;
+  }
+
+  private routeText(s: OnlineSession): string {
+    const n = s.list.filter((p) => p.pid !== s.me && !s.away.has(p.pid));
+    const d = n.filter((p) => s.link(p.pid).direct).length;
+    const via = s.colo ? `伺服器入口 ${esc(s.colo)}` : '伺服器';
+    return n.length ? `${via}・直連 ${d}/${n.length} 人（其他人經伺服器中轉）` : `${via}・等其他人加入`;
+  }
+
+  /** 只更新連線狀況的小字（每 2 秒量一次延遲，不重畫整頁） */
+  roomLinks(s: OnlineSession): void {
+    if (this.current !== 'room') return;
+    this.root.querySelectorAll<HTMLElement>('[data-link]').forEach((el) => {
+      el.innerHTML = this.linkText(s, Number(el.dataset.link));
+    });
+    const r = this.root.querySelector<HTMLElement>('[data-route]');
+    if (r) r.innerHTML = this.routeText(s);
+  }
+
   /** 房間：車手名單與房主的比賽設定 */
   room(s: OnlineSession): void {
     this.current = 'room';
@@ -375,6 +400,7 @@ export class Screens {
         ${icon ? `<img src="${icon}" alt="" />` : '<i></i>'}
         <div><b>${esc(p.name || '車手')}${p.pid === s.hostPid ? '<em>房主</em>' : ''}${p.pid === s.me ? '<em class="you">你</em>' : ''}</b>
         <span>${car.name}・${PRIMARY[p.primary]?.name ?? ''} / ${SECONDARY[p.secondary]?.name ?? ''}</span></div>
+        ${p.pid === s.me ? '' : `<small class="lk" data-link="${p.pid}">${this.linkText(s, p.pid)}</small>`}
       </div>`;
     }).join('');
     const tracks = this.tracks.map((t, i) => `
@@ -391,7 +417,8 @@ export class Screens {
             <div class="code-box"><span>房間代碼</span><b>${s.code}</b></div>
             <button class="btn small" data-act="copylink" data-id="${s.code}">複製邀請連結</button>
           </div>
-          ${connecting ? '<div class="net-msg">連線中…</div>' : ''}
+          ${connecting ? '<div class="net-msg">連線中…</div>' : s.reconnecting ? '<div class="net-msg">連線中斷，重新連線中…</div>' : ''}
+          <div class="net-route" data-route>${this.routeText(s)}</div>
           <div class="room-grid">
             <div class="players"><h3>車手 ${list.length}/8</h3>${players}</div>
             <div class="cfg">

@@ -27,6 +27,12 @@ const fake = (self: InstanceType<typeof OnlineSession>, other: InstanceType<type
   c.rtt = 120;
   c.send = (m: { t: string; d?: unknown }) => { if (m.t === 'start') queue.push({ at: simNow + LAT, to: other, m: { t: 'start', d: m.d } }); };
   c.relay = (d: unknown) => queue.push({ at: simNow + LAT, to: other, m: { t: 'r', from: pid, d } });
+  // 二進位狀態：伺服器把第一個位元組換成發送者編號
+  c.sendBin = (buf: Uint8Array) => {
+    const out = buf.slice();
+    out[0] = pid;
+    queue.push({ at: simNow + LAT, to: other, m: { bin: out.buffer, from: pid } });
+  };
 };
 fake(A, B, 1);
 fake(B, A, 2);
@@ -51,7 +57,9 @@ const dt = 1 / 60;
 const deliver = () => {
   while (queue.length && queue[0].at <= simNow) {
     const q = queue.shift()!;
-    H(q.to, q.m);
+    const bm = q.m as { bin?: ArrayBuffer; from?: number };
+    if (bm.bin) (q.to.client as unknown as { onBinary: (f: number, b: ArrayBuffer) => void }).onBinary(bm.from!, bm.bin);
+    else H(q.to, q.m);
   }
 };
 let maxErr = 0, errSum = 0, errN = 0;
