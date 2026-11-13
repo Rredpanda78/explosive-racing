@@ -56,7 +56,7 @@ const SpeedShader = {
       float dist = length(vec2(dir.x * uAspect, dir.y));
       // 只模糊邊緣：中央（車子與前方的路）保持清楚
       float edge = smoothstep(0.22, 0.9, dist) * uBoost;
-      vec2 step = dir * (0.08 * edge / 6.0);
+      vec2 step = dir * (0.065 * edge / 6.0);
       // 每個像素的取樣起點錯開一點（抖動），把一格一格的殘影變成平順的拖影
       float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
       vec3 acc = vec3(0.0);
@@ -65,11 +65,11 @@ const SpeedShader = {
       }
       acc /= 7.0;
       // 色散：紅色往外、藍色往內偏一點點
-      vec2 ca = dir * 0.012 * edge;
+      vec2 ca = dir * 0.006 * edge;
       float r = texture2D(tDiffuse, uv + ca).r;
       float b = texture2D(tDiffuse, uv - ca).b;
-      acc.r = mix(acc.r, r, 0.55 * edge);
-      acc.b = mix(acc.b, b, 0.55 * edge);
+      acc.r = mix(acc.r, r, 0.45 * edge);
+      acc.b = mix(acc.b, b, 0.45 * edge);
       // 邊緣微微偏冷、壓暗，視線往中間集中
       acc *= 1.0 - 0.16 * edge * smoothstep(0.45, 1.1, dist);
       acc.b += 0.02 * edge;
