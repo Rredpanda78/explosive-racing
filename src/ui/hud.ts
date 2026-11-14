@@ -425,6 +425,7 @@ export class Hud {
     else if (p.chill > 0.35) { sub = t.frozen; subCls = 'warn'; }
     else if (p.towT > 0) { sub = t.towed; subCls = 'warn'; }
     else if (p.miniWindowT > 0) { sub = t.miniNow; subCls = 'mini'; }
+    else if (race.waiting) sub = t.waitPlayers;
     else if (race.state === 'countdown' && race.countdown < 1.4) { sub = document.body.classList.contains('touch') ? t.startTouch : t.startKb; }
     this.set('sub', this.sub, sub);
     if (this.cache.subCls !== subCls) {

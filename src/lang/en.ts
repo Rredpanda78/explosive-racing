@@ -122,6 +122,7 @@ export const en: typeof zh = {
   startRace: 'Start Race',
   waitHost: 'Waiting for the host to start…',
   netAlone: 'Just you in the room',
+  waitPlayers: 'Waiting for other players to load…',
   netSummary: (ms: string, direct: number, n: number, re: boolean) => `Ping ${ms} · Direct ${direct}/${n}${re ? ' · Reconnecting' : ''}`,
 
   // ---------- 車庫 ----------

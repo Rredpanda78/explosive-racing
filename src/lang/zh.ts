@@ -119,6 +119,8 @@ export const zh = {
   waitHost: '等待房主開始…',
   /** 角落的連線摘要（線上比賽） */
   netAlone: '房間只有你',
+  /** 連線開賽：等其他人載完才一起倒數 */
+  waitPlayers: '等待其他玩家載入…',
   netSummary: (ms: string, direct: number, n: number, re: boolean) => `延遲 ${ms}・不經伺服器 ${direct}/${n}${re ? '・重新連線中' : ''}`,
 
   // ---------- 車庫 ----------

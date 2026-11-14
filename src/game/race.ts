@@ -162,6 +162,8 @@ export class Race {
   events: RaceEvent[] = [];
   state: 'countdown' | 'racing' | 'finished' = 'countdown';
   countdown = 3.4;
+  /** 連線：等所有人載完、房主公布起跑時刻之前，倒數與比賽時鐘都不走 */
+  waiting = false;
   time = 0;
   /** 包含倒數在內的時鐘（機關照這個動） */
   clock = 0;
@@ -313,6 +315,8 @@ export class Race {
   }
 
   step(dt: number, pin: KartInput): void {
+    // 連線開賽同步：還在等其他玩家（大家停在起跑格，什麼都不動）
+    if (this.waiting) return;
     const ev = this.events;
     const track = this.track;
     const n = track.n;

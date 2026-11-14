@@ -32,6 +32,10 @@ const SEND_MS = 50;
 const DELAY_MS = 110;
 /** 每 2 秒量一次跟每個人的延遲（走實際使用的路徑：直連或伺服器） */
 const PING_MS = 2000;
+/** 開賽同步：房主公布的 GO 時刻離現在多久（含 3.4 秒倒數，多 0.6 秒讓訊息送到） */
+const GO_LEAD_MS = 4000;
+/** 房主最多等大家載入多久 */
+const READY_TIMEOUT_MS = 12000;
 
 interface Snap { t: number; a: Pack }
 
@@ -76,6 +80,19 @@ export class OnlineSession {
   private seen = new Set<string>();
   /** 這場負責跑電腦車手的玩家（也是優先的轉送人） */
   aiOwners: number[] = [];
+  /**
+   * 開賽同步：每台電腦載完場景與車子的時間不一樣，訊息到達的時間也不一樣，
+   * 所以大家先停在起跑格等，房主收齊「載好了」之後公布同一個起跑時刻（用房主的時鐘），
+   * 每台電腦再換算成自己的時鐘一起倒數。
+   */
+  private expect: number[] = [];
+  private readyPids = new Set<number>();
+  /** 房主時鐘上的 GO 時刻（毫秒）；-1 = 還沒公布 */
+  private goAt = -1;
+  /** 自己開始等的時間（本機時鐘） */
+  private waitSince = 0;
+  /** 每位玩家的時鐘減掉本機時鐘（取延遲最小的那次量測，比較準） */
+  private clockOff = new Map<number, { off: number; rtt: number }>();
 
   constructor(info: () => Omit<NetRacer, 'pid'>, cfg: RoomConfig) {
     this.info = info;
@@ -227,7 +244,68 @@ export class OnlineSession {
     const racers = this.list.filter((p) => !this.away.has(p.pid));
     const msg: StartMsg = { cfg: { ...this.cfg }, seed: Math.floor(Math.random() * 2 ** 31), racers, ai: this.pickAiOwners(racers.map((p) => p.pid)) };
     this.client.send({ t: 'start', d: msg });
+    this.prepStart(msg);
     this.onStart(msg);
+  }
+
+  /** 收到（或自己發出）開賽：重設開賽同步，並馬上量幾次跟房主的時鐘差 */
+  private prepStart(msg: StartMsg): void {
+    this.expect = msg.racers.map((p) => p.pid);
+    this.readyPids.clear();
+    this.goAt = -1;
+    this.waitSince = performance.now();
+    if (!this.isHost) for (let i = 0; i < 3; i++) window.setTimeout(() => this.send({ e: 'pi', t: performance.now() }, [this.hostPid]), i * 120);
+  }
+
+  /** 房主的時鐘（毫秒）：本機時鐘加上量到的時鐘差 */
+  private hostNow(): number {
+    const now = performance.now();
+    if (this.isHost) return now;
+    return now + (this.clockOff.get(this.hostPid)?.off ?? 0);
+  }
+
+  /** 房主：這位玩家載好了；全部到齊就公布起跑時刻 */
+  private markReady(pid: number): void {
+    if (!this.isHost) return;
+    this.readyPids.add(pid);
+    // 已經公布過（例如他比較晚才載好）：再單獨告訴他一次
+    if (this.goAt >= 0) {
+      if (pid !== this.me) this.send({ e: 'go', at: this.goAt }, [pid]);
+      return;
+    }
+    if (!this.race) return;
+    const need = this.expect.filter((p) => p === this.me || (this.peers.has(p) && !this.away.has(p)));
+    if (need.every((p) => this.readyPids.has(p))) this.announceGo();
+  }
+
+  private announceGo(): void {
+    this.goAt = performance.now() + GO_LEAD_MS;
+    this.send({ e: 'go', at: this.goAt });
+    this.applyGo();
+  }
+
+  /** 換算成自己的倒數：大家在同一個（房主時鐘的）時刻 GO，比賽時鐘在 GO 時也都一樣 */
+  private applyGo(): void {
+    const r = this.race;
+    if (!r || !r.waiting || this.goAt < 0) return;
+    const remain = (this.goAt - this.hostNow()) / 1000;
+    r.waiting = false;
+    r.countdown = remain;
+    r.clock = GO_LEAD_MS / 1000 - remain;
+    // 太晚才收到（例如載很久）：直接起跑，計時從大家的 GO 算起
+    if (remain < 0) r.time = -remain;
+  }
+
+  /** 每幀：房主等太久就不等了；房主一直沒公布（斷線）就自己開始 */
+  private startTick(): void {
+    const r = this.race;
+    if (!r?.waiting) return;
+    const waited = performance.now() - this.waitSince;
+    if (this.isHost && this.goAt < 0 && waited > READY_TIMEOUT_MS) this.announceGo();
+    else if (!this.isHost && waited > READY_TIMEOUT_MS + 6000) {
+      r.waiting = false;
+      r.countdown = 3.4;
+    }
   }
 
   setup(msg: StartMsg): OnlineSetup {
@@ -342,6 +420,7 @@ export class OnlineSession {
         this.onChange();
         break;
       case 'start':
+        this.prepStart(m.d as StartMsg);
         this.onStart(m.d as StartMsg);
         break;
       case 'lobby':
@@ -365,15 +444,32 @@ export class OnlineSession {
     if (!d || typeof d.e !== 'string') return;
     switch (d.e) {
       case 'pi':
-        this.send({ e: 'po', t: d.t }, [from]);
+        // h = 我這邊的時鐘（對方用來算時鐘差）
+        this.send({ e: 'po', t: d.t, h: performance.now() }, [from]);
         return;
       case 'po': {
-        const rtt = performance.now() - (d.t as number);
+        const now = performance.now();
+        const rtt = now - (d.t as number);
         const old = this.rtt.get(from);
         this.rtt.set(from, old === undefined ? rtt : old * 0.6 + rtt * 0.4);
+        if (typeof d.h === 'number') {
+          // 對方回覆的那一刻 ≈ 來回的一半：延遲越小量得越準，所以只在延遲沒變大太多時更新（舊的慢慢放寬）
+          const prev = this.clockOff.get(from);
+          const off = d.h - (now - rtt / 2);
+          if (!prev || rtt <= prev.rtt + 8) this.clockOff.set(from, { off, rtt });
+          else prev.rtt += 4;
+        }
         this.onLinks();
         return;
       }
+      case 'rdy':
+        this.markReady(from);
+        return;
+      case 'go':
+        if (from !== this.hostPid || typeof d.at !== 'number') return;
+        this.goAt = d.at;
+        this.applyGo();
+        return;
       case 'cfg':
         if (from === this.hostPid) {
           this.cfg = d.cfg as RoomConfig;
@@ -480,12 +576,23 @@ export class OnlineSession {
       onFinish: (k) => this.logged({ e: 'fin', k: k.netId, time: k.finishTime, laps: k.lapTimes }),
       onElim: (k) => this.logged({ e: 'elim', k: k.netId }),
     };
+    // 開賽同步：先停在起跑格，告訴房主「我載好了」（房主收到 go 之前就先收到的話，直接套用）
+    if (this.expect.length) {
+      race.waiting = true;
+      this.waitSince = performance.now();
+      if (this.isHost) this.markReady(this.me);
+      else {
+        this.send({ e: 'rdy' }, [this.hostPid]);
+        this.applyGo();
+      }
+    }
   }
 
   /** 每幀在 race.step 之前：把遠端的車移到內插後的位置 */
   applyRemote(now: number): void {
     const race = this.race;
     if (!race) return;
+    this.startTick();
     const rt = now - DELAY_MS;
     for (const k of race.karts) {
       if (!k.remote || k.out) continue;
