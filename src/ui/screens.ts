@@ -785,9 +785,11 @@ export class Screens {
       `<div class="choices">${opts.map(([v, n]) => `<button class="diffbtn ${cur === v ? 'on' : ''}" data-act="${act}" data-id="${v}">${n}</button>`).join('')}</div>`;
     const range = (key: string, v: number, min: number, max: number, step: number) => `<input type="range" data-set="${key}" min="${min}" max="${max}" step="${step}" value="${v}" />`;
     this.root.innerHTML = `
-      <div class="screen">
-        <h1 class="title" style="font-size:clamp(28px,7vw,60px)">${t.settings}</h1>
-        <div class="setgrid">
+      <div class="screen settings-screen">
+        <h1 class="title">${t.settings}</h1>
+        <div class="setcols">
+        <div class="setcol">
+        <div class="setgrid setsec">
           <h3>${t.setDisplay}</h3>
           <b>${t.setLanguage}</b>${pick('lang', lang(), [['zh', '中文'], ['en', 'English']])}
           <b>${t.setQuality}</b>${pick('quality', s.quality, [['low', t.qLow], ['medium', t.qMed], ['high', t.qHigh]])}
@@ -795,6 +797,25 @@ export class Screens {
           <b>${t.setShake}</b>${range('shake', s.shake, 0, 1, 0.05)}
           <b>${t.setDmg}</b><label><input type="checkbox" data-set="dmgNumbers" ${s.dmgNumbers ? 'checked' : ''} /> ${t.setDmgText}</label>
           <b>${t.setInfo}</b><label><input type="checkbox" data-set="netInfo" ${s.netInfo ? 'checked' : ''} /> ${t.setInfoText}</label>
+        </div>
+        <div class="setgrid setsec">
+          <h3>${t.setAssist}</h3>
+          <b>${t.setAutoMini}</b><label><input type="checkbox" data-set="autoMini" ${s.autoMini ? 'checked' : ''} /> ${t.setAutoMiniText}</label>
+          <b>${t.setDriftAssist}</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> ${t.setDriftAssistText}</label>
+        </div>
+        <div class="setgrid setsec touch-sec">
+            <h3>${t.setTouch}</h3>
+            <b>${t.setVibrate}</b><label><input type="checkbox" data-set="vibrate" ${s.vibrate ? 'checked' : ''} /> ${t.setVibrateText}</label>
+            <b>${t.setDriftBtn}</b>${pick('tdrift', s.touchDrift, [['single', t.driftSingle], ['dual', t.driftDual]])}
+            <b>${t.setSteer}</b>${pick('ctrl', s.control, [['buttons', t.steerButtons], ['tilt', t.steerTilt]])}
+            ${s.control === 'tilt' ? `<b>${t.setTiltSens}</b>${range('tiltRange', 52 - s.tiltRange, 12, 40, 1)}
+            <b>${t.setInvert}</b><label><input type="checkbox" data-set="tiltInvert" ${s.tiltInvert ? 'checked' : ''} /> ${t.setInvertText}</label>
+            <b></b><div class="choices"><button class="diffbtn" data-act="calib">${t.setCalib}</button></div>` : ''}
+            <b>${t.setLayout}</b><div class="choices"><button class="diffbtn" data-act="layout">${t.setLayoutEdit}</button><button class="diffbtn" data-act="layoutreset">${t.reset}</button></div>
+        </div>
+        </div>
+        <div class="setcol">
+        <div class="setgrid setsec">
           <h3>${t.setSound}</h3>
           <b>${t.setMusic}</b>${range('music', s.music, 0, 1, 0.05)}
           <b>${t.setSfx}</b>${range('sfx', s.sfx, 0, 1, 0.05)}
@@ -805,27 +826,16 @@ export class Screens {
           <b>${t.setWeapon}</b>${pick('wpnsnd', s.weaponSound, WEAPON_PACKS.map((m) => [m.id, m.name]))}
           <small data-wpndesc>${WEAPON_PACKS.find((m) => m.id === s.weaponSound)?.desc ?? ''}${t.tapPreview}</small>
           <b>${t.setOthers}</b><label><input type="checkbox" data-set="otherEngines" ${s.otherEngines ? 'checked' : ''} /> ${t.setOthersText}</label>
-          <h3>${t.setAssist}</h3>
-          <b>${t.setAutoMini}</b><label><input type="checkbox" data-set="autoMini" ${s.autoMini ? 'checked' : ''} /> ${t.setAutoMiniText}</label>
-          <b>${t.setDriftAssist}</b><label><input type="checkbox" data-set="driftAssist" ${s.driftAssist ? 'checked' : ''} /> ${t.setDriftAssistText}</label>
-          <div class="kb-only">
+        </div>
+        <div class="setgrid setsec kb-sec">
             <h3>${t.setKeys}</h3>
             <div class="keyrows" data-keys>${this.keyRows()}</div>
             <b></b><div class="choices"><button class="diffbtn" data-act="keyreset">${t.reset}</button></div>
             <small class="keymsg" data-keymsg>${t.keyHint}</small>
-          </div>
-          <div class="touch-only">
-            <h3>${t.setTouch}</h3>
-            <b>${t.setVibrate}</b><label><input type="checkbox" data-set="vibrate" ${s.vibrate ? 'checked' : ''} /> ${t.setVibrateText}</label>
-            <b>${t.setDriftBtn}</b>${pick('tdrift', s.touchDrift, [['single', t.driftSingle], ['dual', t.driftDual]])}
-            <b>${t.setSteer}</b>${pick('ctrl', s.control, [['buttons', t.steerButtons], ['tilt', t.steerTilt]])}
-            ${s.control === 'tilt' ? `<b>${t.setTiltSens}</b>${range('tiltRange', 52 - s.tiltRange, 12, 40, 1)}
-            <b>${t.setInvert}</b><label><input type="checkbox" data-set="tiltInvert" ${s.tiltInvert ? 'checked' : ''} /> ${t.setInvertText}</label>
-            <b></b><div class="choices"><button class="diffbtn" data-act="calib">${t.setCalib}</button></div>` : ''}
-            <b>${t.setLayout}</b><div class="choices"><button class="diffbtn" data-act="layout">${t.setLayoutEdit}</button><button class="diffbtn" data-act="layoutreset">${t.reset}</button></div>
-          </div>
         </div>
-        <div class="row"><button class="btn primary" data-act="sback">${t.back}</button></div>
+        </div>
+        </div>
+        <div class="row setback"><button class="btn primary" data-act="sback">${t.back}</button></div>
       </div>`;
     const sc = this.root.querySelector('.screen');
     if (sc && keep) sc.scrollTop = keep;

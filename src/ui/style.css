@@ -638,3 +638,25 @@ html[lang="en"] .tcard b { letter-spacing: -.01em; line-height: 1.15; }
 /* 連線結算：還有人在跑時的提示（名次即時更新） */
 .res-live { font-size: clamp(11px, 1.5vw, 13px); font-weight: 700; opacity: .75; text-align: center; margin: -.3em 0 .4em; }
 .res-live:empty { display: none; }
+
+/* ---------- 設定頁：分區塊；手機橫放（螢幕矮）時兩欄排、標題變小、「返回」固定在下面 ---------- */
+.settings-screen .title { font-size: clamp(28px, 7vw, 60px); }
+.setcols { width: 100%; max-width: 34em; margin: .6em auto 1em; }
+.setcols .setgrid { margin: 0 0 .5em; max-width: none; }
+.setsec.touch-sec { display: none; }
+@media (pointer: coarse) {
+  .setsec.touch-sec { display: grid; }
+  .setsec.kb-sec { display: none; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .settings-screen { padding: 1.5vh 3vw 0; }
+  .settings-screen .title { font-size: 24px; margin: .1em 0 0; }
+  .setcols { max-width: 100%; display: grid; grid-template-columns: 1fr 1fr; column-gap: 2.4em; align-items: start; font-size: 14px; margin: .3em auto .2em; }
+  .setcols .setgrid { break-inside: avoid; gap: .38em .8em; margin: 0 0 .7em; }
+  .setcols .setgrid h3 { margin: .2em 0 0; }
+  .setcols .setgrid small { margin-top: -.3em; font-size: 12px; }
+  .setcols .diffbtn { padding: .2em .65em; }
+  .setcols input[type=checkbox] { width: 16px; height: 16px; vertical-align: -3px; }
+  .settings-screen > .setback { position: sticky; bottom: 0; width: calc(100% + 6vw); margin: 0 -3vw; padding: .9em 0 calc(.45em + env(safe-area-inset-bottom)); background: linear-gradient(rgba(11,26,51,0), rgba(11,26,51,.97) 45%); }
+  .settings-screen > .setback .btn { font-size: 15px; padding: .4em 2em; min-width: 0; }
+}
