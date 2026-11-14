@@ -232,6 +232,10 @@ export const zh = {
   resOut: '淘汰',
   resAlive: '存活',
   resDnf: '未完賽',
+  /** 連線結算：還在跑的車、離開房間的車、名次會更新的提示 */
+  resRacing: '比賽中',
+  resLeft: '離開',
+  resLive: '其他人還在比賽，名次會即時更新',
   resKills: (n: number) => `擊毀 ${n}`,
   missions: '本場任務',
   earnPlace: (n: number) => `名次 $${n}`,

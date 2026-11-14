@@ -130,6 +130,8 @@ export class Kart {
   /** 淘汰賽中已被淘汰 */
   out = false;
   outOrder = 0;
+  /** 出局（淘汰或離開）的比賽時間：連線時淘汰用房主公布的時間，每支手機的名次才會一樣 */
+  outTime = 0;
   respawnT = 0;
   invulnT = 0;
   sinceDamage = 99;

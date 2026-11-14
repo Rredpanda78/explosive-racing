@@ -522,7 +522,7 @@ export class OnlineSession {
       }
       case 'elim': {
         const k = K[d.k as number];
-        if (from === this.hostPid && k) race.eliminate(k);
+        if (from === this.hostPid && k) race.eliminate(k, typeof d.at === 'number' ? d.at : undefined);
         break;
       }
     }
@@ -574,7 +574,7 @@ export class OnlineSession {
       },
       onKill: (v, by) => this.logged({ e: 'kill', v: v.netId, by: by ? by.netId : -1 }),
       onFinish: (k) => this.logged({ e: 'fin', k: k.netId, time: k.finishTime, laps: k.lapTimes }),
-      onElim: (k) => this.logged({ e: 'elim', k: k.netId }),
+      onElim: (k) => this.logged({ e: 'elim', k: k.netId, at: k.outTime }),
     };
     // 開賽同步：先停在起跑格，告訴房主「我載好了」（房主收到 go 之前就先收到的話，直接套用）
     if (this.expect.length) {

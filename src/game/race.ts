@@ -597,6 +597,7 @@ export class Race {
     if (k.out) return;
     k.out = true;
     k.outOrder = ++this.outCount;
+    k.outTime = this.time;
     k.dead = true;
     if (k === this.player) return;
     if (this.mode === 'elim' && this.aliveCount === 1 && !this.player.out) this.finish(this.player);
@@ -844,17 +845,21 @@ export class Race {
     for (const k of this.karts) if (k.nameKey) k.name = kartLabel(k.nameKey);
   }
 
-  /** 名次排序：競速看完賽時間與進度；淘汰賽被淘汰的排在後面（越晚淘汰名次越好） */
+  /**
+   * 名次排序：競速看完賽時間與進度；淘汰賽被淘汰的排在後面（越晚淘汰名次越好）。
+   * 連線時每支手機要排出一樣的結果：完賽時間、出局時間都是車主／房主傳來的同一個數字，
+   * 同分時用車號決定（不用各自畫面上看到、會有些微差異的位置）。
+   */
   results(): Kart[] {
     return [...this.karts].sort((a, b) => {
       if (a.out !== b.out) return a.out ? 1 : -1;
-      if (a.out && b.out) return b.outOrder - a.outOrder;
+      if (a.out && b.out) return b.outTime - a.outTime || b.outOrder - a.outOrder || a.netId - b.netId;
       if (this.mode === 'race') {
-        if (a.finished && b.finished) return a.finishTime - b.finishTime || b.progFine - a.progFine;
+        if (a.finished && b.finished) return a.finishTime - b.finishTime || a.netId - b.netId;
         if (a.finished) return -1;
         if (b.finished) return 1;
       }
-      return b.progFine - a.progFine;
+      return b.progFine - a.progFine || a.netId - b.netId;
     });
   }
 
@@ -885,12 +890,13 @@ export class Race {
     this.net?.onElim(victim);
   }
 
-  /** 淘汰一台車（連線時其他人收到房主的通知也呼叫這裡） */
-  eliminate(victim: Kart): void {
+  /** 淘汰一台車（連線時其他人收到房主的通知也呼叫這裡；at = 房主那邊的淘汰時間） */
+  eliminate(victim: Kart, at?: number): void {
     if (victim.out) return;
     this.elimT = CFG.elimInterval;
     victim.out = true;
     victim.outOrder = ++this.outCount;
+    victim.outTime = at ?? this.time;
     victim.dead = true;
     victim.speed = 0;
     victim.vx = victim.vz = 0;

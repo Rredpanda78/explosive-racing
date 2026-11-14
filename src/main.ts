@@ -654,6 +654,7 @@ function finishRace(r: Race): void {
 
 let last = performance.now();
 let touchShown = false;
+let resultsRefreshT = 0;
 
 function frame(now: number): void {
   requestAnimationFrame(frame);
@@ -707,6 +708,13 @@ function frame(now: number): void {
       if (race.state === 'finished') {
         resultsTimer += real;
         if (resultsTimer > 2.8) finishRace(race);
+      }
+    } else if (online) {
+      // 連線結算畫面：別人陸續完賽、被淘汰，名次表每 0.5 秒更新（每支手機最後會一樣）
+      resultsRefreshT -= real;
+      if (resultsRefreshT <= 0) {
+        resultsRefreshT = 0.5;
+        screens.refreshResults();
       }
     }
     if (input.touchMode !== touchShown) {

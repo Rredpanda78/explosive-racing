@@ -634,3 +634,7 @@ html[lang="en"] .tcard b { letter-spacing: -.01em; line-height: 1.15; }
   html[lang="en"] .tcard b { font-size: 12px; }
   html[lang="en"] .m-detail { line-height: 1.35; }
 }
+
+/* 連線結算：還有人在跑時的提示（名次即時更新） */
+.res-live { font-size: clamp(11px, 1.5vw, 13px); font-weight: 700; opacity: .75; text-align: center; margin: -.3em 0 .4em; }
+.res-live:empty { display: none; }

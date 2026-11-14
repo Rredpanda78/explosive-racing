@@ -187,6 +187,11 @@ console.log('A sees ' + row(ra));
 console.log('B sees ' + row(rb));
 console.log('A results: ' + ra.results().map((k) => k.name).join(' > '));
 console.log('B results: ' + rb.results().map((k) => k.name).join(' > '));
+// 結算畫面：兩支手機最後的名次與完賽時間要一模一樣
+// （淘汰的車畫面上顯示「淘汰」，比的是淘汰時間；其他比完賽時間）
+const board = (r: InstanceType<typeof Race>) => r.results().map((k) => `${k.netId}:${k.out ? 'out@' + k.outTime.toFixed(2) : k.finished ? k.finishTime.toFixed(2) : '-'}`).join(' ');
+if (board(ra) !== board(rb)) throw new Error(`final standings differ\nA ${board(ra)}\nB ${board(rb)}`);
+console.log('final standings identical on both sides');
 console.log(Object.entries(evCount).filter(([k]) => /launch|kill|respawn|finish|elim|dmg|blast|zap|pulse|hook|tether/.test(k)).sort().map(([k, v]) => `${k}=${v}`).join(' '));
 console.log(`harpoon: latched by own cars A ${tetherOwn[0]} B ${tetherOwn[1]}, ropes shown for the other side's cars A ${tetherSeen[0]} B ${tetherSeen[1]}, frames a car was slowed by a remote harpoon ${towFrames}`);
 if ((tetherOwn[1] >= 3 && tetherSeen[0] === 0) || (tetherOwn[0] >= 3 && tetherSeen[1] === 0)) throw new Error('harpoon tethers are not shown on the other side');

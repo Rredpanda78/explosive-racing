@@ -869,20 +869,14 @@ export class Screens {
     this.resultsArgs = [race, s, online];
     const p = race.player;
     const elim = race.mode === 'elim';
-    const order = race.results();
-    const rows = order.map((k, i) => `
-      <tr class="${k === p ? 'me' : ''}">
-        <td>${i + 1}</td><td>${k.name}</td>
-        <td>${elim ? (k.out ? t.resOut : t.resAlive) : k.finished ? formatTime(k.finishTime) : t.resDnf}</td>
-        <td>${t.resKills(k.kills)}</td>
-      </tr>`).join('');
+    const rows = this.resultRows(race, online);
     const missions = s.missions.map((m) => `<div class="${m.done ? 'ok' : 'no'}">${m.done ? '✔' : '✘'} ${m.text} <em>${m.done ? '+$' + m.reward : '$' + m.reward}</em></div>`).join('');
     this.lastResults = `
       <div class="screen">
         <div class="results">
           <h2>${elim && s.rank === 1 ? t.winner : t.place(s.rank)}</h2>
           <div class="res-body">
-          <table>${rows}</table>
+          <div class="res-left"><table class="res-table">${rows}</table><div class="res-live">${this.liveNote(race, online)}</div></div>
           <div class="res-side">
           <div class="missions-box"><b>${t.missions}</b>${missions}</div>
           <div class="earn">
@@ -899,5 +893,46 @@ export class Screens {
         </div>
       </div>`;
     this.root.innerHTML = this.lastResults;
+  }
+
+  /** 結算表的每一列。連線時還在跑的車顯示「比賽中」（不是未完賽），名次會隨著大家完賽更新 */
+  private resultRows(race: Race, online: boolean): string {
+    const p = race.player;
+    const elim = race.mode === 'elim';
+    return race.results().map((k, i) => {
+      let st: string;
+      if (elim) st = k.out ? t.resOut : t.resAlive;
+      else if (k.finished) st = formatTime(k.finishTime);
+      else if (k.out) st = online ? t.resLeft : t.resDnf;
+      else st = online ? t.resRacing : t.resDnf;
+      return `
+      <tr class="${k === p ? 'me' : ''}">
+        <td>${i + 1}</td><td>${k.name}</td>
+        <td>${st}</td>
+        <td>${t.resKills(k.kills)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  /** 連線時還有人在跑：提示名次會即時更新 */
+  private liveNote(race: Race, online: boolean): string {
+    if (!online) return '';
+    const running = race.mode === 'elim' ? race.aliveCount > 1 : race.karts.some((k) => !k.finished && !k.out);
+    return running ? t.resLive : '';
+  }
+
+  /** 連線比賽的結算畫面：別人陸續完賽、被淘汰時，只重畫名次表（按鈕、任務不動） */
+  refreshResults(): void {
+    if (this.current !== 'results' || !this.resultsArgs) return;
+    const [race, , online] = this.resultsArgs;
+    const table = this.root.querySelector<HTMLElement>('.res-table');
+    const note = this.root.querySelector<HTMLElement>('.res-live');
+    if (!table) return;
+    const rows = this.resultRows(race, online);
+    if (table.dataset.h !== rows) {
+      table.innerHTML = rows;
+      table.dataset.h = rows;
+    }
+    if (note) note.textContent = this.liveNote(race, online);
   }
 }
